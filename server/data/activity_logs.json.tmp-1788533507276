@@ -1,0 +1,74 @@
+[
+  {
+    "id": "29ad47e0-6f30-4525-92b1-19adb54b468d",
+    "user_id": "local-admin",
+    "user_name": "Administrator",
+    "action": "PATIENT_CREATE",
+    "entity": "patient",
+    "entity_id": "8b1a2f85-d8bf-43dc-9bc0-80777a80eb61",
+    "at": "2026-09-04T14:35:20.369Z",
+    "detail": "Vedant Desai · HC-2026-000004",
+    "created_at": "2026-09-04T14:35:20.377Z",
+    "updated_at": "2026-09-04T14:35:20.377Z"
+  },
+  {
+    "id": "d053460e-383f-47cb-8458-da4a4bf2d8a5",
+    "user_id": "local-admin",
+    "user_name": "Administrator",
+    "action": "PATIENT_CREATE",
+    "entity": "patient",
+    "entity_id": "24fe9f3f-5a1a-419d-8db8-b7223c7816b7",
+    "at": "2026-09-04T14:34:46.483Z",
+    "detail": "Vedant Desai · HC-2026-000003",
+    "created_at": "2026-09-04T14:34:46.492Z",
+    "updated_at": "2026-09-04T14:34:46.492Z"
+  },
+  {
+    "id": "72b2696f-2832-45a6-8c43-3cb6d7cd74f6",
+    "user_id": "local-admin",
+    "user_name": "Administrator",
+    "action": "BILL_CREATE",
+    "entity": "bill",
+    "entity_id": "ebc59be5-c4f8-4320-9f76-89e68cf9a27f",
+    "at": "2026-09-04T11:00:23.037Z",
+    "detail": "HC-BILL-2026-000002 · werwe (HC-2026-000002) · total 434 · PAID",
+    "created_at": "2026-09-04T11:00:23.035Z",
+    "updated_at": "2026-09-04T11:00:23.035Z"
+  },
+  {
+    "id": "56b5d8af-e3d7-4a65-ad3f-143c2ac49031",
+    "user_id": "local-admin",
+    "user_name": "Administrator",
+    "action": "MEDICINE_CREATE",
+    "entity": "medicine",
+    "entity_id": "e5ddae7d-df4b-487b-81b0-ccd13f3ed1eb",
+    "at": "2026-09-04T09:57:09.695Z",
+    "detail": "fdsfds · MD-0001",
+    "created_at": "2026-09-04T09:57:09.693Z",
+    "updated_at": "2026-09-04T10:28:44.227Z"
+  },
+  {
+    "id": "668b11f0-b786-4099-99da-86f16d67d712",
+    "user_id": "local-admin",
+    "user_name": "Administrator",
+    "action": "STOCK_ADJUST",
+    "entity": "batch",
+    "entity_id": "7c89cd29-0330-4b21-9c99-49efe1484527",
+    "at": "2026-09-04T09:57:38.709Z",
+    "detail": "fdsfds · batch ADJ-1788515858600 · ADJUSTMENT +100 · ",
+    "created_at": "2026-09-04T09:57:38.725Z",
+    "updated_at": "2026-09-04T10:28:44.176Z"
+  },
+  {
+    "id": "8490d310-dae0-423a-9aac-a7d46cd3e3a6",
+    "user_id": "local-admin",
+    "user_name": "Administrator",
+    "action": "BILL_CREATE",
+    "entity": "bill",
+    "entity_id": "f69c3a97-19c3-4e3b-bc84-5d1b4af1b0b4",
+    "at": "2026-09-04T09:57:50.857Z",
+    "detail": "HC-BILL-2026-000001 · werwe (HC-2026-000002) · total 434 · PAID",
+    "created_at": "2026-09-04T09:57:50.863Z",
+    "updated_at": "2026-09-04T10:28:44.160Z"
+  }
+]

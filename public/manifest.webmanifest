@@ -1,0 +1,19 @@
+{
+  "name": "HEEVA CLINIC",
+  "short_name": "HEEVA CLINIC",
+  "description": "HEEVA CLINIC — patient care, billing and inventory.",
+  "id": "./",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "display_override": ["standalone", "minimal-ui"],
+  "background_color": "#F4F6F9",
+  "theme_color": "#0B1F35",
+  "orientation": "any",
+  "categories": ["medical", "productivity", "business"],
+  "icons": [
+    { "src": "./icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "./icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "./icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

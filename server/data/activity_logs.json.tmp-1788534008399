@@ -1,0 +1,50 @@
+[
+  {
+    "id": "f4900303-0611-46ed-873f-765ac8d0f176",
+    "user_id": "local-admin",
+    "user_name": "Administrator",
+    "action": "MEDICINE_UPDATE",
+    "entity": "medicine",
+    "entity_id": "61c3b459-0c13-4cc1-a55b-6b0c87bfc3d1",
+    "at": "2026-09-04T14:59:24.048Z",
+    "detail": "name, generic, category, manufacturer, type, strength, unit, barcode, purchase_price, selling_price, min_stock, location, description",
+    "created_at": "2026-09-04T14:59:24.051Z",
+    "updated_at": "2026-09-04T14:59:24.051Z"
+  },
+  {
+    "id": "2482fcf3-3d63-4317-ade5-4e2888c31896",
+    "user_id": "local-admin",
+    "user_name": "Administrator",
+    "action": "STOCK_ADJUST",
+    "entity": "batch",
+    "entity_id": "0f4e2aec-b1b1-4ffc-a6d6-5b58fd46bf78",
+    "at": "2026-09-04T14:58:50.752Z",
+    "detail": "Amoxicillin 500 · batch ADJ-1788533930673 · ADJUSTMENT +100 · ",
+    "created_at": "2026-09-04T14:58:50.757Z",
+    "updated_at": "2026-09-04T14:58:50.757Z"
+  },
+  {
+    "id": "29ad47e0-6f30-4525-92b1-19adb54b468d",
+    "user_id": "local-admin",
+    "user_name": "Administrator",
+    "action": "PATIENT_CREATE",
+    "entity": "patient",
+    "entity_id": "8b1a2f85-d8bf-43dc-9bc0-80777a80eb61",
+    "at": "2026-09-04T14:35:20.369Z",
+    "detail": "Vedant Desai · HC-2026-000004",
+    "created_at": "2026-09-04T14:35:20.377Z",
+    "updated_at": "2026-09-04T14:35:20.377Z"
+  },
+  {
+    "id": "d053460e-383f-47cb-8458-da4a4bf2d8a5",
+    "user_id": "local-admin",
+    "user_name": "Administrator",
+    "action": "PATIENT_CREATE",
+    "entity": "patient",
+    "entity_id": "24fe9f3f-5a1a-419d-8db8-b7223c7816b7",
+    "at": "2026-09-04T14:34:46.483Z",
+    "detail": "Vedant Desai · HC-2026-000003",
+    "created_at": "2026-09-04T14:34:46.492Z",
+    "updated_at": "2026-09-04T14:34:46.492Z"
+  }
+]

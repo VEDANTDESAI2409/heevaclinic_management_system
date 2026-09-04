@@ -1,0 +1,35 @@
+{
+  "name": "heeva-clinic",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "HEEVA CLINIC MANAGEMENT SYSTEM - Complete clinic management PWA",
+  "scripts": {
+    "dev": "concurrently \"node --watch server/server.js\" \"vite\"",
+    "server": "node --watch server/server.js",
+    "build": "vite build",
+    "preview": "vite preview",
+    "icons": "node scripts/make-icons.js",
+    "smoke": "esbuild scripts/smoke.mjs --bundle --platform=node --format=esm --external:dexie --external:fake-indexeddb --outfile=.smoke.bundle.mjs --log-level=warning && node --import ./scripts/fidb-first.mjs .smoke.bundle.mjs",
+    "render": "esbuild scripts/render-test.mjs --bundle --platform=node --format=esm --packages=external --outfile=.render.bundle.mjs --log-level=warning && node --import ./scripts/fidb-first.mjs .render.bundle.mjs",
+    "test": "npm run smoke && npm run render"
+  },
+  "dependencies": {
+    "@fontsource-variable/inter": "^5.1.0",
+    "concurrently": "^9.2.4",
+    "dexie": "^4.0.8",
+    "dexie-react-hooks": "^1.1.7",
+    "express": "^5.2.1",
+    "lucide-react": "^0.454.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^7.18.3"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.2",
+    "esbuild": "^0.25.12",
+    "fake-indexeddb": "^6.0.0",
+    "jsdom": "^29.1.1",
+    "vite": "^8.2.2"
+  }
+}

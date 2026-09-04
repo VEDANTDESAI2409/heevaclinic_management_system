@@ -1,0 +1,28 @@
+[
+  {
+    "id": "7c89cd29-0330-4b21-9c99-49efe1484527",
+    "medicine_id": "e5ddae7d-df4b-487b-81b0-ccd13f3ed1eb",
+    "batch_no": "ADJ-1788515858600",
+    "mfg_date": "2026-09-04",
+    "expiry": "9999-12-31",
+    "quantity": 100,
+    "available": 98,
+    "purchase_price": 434,
+    "status": "active",
+    "created_at": "2026-09-04T09:57:38.606Z",
+    "updated_at": "2026-09-04T11:00:22.941Z"
+  },
+  {
+    "id": "0f4e2aec-b1b1-4ffc-a6d6-5b58fd46bf78",
+    "medicine_id": "61c3b459-0c13-4cc1-a55b-6b0c87bfc3d1",
+    "batch_no": "ADJ-1788533930673",
+    "mfg_date": "2026-09-04",
+    "expiry": "9999-12-31",
+    "quantity": 100,
+    "available": 100,
+    "purchase_price": 0,
+    "status": "active",
+    "created_at": "2026-09-04T14:58:50.681Z",
+    "updated_at": "2026-09-04T14:58:50.681Z"
+  }
+]
