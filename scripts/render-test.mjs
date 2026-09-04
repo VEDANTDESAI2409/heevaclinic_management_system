@@ -58,6 +58,7 @@ const db = (await import('../src/db.js')).default;
 const patientService = await import('../src/services/patients.js');
 const inventory = await import('../src/services/inventory.js');
 const billing = await import('../src/services/billing.js');
+const { authApi } = await import('../src/services/api.js');
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const h = React.createElement;
@@ -105,6 +106,13 @@ async function renderRoute(path, expectText, waitMs = 600) {
   return text;
 }
 
+// 1. Unauthenticated test — must display LockScreen
+await renderRoute('/', ['Unlock Workspace', 'HEEVA CLINIC', 'Unlock Clinic'], 800);
+ok('Unauthenticated session properly presents LockScreen');
+
+// 2. Authenticated tests — mock verified session
+authApi.verify = async () => true;
+
 const firstPatient = (await db.patients.toArray())[0];
 const pid = firstPatient.id;
 const bill = (await db.bills.where('status').equals('completed').first());
@@ -126,6 +134,8 @@ await renderRoute('/reports', ['Report', 'Sales']);
 await renderRoute('/alerts', ['Alerts', 'otification'.toLowerCase()]);
 await renderRoute('/staff', ['Staff', 'Doctor']);
 await renderRoute('/settings', ['Settings', 'Clinic Profile']);
+await renderRoute('/settings?tab=billing', ['Clinic Billable Services']);
+await renderRoute('/settings?tab=data', ['Data, Backup & Maintenance']);
 
-console.log(`\n${passed} checks passed — every page renders.`);
+console.log(`\n${passed} checks passed — lock screen and every page render.`);
 process.exit(0);

@@ -65,16 +65,18 @@ assert(batchValidation.validRows[0].medicine_id === 'med-123', 'Successfully map
 
 console.log('\n--- 3. Testing Backend Bulk Import API ---');
 
+const API_BASE = process.env.API_BASE || 'http://localhost:8787';
+
 async function testBackend() {
   try {
-    const res = await fetch('http://localhost:3001/api/health');
+    const res = await fetch(`${API_BASE}/api/health`);
     if (!res.ok) throw new Error(`Healthcheck failed: ${res.status}`);
     const health = await res.json();
-    assert(health.status === 'ok' && health.storage === 'json', 'Backend is online and serving JSON storage');
+    assert(health.status === 'ok' && (health.storage === 'd1' || health.storage === 'json'), 'Backend is online and serving storage');
 
     // Test import categories
     const testCatName = `TestCat-${Date.now()}`;
-    const catRes = await fetch('http://localhost:3001/api/medicine_categories/import', {
+    const catRes = await fetch(`${API_BASE}/api/medicine_categories/import`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -89,7 +91,7 @@ async function testBackend() {
 
     // Test import patient
     const testMobile = `98${Math.floor(10000000 + Math.random() * 90000000)}`;
-    const patientRes = await fetch('http://localhost:3001/api/patients/import', {
+    const patientRes = await fetch(`${API_BASE}/api/patients/import`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -112,7 +114,7 @@ async function testBackend() {
 
     // Test import medicines
     const testMedName = `TestMed-${Date.now()}`;
-    const medRes = await fetch('http://localhost:3001/api/medicines/import', {
+    const medRes = await fetch(`${API_BASE}/api/medicines/import`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -134,7 +136,7 @@ async function testBackend() {
 
     // Test import doctors
     const testDocName = `Dr. Test-${Date.now()}`;
-    const docRes = await fetch('http://localhost:3001/api/doctors/import', {
+    const docRes = await fetch(`${API_BASE}/api/doctors/import`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -153,7 +155,7 @@ async function testBackend() {
 
     // Test import inventory batches
     const testBatchNo = `BAT-${Date.now()}`;
-    const batchRes = await fetch('http://localhost:3001/api/medicine_batches/import', {
+    const batchRes = await fetch(`${API_BASE}/api/medicine_batches/import`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -175,19 +177,19 @@ async function testBackend() {
 
     // Clean up created test records
     if (patientData.records[0]?.id) {
-      await fetch(`http://localhost:3001/api/patients/${patientData.records[0].id}`, { method: 'DELETE' });
+      await fetch(`${API_BASE}/api/patients/${patientData.records[0].id}`, { method: 'DELETE' });
     }
     if (catData.records[0]?.id) {
-      await fetch(`http://localhost:3001/api/medicine_categories/${catData.records[0].id}`, { method: 'DELETE' });
+      await fetch(`${API_BASE}/api/medicine_categories/${catData.records[0].id}`, { method: 'DELETE' });
     }
     if (createdMed?.id) {
-      await fetch(`http://localhost:3001/api/medicines/${createdMed.id}`, { method: 'DELETE' });
+      await fetch(`${API_BASE}/api/medicines/${createdMed.id}`, { method: 'DELETE' });
     }
     if (docData.records[0]?.id) {
-      await fetch(`http://localhost:3001/api/doctors/${docData.records[0].id}`, { method: 'DELETE' });
+      await fetch(`${API_BASE}/api/doctors/${docData.records[0].id}`, { method: 'DELETE' });
     }
     if (batchData.records[0]?.id) {
-      await fetch(`http://localhost:3001/api/medicine_batches/${batchData.records[0].id}`, { method: 'DELETE' });
+      await fetch(`${API_BASE}/api/medicine_batches/${batchData.records[0].id}`, { method: 'DELETE' });
     }
 
     console.log(`\nResults: ${passed} passed, ${failed} failed.`);

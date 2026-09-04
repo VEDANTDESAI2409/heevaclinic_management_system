@@ -5,9 +5,11 @@
   "type": "module",
   "description": "HEEVA CLINIC MANAGEMENT SYSTEM - Complete clinic management PWA",
   "scripts": {
-    "start": "node server/server.js",
-    "dev": "concurrently \"node --watch server/server.js\" \"vite\"",
-    "server": "node --watch server/server.js",
+    "dev": "concurrently \"npm run worker:dev\" \"vite\"",
+    "worker:dev": "wrangler dev --port 8787",
+    "worker:deploy": "wrangler deploy",
+    "d1:migrate:local": "wrangler d1 migrations apply DB --local",
+    "d1:migrate:remote": "wrangler d1 migrations apply DB --remote",
     "build": "vite build",
     "preview": "vite preview",
     "icons": "node scripts/make-icons.js",
@@ -20,7 +22,6 @@
     "concurrently": "^9.2.4",
     "dexie": "^4.0.8",
     "dexie-react-hooks": "^1.1.7",
-    "express": "^5.2.1",
     "lucide-react": "^0.454.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
@@ -31,6 +32,7 @@
     "esbuild": "^0.25.12",
     "fake-indexeddb": "^6.0.0",
     "jsdom": "^29.1.1",
-    "vite": "^8.2.2"
+    "vite": "^8.2.2",
+    "wrangler": "^4.129.0"
   }
 }

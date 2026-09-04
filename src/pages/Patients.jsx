@@ -5,13 +5,13 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import db from '../db';
 import { useApp } from '../context/AppContext';
 import {
-  Btn, Card, Modal, Field, Input, Select, Textarea, DataTable, Badge,
+  Btn, IconBtn, Confirm, Card, Modal, Field, Input, Select, Textarea, DataTable, Badge,
   PageHeader, EmptyState, UhidChip, Avatar, Spinner,
 } from '../components/ui';
-import { registerPatient } from '../services/patients';
+import { registerPatient, deletePatient } from '../services/patients';
 import { getSettings } from '../services/core';
 import { ageLabel, fmtDate, fmtMoney, dkey, validMobile, download, toCSV } from '../utils';
-import { UserPlus, Download, Upload, Search, CheckCircle2, Phone, Droplets } from 'lucide-react';
+import { UserPlus, Download, Upload, Search, CheckCircle2, Phone, Droplets, Trash2 } from 'lucide-react';
 import CsvImportModal from '../components/csv/CsvImportModal';
 
 const BLOOD_GROUPS = ['', 'A+', 'A−', 'B+', 'B−', 'AB+', 'AB−', 'O+', 'O−'];
@@ -187,7 +187,7 @@ function RegisterModal({ open, onClose, prefill = {} }) {
 }
 
 export default function Patients() {
-  const { t, settings } = useApp();
+  const { t, settings, user, pushToast } = useApp();
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   const [q, setQ] = useState('');
@@ -195,6 +195,8 @@ export default function Patients() {
   const [reg, setReg] = useState(params.get('new') === '1');
   const [importOpen, setImportOpen] = useState(false);
   const [qMobile, setQMobile] = useState('');
+  const [deleteTarget, setDeleteTarget] = useState(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const patients = useLiveQuery(async () => {
     const all = await db.patients.toArray();
@@ -269,6 +271,19 @@ export default function Patients() {
             { key: 'mobile', label: 'Mobile', sortable: true, render: (p) => <span className="cell-mono">{p.mobile || '—'}</span> },
             { key: 'reg_date', label: 'Registered', sortable: true, render: (p) => fmtDate(p.reg_date) },
             { key: 'last_visit', label: 'Last Visit', sortable: true, sortValue: (p) => p.last_visit || '', render: (p) => (p.last_visit ? fmtDate(p.last_visit) : <Badge tone="gray">First visit</Badge>) },
+            {
+              key: 'actions', label: '', align: 'right',
+              render: (p) => (
+                <div className="row-actions" onClick={(e) => e.stopPropagation()}>
+                  <IconBtn
+                    title="Delete Patient"
+                    icon={Trash2}
+                    className="text-danger"
+                    onClick={() => setDeleteTarget(p)}
+                  />
+                </div>
+              ),
+            },
           ]}
           rows={patients}
           pageSize={12}
@@ -287,6 +302,29 @@ export default function Patients() {
 
       <RegisterModal open={reg} onClose={() => setReg(false)} />
       <CsvImportModal open={importOpen} onClose={() => setImportOpen(false)} type="patients" />
+
+      <Confirm
+        open={!!deleteTarget}
+        onClose={() => setDeleteTarget(null)}
+        danger
+        busy={isDeleting}
+        title="Delete Patient Record?"
+        message={`Are you sure you want to permanently delete ${deleteTarget?.name} (${deleteTarget?.uhid})? Patients with medical or billing history cannot be deleted.`}
+        confirmText="Delete Patient"
+        onConfirm={async () => {
+          if (!deleteTarget) return;
+          setIsDeleting(true);
+          try {
+            await deletePatient(deleteTarget.id, user?.id);
+            pushToast('success', `Patient ${deleteTarget.name} deleted.`);
+            setDeleteTarget(null);
+          } catch (err) {
+            pushToast('error', err.message);
+          } finally {
+            setIsDeleting(false);
+          }
+        }}
+      />
     </div>
   );
 }

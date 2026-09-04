@@ -1,4 +1,4 @@
-import { updateRecord, deleteRecord as deleteRemote, getRecords } from '../services/api';
+import { updateRecord, deleteRecord as deleteRemote, getRecords } from '../services/api.js';
 
 // Ordered logically: settings/counters first, categories before medicines, medicines before batches
 const syncOrder = [
@@ -36,7 +36,7 @@ const remoteNames = {
 const remoteName = (name) => remoteNames[name] || name;
 
 export const isBrowserRuntime = () =>
-  typeof window !== 'undefined' && !(typeof process !== 'undefined' && process.versions?.node);
+  typeof window !== 'undefined' && (Boolean(globalThis.__FORCE_SYNC__) || !(typeof process !== 'undefined' && process.versions?.node));
 
 export async function pushRecord(name, record) {
   if (!isBrowserRuntime() || !syncedTables.has(name) || !record) return;
@@ -69,24 +69,29 @@ export async function syncFromBackend(db) {
   db.__hydrating = true;
   try {
     for (const name of syncOrder) {
-      const rows = await getRecords(remoteName(name));
-      if (name === 'settings') {
-        await db.settings.clear();
-        const row = rows[0];
-        if (row) {
-          await db.settings.bulkPut(
-            Object.entries(row)
-              .filter(([key]) => !['id', 'created_at', 'updated_at'].includes(key))
-              .map(([key, value]) => ({ key, value }))
-          );
+      try {
+        const rows = await getRecords(remoteName(name));
+        if (name === 'settings') {
+          await db.settings.clear();
+          const row = rows?.[0];
+          if (row) {
+            await db.settings.bulkPut(
+              Object.entries(row)
+                .filter(([key]) => !['id', 'created_at', 'updated_at'].includes(key))
+                .map(([key, value]) => ({ key, value }))
+            );
+          }
+          continue;
         }
-        continue;
-      }
-      if (db[name]) {
-        await db[name].clear();
-        if (rows.length) {
-          await db[name].bulkPut(rows);
+        if (db[name] && Array.isArray(rows)) {
+          // Transactional wipe of local table and repopulate exclusively with fresh D1 records
+          await db[name].clear();
+          if (rows.length > 0) {
+            await db[name].bulkPut(rows);
+          }
         }
+      } catch (tableErr) {
+        console.error(`[remoteSync] Error syncing ${name} from D1:`, tableErr?.message || tableErr);
       }
     }
   } finally {

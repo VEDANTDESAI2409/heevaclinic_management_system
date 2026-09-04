@@ -4,17 +4,18 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import db from '../db';
 import { useApp } from '../context/AppContext';
 import {
-  Btn, Card, Modal, Field, Input, Select, Textarea, Badge, DataTable, PageHeader, EmptyState, Confirm,
+  Btn, IconBtn, Card, Modal, Field, Input, Select, Textarea, Badge, DataTable, PageHeader, EmptyState, Confirm,
 } from '../components/ui';
-import { addExpense, voidExpense, EXPENSE_CATEGORIES } from '../services/expenses';
+import { addExpense, voidExpense, deleteExpense, EXPENSE_CATEGORIES } from '../services/expenses';
 import { expenseTotals } from '../services/expenses';
 import { fmtMoney, fmtDate, dkey, addDays, download, toCSV } from '../utils';
-import { Wallet, Plus, Download, CircleSlash } from 'lucide-react';
+import { Wallet, Plus, Download, CircleSlash, Trash2 } from 'lucide-react';
 
 export default function Expenses() {
   const { user, settings, pushToast } = useApp();
   const [modal, setModal] = useState(false);
   const [voidTarget, setVoidTarget] = useState(null);
+  const [deleteTarget, setDeleteTarget] = useState(null);
   const [f, setF] = useState({ category: 'Rent', amount: '', date: dkey(new Date()), description: '', method: 'Cash' });
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
@@ -101,8 +102,22 @@ export default function Expenses() {
             { key: 'by', label: 'Added By' },
             {
               key: 'status', label: 'Status',
-              render: (e) => e.status === 'void' ? <Badge tone="gray">VOID — {e.void_reason}</Badge> : (
-                <Btn size="sm" variant="ghost" icon={CircleSlash} onClick={() => setVoidTarget(e)}>Void</Btn>
+              render: (e) => e.status === 'void' ? <Badge tone="gray">VOID — {e.void_reason}</Badge> : <Badge tone="green">Active</Badge>,
+            },
+            {
+              key: 'actions', label: '', align: 'right',
+              render: (e) => (
+                <div className="row-actions" onClick={(ev) => ev.stopPropagation()}>
+                  {e.status !== 'void' && (
+                    <Btn size="sm" variant="ghost" icon={CircleSlash} onClick={() => setVoidTarget(e)}>Void</Btn>
+                  )}
+                  <IconBtn
+                    title="Delete Expense"
+                    icon={Trash2}
+                    className="text-danger"
+                    onClick={() => setDeleteTarget(e)}
+                  />
+                </div>
               ),
             },
           ]}
@@ -150,6 +165,25 @@ export default function Expenses() {
           await voidExpense(voidTarget.id, reason, user.id);
           pushToast('success', 'Expense voided (kept in records)');
           setVoidTarget(null);
+        }}
+      />
+
+      <Confirm
+        open={!!deleteTarget}
+        onClose={() => setDeleteTarget(null)}
+        danger
+        title={`Delete expense ${deleteTarget?.expense_no}?`}
+        message={`Are you sure you want to permanently delete this expense record (${deleteTarget?.category} · ${fmtMoney(deleteTarget?.amount || 0, settings.currency)})?`}
+        confirmText="Delete Expense"
+        onConfirm={async () => {
+          if (!deleteTarget) return;
+          try {
+            await deleteExpense(deleteTarget.id, user?.id);
+            pushToast('success', `Expense ${deleteTarget.expense_no} deleted.`);
+            setDeleteTarget(null);
+          } catch (err) {
+            pushToast('error', err.message);
+          }
         }}
       />
     </div>

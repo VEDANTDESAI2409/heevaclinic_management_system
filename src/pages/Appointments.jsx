@@ -8,9 +8,9 @@ import {
   Btn, Card, Modal, Field, Input, Select, Textarea, Badge, DataTable,
   PageHeader, EmptyState, UhidChip, ApptBadge, IconBtn, Confirm,
 } from '../components/ui';
-import { createAppointment, updateAppointment, setAppointmentStatus, APPT_STATUSES } from '../services/clinical';
+import { createAppointment, updateAppointment, setAppointmentStatus, deleteAppointment, APPT_STATUSES } from '../services/clinical';
 import { dkey, addDays, fmtDate, fmtTime } from '../utils';
-import { CalendarDays, ChevronLeft, ChevronRight, UserPlus, Pencil, Search } from 'lucide-react';
+import { CalendarDays, ChevronLeft, ChevronRight, UserPlus, Pencil, Search, Trash2 } from 'lucide-react';
 
 const NEXT = {
   scheduled: ['confirmed', 'checked_in', 'cancelled', 'no_show'],
@@ -93,6 +93,7 @@ export default function Appointments() {
   const [q, setQ] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [cancelTarget, setCancelTarget] = useState(null);
+  const [deleteTarget, setDeleteTarget] = useState(null);
   const [busyId, setBusyId] = useState(null);
 
   const doctors = useLiveQuery(() => db.doctors.toArray(), []);
@@ -190,6 +191,12 @@ export default function Appointments() {
                   {a.status === 'completed' && a.patient && (
                     <Btn size="sm" variant="ghost" onClick={() => navigate(`/patients/${a.patient.id}`)}>Open</Btn>
                   )}
+                  <IconBtn
+                    title="Delete Appointment"
+                    icon={Trash2}
+                    className="text-danger"
+                    onClick={() => setDeleteTarget(a)}
+                  />
                 </div>
               </div>
             ))}
@@ -211,6 +218,24 @@ export default function Appointments() {
           await setAppointmentStatus(cancelTarget.id, 'cancelled', user.id);
           pushToast('success', 'Appointment cancelled');
           setCancelTarget(null);
+        }}
+      />
+      <Confirm
+        open={!!deleteTarget}
+        onClose={() => setDeleteTarget(null)}
+        danger
+        title="Delete Appointment?"
+        message={`Are you sure you want to permanently delete appointment ${deleteTarget?.appointment_no} for ${deleteTarget?.patient?.name || 'patient'}?`}
+        confirmText="Delete Appointment"
+        onConfirm={async () => {
+          if (!deleteTarget) return;
+          try {
+            await deleteAppointment(deleteTarget.id, user?.id);
+            pushToast('success', `Appointment ${deleteTarget.appointment_no} deleted.`);
+            setDeleteTarget(null);
+          } catch (err) {
+            pushToast('error', err.message);
+          }
         }}
       />
     </div>

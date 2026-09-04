@@ -18,6 +18,7 @@ import Reports from './pages/Reports';
 import Alerts from './pages/Alerts';
 import Staff from './pages/Staff';
 import SettingsPage from './pages/SettingsPage';
+import LockScreen from './components/LockScreen';
 import { Logo } from './components/ui';
 import { Loader } from 'lucide-react';
 
@@ -75,9 +76,10 @@ function BootScreen() {
 }
 
 export default function App() {
-  const { booting, databaseError } = useApp();
+  const { booting, databaseError, isAuthenticated, login } = useApp();
   if (booting) return <BootScreen />;
   if (databaseError) return <DatabaseErrorScreen message={databaseError} />;
+  if (!isAuthenticated) return <LockScreen onLogin={login} />;
   return <ErrorBoundary>
     <Routes>
       <Route element={<AppShell />}>

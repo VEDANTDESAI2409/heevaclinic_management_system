@@ -55,3 +55,12 @@ export async function expenseTotals(from, to) {
   }
   return { total, byCat };
 }
+
+export async function deleteExpense(id, userId) {
+  return db.transaction('rw', [db.expenses, db.activity_logs], async () => {
+    const e = await db.expenses.get(id);
+    if (!e) throw new Error('Expense not found');
+    await db.expenses.delete(id);
+    await audit(userId, 'EXPENSE_DELETE', 'expense', id, `${e.expense_no} · ${e.category} · ${e.amount}`);
+  });
+}

@@ -1,7 +1,7 @@
 // ─── HEEVA CLINIC — global app context ─────────────────────────────────────
 import React, { createContext, useContext, useEffect, useState, useCallback, useMemo } from 'react';
 import db, { syncFromBackend } from '../db';
-import { getHealth } from '../services/api';
+import { getHealth, authApi } from '../services/api';
 import { isBrowserRuntime } from '../lib/remoteSync';
 import { getSettings, DEFAULT_SETTINGS } from '../services/core';
 import { ensureMedicineCategories } from '../services/inventory';
@@ -15,6 +15,7 @@ const LOCAL_USER = { id: 'local-admin', name: 'Administrator', role: 'admin', ac
 
 export function AppProvider({ children }) {
   const [booting, setBooting] = useState(true);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [databaseError, setDatabaseError] = useState(null);
   const [user] = useState(LOCAL_USER);
   const [settings, setSettings] = useState(DEFAULT_SETTINGS);
@@ -30,30 +31,61 @@ export function AppProvider({ children }) {
     try { setNotifCount(await unreadCount()); } catch (e) { /* ignore */ }
   }, []);
 
-  // boot: backend sync → settings → alerts
+  const syncAndInit = useCallback(async () => {
+    try {
+      if (isBrowserRuntime()) {
+        await syncFromBackend(db);
+        setDatabaseError(null);
+      }
+      await ensureMedicineCategories();
+      const s = await getSettings();
+      setSettings(s);
+      setThemeState(s.theme || 'light');
+      setLangState(s.lang || 'en');
+      globalThis.__heevaUser = LOCAL_USER;
+      try { await syncAlerts(LOCAL_USER.id); } catch (e) { /* ignore */ }
+      refreshNotifs();
+    } catch (e) {
+      console.error('Initialization error', e);
+      throw e;
+    }
+  }, [refreshNotifs]);
+
+  // boot: healthcheck → verify existing auth token → conditionally sync
   useEffect(() => {
+    let mounted = true;
     (async () => {
       try {
         if (isBrowserRuntime()) {
           await getHealth();
-          await syncFromBackend(db);
           setDatabaseError(null);
         }
-        await ensureMedicineCategories();
-        const s = await getSettings();
-        setSettings(s);
-        setThemeState(s.theme || 'light');
-        setLangState(s.lang || 'en');
-        globalThis.__heevaUser = LOCAL_USER;
-        try { await syncAlerts(LOCAL_USER.id); } catch (e) { /* ignore */ }
-        refreshNotifs();
+
+        const isValidSession = await authApi.verify();
+        if (mounted) {
+          if (isValidSession) {
+            setIsAuthenticated(true);
+            await syncAndInit();
+          } else {
+            setIsAuthenticated(false);
+          }
+        }
       } catch (e) {
         console.error('Backend boot error', e);
-        setDatabaseError(e?.message || 'Unable to connect to the backend server.');
+        if (mounted) {
+          setDatabaseError(e?.message || 'Unable to connect to the backend server.');
+        }
       } finally {
-        setBooting(false);
+        if (mounted) {
+          setBooting(false);
+        }
       }
     })();
+
+    const onUnauthorized = () => {
+      setIsAuthenticated(false);
+    };
+    window.addEventListener('heeva:unauthorized', onUnauthorized);
 
     const on = () => setOnline(true);
     const off = () => setOnline(false);
@@ -66,13 +98,42 @@ export function AppProvider({ children }) {
     const mq = window.matchMedia('(display-mode: standalone)');
     setStandalone(mq.matches);
     if (mq.addEventListener) mq.addEventListener('change', (e) => setStandalone(e.matches));
+
+    const onFocusSync = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+        syncFromBackend(db).catch(() => {});
+      }
+    };
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', onFocusSync);
+    }
+    window.addEventListener('focus', onFocusSync);
+
     return () => {
+      mounted = false;
+      window.removeEventListener('heeva:unauthorized', onUnauthorized);
       window.removeEventListener('online', on);
       window.removeEventListener('offline', off);
       window.removeEventListener('beforeinstallprompt', bip);
       window.removeEventListener('appinstalled', ai);
+      if (typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', onFocusSync);
+      }
+      window.removeEventListener('focus', onFocusSync);
     };
-  }, [refreshNotifs]);
+  }, [syncAndInit]);
+
+  const login = useCallback(async (password) => {
+    const res = await authApi.login(password);
+    setIsAuthenticated(true);
+    await syncAndInit();
+    return res;
+  }, [syncAndInit]);
+
+  const logout = useCallback(async () => {
+    await authApi.logout();
+    setIsAuthenticated(false);
+  }, []);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -118,7 +179,8 @@ export function AppProvider({ children }) {
   const can = useCallback(() => true, []);
 
   const value = {
-    booting, databaseError, user,
+    booting, isAuthenticated, login, logout,
+    databaseError, user,
     settings, updateSettings,
     theme, setTheme, lang, setLang, t,
     online, toasts, pushToast,

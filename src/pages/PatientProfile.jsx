@@ -5,17 +5,17 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import db from '../db';
 import { useApp } from '../context/AppContext';
 import {
-  Btn, Card, Modal, Field, Input, Select, Textarea, Badge, Tabs, EmptyState,
+  Btn, Card, Modal, Confirm, Field, Input, Select, Textarea, Badge, Tabs, EmptyState,
   DataTable, UhidChip, Avatar, PaymentBadge, BillStatusBadge,
 } from '../components/ui';
 import { LineChart } from '../components/charts';
-import { updatePatient, addVitals } from '../services/patients';
+import { updatePatient, addVitals, deletePatient } from '../services/patients';
 import { getBill } from '../services/billing';
 import { printInvoiceA4, printPatientCard } from '../print/printers';
 import { ageLabel, fmtDate, fmtDateTime, fmtTime, fmtMoney, fmtQty } from '../utils';
 import {
   Phone, MapPin, Mail, Droplets, Stethoscope, FileText, ReceiptText,
-  CreditCard, Activity, NotebookPen, Pencil, Printer, Plus,
+  CreditCard, Activity, NotebookPen, Pencil, Printer, Plus, Trash2,
 } from 'lucide-react';
 
 const VITAL_DEFS = [
@@ -175,11 +175,13 @@ function EditPatientModal({ open, onClose, patient, user }) {
 export default function PatientProfile() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { user, settings, t, can } = useApp();
+  const { user, settings, t, can, pushToast } = useApp();
   const [tab, setTab] = useState('overview');
   const [vitalsOpen, setVitalsOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [billView, setBillView] = useState(null);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const patient = useLiveQuery(() => db.patients.get(id), [id]);
   const vitals = useLiveQuery(() => db.patient_vitals.where('patient_id').equals(id).reverse().sortBy('recorded_at'), [id]);
@@ -227,6 +229,11 @@ export default function PatientProfile() {
           <Btn variant="outline" icon={Activity} size="sm" onClick={() => setVitalsOpen(true)}>Add Vitals</Btn>
           {can('patients') && <Btn variant="ghost" icon={Pencil} size="sm" onClick={() => setEditOpen(true)}>Edit</Btn>}
           <Btn variant="ghost" icon={Printer} size="sm" onClick={() => printPatientCard(p, settings)}>ID Card</Btn>
+          {can('patients') && (
+            <Btn variant="danger" icon={Trash2} size="sm" onClick={() => setDeleteConfirmOpen(true)}>
+              Delete
+            </Btn>
+          )}
         </div>
       </div>
 
@@ -433,6 +440,28 @@ export default function PatientProfile() {
       {billView && (
         <BillViewer full={billView} onClose={() => setBillView(null)} patient={p} />
       )}
+
+      <Confirm
+        open={deleteConfirmOpen}
+        onClose={() => setDeleteConfirmOpen(false)}
+        danger
+        busy={isDeleting}
+        title="Delete Patient Record?"
+        message={`Are you sure you want to delete ${p.name} (${p.uhid})? Patients with clinical or billing history cannot be permanently deleted.`}
+        confirmText="Delete Patient"
+        onConfirm={async () => {
+          setIsDeleting(true);
+          try {
+            await deletePatient(p.id, user?.id);
+            pushToast('success', `Patient ${p.name} deleted.`);
+            navigate('/patients');
+          } catch (err) {
+            pushToast('error', err.message);
+          } finally {
+            setIsDeleting(false);
+          }
+        }}
+      />
     </div>
   );
 }

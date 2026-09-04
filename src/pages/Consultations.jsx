@@ -5,12 +5,12 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import db from '../db';
 import { useApp } from '../context/AppContext';
 import {
-  Btn, Card, Modal, Field, Input, Select, Textarea, Badge, DataTable,
+  Btn, IconBtn, Confirm, Card, Modal, Field, Input, Select, Textarea, Badge, DataTable,
   PageHeader, EmptyState, UhidChip, Toggle,
 } from '../components/ui';
-import { createConsultation } from '../services/clinical';
+import { createConsultation, deleteConsultation } from '../services/clinical';
 import { fmtDate, fmtDateTime, dkey, todayStr } from '../utils';
-import { Stethoscope, Siren, Clock, CheckCircle2, FileText, ReceiptText } from 'lucide-react';
+import { Stethoscope, Siren, Clock, CheckCircle2, FileText, ReceiptText, Trash2 } from 'lucide-react';
 
 const VITAL_INPUTS = [
   { key: 'temp', label: 'Temp (°F)', step: 0.1 },
@@ -141,12 +141,14 @@ function NewConsultModal({ open, onClose, prefillPatient, onDone }) {
 }
 
 export default function Consultations() {
-  const { t } = useApp();
+  const { t, user, pushToast } = useApp();
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   const [modal, setModal] = useState(false);
   const [pre, setPre] = useState(null);
   const [done, setDone] = useState(null);
+  const [deleteTarget, setDeleteTarget] = useState(null);
+  const [isDeleting, setIsDeleting] = useState(false);
   const [from, setFrom] = useState(dkey(new Date(Date.now() - 29 * 86400000)));
   const [to, setTo] = useState(todayStr());
   const [doctorF, setDoctorF] = useState('');
@@ -218,6 +220,19 @@ export default function Consultations() {
             { key: 'chief', label: 'Chief Complaint', render: (c) => <span className="cell-ellip" title={c.chief}>{c.chief || '—'}</span> },
             { key: 'diagnosis', label: 'Diagnosis', render: (c) => <span className="cell-ellip" title={c.diagnosis}>{c.diagnosis || '—'}</span> },
             { key: 'follow_up', label: 'Follow-up', render: (c) => c.follow_up ? <span className="follow-chip"><Clock size={12} /> {fmtDate(c.follow_up)}</span> : '—' },
+            {
+              key: 'actions', label: '', align: 'right',
+              render: (c) => (
+                <div className="row-actions" onClick={(e) => e.stopPropagation()}>
+                  <IconBtn
+                    title="Delete Consultation"
+                    icon={Trash2}
+                    className="text-danger"
+                    onClick={() => setDeleteTarget(c)}
+                  />
+                </div>
+              ),
+            },
           ]}
           rows={rows}
           pageSize={12}
@@ -243,6 +258,29 @@ export default function Consultations() {
           </div>
         </Modal>
       )}
+
+      <Confirm
+        open={!!deleteTarget}
+        onClose={() => setDeleteTarget(null)}
+        danger
+        busy={isDeleting}
+        title="Delete Consultation?"
+        message={`Are you sure you want to delete consultation ${deleteTarget?.consultation_no} for ${deleteTarget?.patient?.name || 'patient'}? Consultations linked to prescriptions cannot be deleted until those prescriptions are removed.`}
+        confirmText="Delete Consultation"
+        onConfirm={async () => {
+          if (!deleteTarget) return;
+          setIsDeleting(true);
+          try {
+            await deleteConsultation(deleteTarget.id, user?.id);
+            pushToast('success', `Consultation ${deleteTarget.consultation_no} deleted.`);
+            setDeleteTarget(null);
+          } catch (err) {
+            pushToast('error', err.message);
+          } finally {
+            setIsDeleting(false);
+          }
+        }}
+      />
     </div>
   );
 }

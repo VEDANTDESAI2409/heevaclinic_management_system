@@ -15,7 +15,7 @@ export function printInvoiceA4(bill, items, payments, s) {
   const paymentStatus = { PAID: 'Paid', PARTIAL: 'Partially Paid', PENDING: 'Pending', CANCELLED: 'Cancelled' }[bill.payment_status] || bill.payment_status;
   printNode(
     <div className="print-job a4">
-      <style>{`@page { size: A4 landscape; margin: 0; } .a4-sheet { width: 297mm; height: 210mm; display: flex; flex-direction: row; font-family: Inter, system-ui, sans-serif; color: #16232f; } .a4-copy { width: 50%; height: 210mm; padding: 10mm 8mm; overflow: hidden; position: relative; } .a4-copy + .a4-copy { border-left: 0.3mm dashed #8994a3; } .a4-copy + .a4-copy::before { content: 'CUT HERE'; position: absolute; top: 50%; left: -3.5mm; transform: translate(-50%, -50%) rotate(-90deg); background: #fff; padding: 0 4mm; color: #8994a3; font-size: 8px; letter-spacing: 1px; } .a4-doc { width: 100%; font-size: 8px; line-height: 1.15; } .a4-head { margin-bottom: 3mm; } .a4-brand img { width: 12mm; height: 12mm; } .a4-clinic { font-size: 14px; } .a4-doctype { font-size: 8px; } .a4-parties { margin: 2mm 0; } .a4-pbox { padding: 5px 6px; font-size: 8px; } .a4-pname { font-size: 10px; } .a4-table { margin-top: 2mm; font-size: 8px; } .a4-table th { padding: 4px 5px; font-size: 7px; } .a4-table td { padding: 4px 5px; } .a4-totals { width: 135px; padding: 6px 8px; } .a4-totals .kv { font-size: 8px; } .a4-totals .kv-total b { font-size: 11px; } .a4-sign { margin-top: 12mm; font-size: 8px; }`}</style>
+      <style>{`@page { size: A4 landscape; margin: 0 !important; } .a4-sheet { width: 297mm; height: 210mm; display: flex; flex-direction: row; font-family: Inter, system-ui, sans-serif; color: #16232f; } .a4-copy { width: 50%; height: 210mm; padding: 10mm 8mm; overflow: hidden; position: relative; } .a4-copy + .a4-copy { border-left: 0.3mm dashed #8994a3; } .a4-copy + .a4-copy::before { content: 'CUT HERE'; position: absolute; top: 50%; left: -3.5mm; transform: translate(-50%, -50%) rotate(-90deg); background: #fff; padding: 0 4mm; color: #8994a3; font-size: 8px; letter-spacing: 1px; } .a4-doc { width: 100%; font-size: 8px; line-height: 1.15; } .a4-head { margin-bottom: 3mm; } .a4-brand img { width: 12mm; height: 12mm; } .a4-clinic { font-size: 14px; } .a4-doctype { font-size: 8px; } .a4-parties { margin: 2mm 0; } .a4-pbox { padding: 5px 6px; font-size: 8px; } .a4-pname { font-size: 10px; } .a4-table { margin-top: 2mm; font-size: 8px; } .a4-table th { padding: 4px 5px; font-size: 7px; } .a4-table td { padding: 4px 5px; } .a4-totals { width: 135px; padding: 6px 8px; } .a4-totals .kv { font-size: 8px; } .a4-totals .kv-total b { font-size: 11px; } .a4-sign { margin-top: 12mm; font-size: 8px; }`}</style>
       <div className="a4-sheet">
         {[['CLINIC COPY'], ['PATIENT COPY']].map(([copyLabel]) => <div className="a4-copy" key={copyLabel}>
         <div className="a4-doc">
@@ -113,7 +113,7 @@ export function printPrescription(pr, patient) {
   const sex = patient ? patient.gender || '' : '';
   printNode(
     <div className="print-job a4">
-      <style>{`@page { size: A4; margin: 10mm; } .prx { font-family: Inter, system-ui, sans-serif; color: #111; font-size: 12.5px; }`}</style>
+      <style>{`@page { size: A4; margin: 0 !important; } .prx { padding: 12mm 14mm; box-sizing: border-box; font-family: Inter, system-ui, sans-serif; color: #111; font-size: 12.5px; }`}</style>
       <div className="prx">
         <div className="prx-head">
           <div className="prx-brand">
@@ -168,7 +168,7 @@ export function printPrescription(pr, patient) {
 export function printReport({ title, subtitle, columns, rows, totals, s }) {
   printNode(
     <div className="print-job a4">
-      <style>{`@page { size: A4 landscape; margin: 10mm; } .rpt { font-family: Inter, system-ui, sans-serif; color: #111; font-size: 11px; }`}</style>
+      <style>{`@page { size: A4 landscape; margin: 0 !important; } .rpt { padding: 12mm 14mm; box-sizing: border-box; font-family: Inter, system-ui, sans-serif; color: #111; font-size: 11px; }`}</style>
       <div className="rpt">
         <div className="rpt-head">
           <div>
@@ -201,7 +201,7 @@ export function printReport({ title, subtitle, columns, rows, totals, s }) {
 export function printPatientCard(p, s) {
   return printNode(
     <div className="print-job a4">
-      <style>{`@page { size: A4; margin: 15mm; } .pcc { font-family: Inter, system-ui, sans-serif; color: #111; }`}</style>
+      <style>{`@page { size: A4; margin: 0 !important; } .pcc { padding: 16mm; box-sizing: border-box; font-family: Inter, system-ui, sans-serif; color: #111; }`}</style>
       <div className="pcc">
         <div className="pcc-card">
           <div className="pcc-top">

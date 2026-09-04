@@ -9,19 +9,59 @@ var __export = (target, all) => {
 };
 
 // src/services/api.js
+var api_exports = {};
+__export(api_exports, {
+  adminApi: () => adminApi,
+  authApi: () => authApi,
+  bulkImportRecords: () => bulkImportRecords,
+  clearAuthToken: () => clearAuthToken,
+  createAppointment: () => createAppointment,
+  createMedicine: () => createMedicine2,
+  createPatient: () => createPatient,
+  createRecord: () => createRecord,
+  deleteAppointment: () => deleteAppointment,
+  deleteMedicine: () => deleteMedicine,
+  deletePatient: () => deletePatient,
+  deleteRecord: () => deleteRecord,
+  getAppointments: () => getAppointments,
+  getAuthToken: () => getAuthToken,
+  getHealth: () => getHealth,
+  getMedicines: () => getMedicines,
+  getPatients: () => getPatients,
+  getRecord: () => getRecord,
+  getRecords: () => getRecords,
+  setAuthToken: () => setAuthToken,
+  updateAppointment: () => updateAppointment,
+  updateMedicine: () => updateMedicine,
+  updatePatient: () => updatePatient,
+  updateRecord: () => updateRecord
+});
 async function request(path, options = {}) {
   const base = getBaseUrl();
+  const token = getAuthToken();
+  const headers = {
+    "Content-Type": "application/json",
+    ...token ? { Authorization: `Bearer ${token}` } : {},
+    ...options.headers || {}
+  };
   let response;
   try {
     response = await fetch(`${base}${path}`, {
-      headers: { "Content-Type": "application/json" },
-      ...options
+      ...options,
+      headers,
+      cache: "no-store"
+      // Always bypass HTTP disk/memory cache for dynamic clinic data
     });
   } catch (error) {
     if (typeof window !== "undefined" && !(typeof process !== "undefined" && process.versions?.node)) {
       console.error("[API] network error", error);
     }
     throw new Error("Unable to reach the server. Start the backend with npm run dev.");
+  }
+  if (response.status === 401) {
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("heeva:unauthorized", { detail: { path } }));
+    }
   }
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
@@ -35,21 +75,130 @@ async function request(path, options = {}) {
   }
   return response.status === 204 ? null : response.json();
 }
-var getBaseUrl, getHealth, getRecords, updateRecord, deleteRecord, bulkImportRecords;
+var TOKEN_KEY, getAuthToken, setAuthToken, clearAuthToken, getBaseUrl, authApi, adminApi, getHealth, getRecords, getRecord, createRecord, updateRecord, deleteRecord, bulkImportRecords, getPatients, createPatient, updatePatient, deletePatient, getMedicines, createMedicine2, updateMedicine, deleteMedicine, getAppointments, createAppointment, updateAppointment, deleteAppointment;
 var init_api = __esm({
   "src/services/api.js"() {
+    TOKEN_KEY = "heeva_auth_token";
+    getAuthToken = () => {
+      if (typeof window !== "undefined" && window.localStorage) {
+        return window.localStorage.getItem(TOKEN_KEY);
+      }
+      return null;
+    };
+    setAuthToken = (token) => {
+      if (typeof window !== "undefined" && window.localStorage) {
+        if (token) {
+          window.localStorage.setItem(TOKEN_KEY, token);
+        } else {
+          window.localStorage.removeItem(TOKEN_KEY);
+        }
+      }
+    };
+    clearAuthToken = () => setAuthToken(null);
     getBaseUrl = () => {
+      if (typeof import.meta !== "undefined" && import.meta.env?.VITE_API_URL) {
+        return import.meta.env.VITE_API_URL.replace(/\/+$/, "") + "/api";
+      }
+      if (typeof process !== "undefined" && process.versions?.node) {
+        const port = process.env?.WORKER_PORT || process.env?.PORT || 8787;
+        return `http://127.0.0.1:${port}/api`;
+      }
       if (typeof window !== "undefined" && window.location?.origin) {
         return "/api";
       }
-      const port = typeof process !== "undefined" && process.env?.PORT || 3001;
-      return `http://127.0.0.1:${port}/api`;
+      return "http://127.0.0.1:8787/api";
+    };
+    if (typeof window !== "undefined" && "caches" in window) {
+      window.caches.keys().then((keys) => {
+        keys.forEach((k) => {
+          window.caches.open(k).then((cache) => {
+            cache.keys().then((requests) => {
+              requests.forEach((req) => {
+                try {
+                  if (new URL(req.url).pathname.startsWith("/api")) {
+                    cache.delete(req);
+                  }
+                } catch (_) {
+                }
+              });
+            });
+          });
+        });
+      }).catch(() => {
+      });
+    }
+    authApi = {
+      async login(password) {
+        const res = await request("/auth/login", {
+          method: "POST",
+          body: JSON.stringify({ password })
+        });
+        if (res && res.token) {
+          setAuthToken(res.token);
+        }
+        return res;
+      },
+      async verify() {
+        const token = getAuthToken();
+        if (!token) return false;
+        try {
+          const res = await request("/auth/verify", { method: "POST" });
+          return !!(res && res.ok);
+        } catch (err) {
+          if (err.status === 401) {
+            clearAuthToken();
+          }
+          return false;
+        }
+      },
+      async logout() {
+        try {
+          await request("/auth/logout", { method: "POST" });
+        } catch (_) {
+        } finally {
+          clearAuthToken();
+        }
+      },
+      getToken: getAuthToken,
+      clearToken: clearAuthToken
+    };
+    adminApi = {
+      async resetDatabase(password) {
+        return request("/admin/reset", {
+          method: "POST",
+          body: JSON.stringify({ password })
+        });
+      }
     };
     getHealth = () => request("/health");
     getRecords = (table) => request(`/${table}`);
+    getRecord = async (table, id) => {
+      if (!id) return null;
+      try {
+        return await request(`/${table}/${encodeURIComponent(id)}`);
+      } catch (error) {
+        if (error.status === 404 || /404|Record not found|not found/i.test(error.message)) {
+          return null;
+        }
+        throw error;
+      }
+    };
+    createRecord = (table, record) => request(`/${table}`, { method: "POST", body: JSON.stringify(record) });
     updateRecord = (table, id, patch) => request(`/${table}/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify(patch) });
     deleteRecord = (table, id) => request(`/${table}/${encodeURIComponent(id)}`, { method: "DELETE" });
     bulkImportRecords = (table, records, userId = null) => request(`/${table}/import`, { method: "POST", body: JSON.stringify({ records, userId }) });
+    getPatients = () => getRecords("patients");
+    createPatient = (patient2) => createRecord("patients", patient2);
+    updatePatient = (id, patch) => updateRecord("patients", id, patch);
+    deletePatient = (id) => deleteRecord("patients", id);
+    getMedicines = () => getRecords("medicines");
+    createMedicine2 = (medicine2) => createRecord("medicines", medicine2);
+    updateMedicine = (id, patch) => updateRecord("medicines", id, patch);
+    deleteMedicine = (id) => deleteRecord("medicines", id);
+    getAppointments = () => getRecords("appointments");
+    createAppointment = (appointment) => createRecord("appointments", appointment);
+    updateAppointment = (id, patch) => updateRecord("appointments", id, patch);
+    deleteAppointment = (id) => deleteRecord("appointments", id);
   }
 });
 
@@ -80,22 +229,26 @@ async function syncFromBackend(db3) {
   db3.__hydrating = true;
   try {
     for (const name of syncOrder) {
-      const rows = await getRecords(remoteName(name));
-      if (name === "settings") {
-        await db3.settings.clear();
-        const row = rows[0];
-        if (row) {
-          await db3.settings.bulkPut(
-            Object.entries(row).filter(([key]) => !["id", "created_at", "updated_at"].includes(key)).map(([key, value]) => ({ key, value }))
-          );
+      try {
+        const rows = await getRecords(remoteName(name));
+        if (name === "settings") {
+          await db3.settings.clear();
+          const row = rows?.[0];
+          if (row) {
+            await db3.settings.bulkPut(
+              Object.entries(row).filter(([key]) => !["id", "created_at", "updated_at"].includes(key)).map(([key, value]) => ({ key, value }))
+            );
+          }
+          continue;
         }
-        continue;
-      }
-      if (db3[name]) {
-        await db3[name].clear();
-        if (rows.length) {
-          await db3[name].bulkPut(rows);
+        if (db3[name] && Array.isArray(rows)) {
+          await db3[name].clear();
+          if (rows.length > 0) {
+            await db3[name].bulkPut(rows);
+          }
         }
+      } catch (tableErr) {
+        console.error(`[remoteSync] Error syncing ${name} from D1:`, tableErr?.message || tableErr);
       }
     }
   } finally {
@@ -136,7 +289,7 @@ var init_remoteSync = __esm({
       inventory_txns: "inventory_transactions"
     };
     remoteName = (name) => remoteNames[name] || name;
-    isBrowserRuntime = () => typeof window !== "undefined" && !(typeof process !== "undefined" && process.versions?.node);
+    isBrowserRuntime = () => typeof window !== "undefined" && (Boolean(globalThis.__FORCE_SYNC__) || !(typeof process !== "undefined" && process.versions?.node));
     syncFromSqlite = syncFromBackend;
   }
 });
@@ -489,10 +642,10 @@ __export(inventory_exports, {
   categoryList: () => categoryList,
   createBatch: () => createBatch,
   createCategory: () => createCategory,
-  createMedicine: () => createMedicine2,
+  createMedicine: () => createMedicine3,
   deleteBatch: () => deleteBatch,
   deleteCategory: () => deleteCategory,
-  deleteMedicine: () => deleteMedicine,
+  deleteMedicine: () => deleteMedicine2,
   ensureMedicineCategories: () => ensureMedicineCategories,
   expiryBuckets: () => expiryBuckets,
   lowStockList: () => lowStockList,
@@ -503,9 +656,9 @@ __export(inventory_exports, {
   txn: () => txn,
   updateBatch: () => updateBatch,
   updateCategory: () => updateCategory,
-  updateMedicine: () => updateMedicine
+  updateMedicine: () => updateMedicine2
 });
-async function createMedicine2(data, userId) {
+async function createMedicine3(data, userId) {
   return db_default.transaction("rw", [db_default.medicines, db_default.counters, db_default.activity_logs], async () => {
     const medicine_code = await makeCode("MED", "MD");
     const med = {
@@ -534,7 +687,7 @@ async function createMedicine2(data, userId) {
     return med;
   });
 }
-async function updateMedicine(id, patch, userId) {
+async function updateMedicine2(id, patch, userId) {
   return db_default.transaction("rw", [db_default.medicines, db_default.activity_logs], async () => {
     const med = await db_default.medicines.get(id);
     if (!med) throw new Error("Medicine not found");
@@ -554,7 +707,7 @@ async function archiveMedicine(id, userId) {
     return updated;
   });
 }
-async function deleteMedicine(id, userId) {
+async function deleteMedicine2(id, userId) {
   return db_default.transaction("rw", [db_default.medicines, db_default.batches, db_default.bill_items, db_default.prescription_items, db_default.activity_logs], async () => {
     const med = await db_default.medicines.get(id);
     if (!med) throw new Error("Medicine not found");
@@ -1052,6 +1205,7 @@ __export(AppContext_exports, {
 import React, { createContext, useContext, useEffect, useState, useCallback, useMemo } from "react";
 function AppProvider({ children }) {
   const [booting, setBooting] = useState(true);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [databaseError, setDatabaseError] = useState(null);
   const [user3] = useState(LOCAL_USER);
   const [settings, setSettings] = useState(DEFAULT_SETTINGS);
@@ -1068,32 +1222,60 @@ function AppProvider({ children }) {
     } catch (e) {
     }
   }, []);
+  const syncAndInit = useCallback(async () => {
+    try {
+      if (isBrowserRuntime()) {
+        await syncFromBackend(db_default);
+        setDatabaseError(null);
+      }
+      await ensureMedicineCategories();
+      const s = await getSettings();
+      setSettings(s);
+      setThemeState(s.theme || "light");
+      setLangState(s.lang || "en");
+      globalThis.__heevaUser = LOCAL_USER;
+      try {
+        await syncAlerts(LOCAL_USER.id);
+      } catch (e) {
+      }
+      refreshNotifs();
+    } catch (e) {
+      console.error("Initialization error", e);
+      throw e;
+    }
+  }, [refreshNotifs]);
   useEffect(() => {
+    let mounted = true;
     (async () => {
       try {
         if (isBrowserRuntime()) {
           await getHealth();
-          await syncFromBackend(db_default);
           setDatabaseError(null);
         }
-        await ensureMedicineCategories();
-        const s = await getSettings();
-        setSettings(s);
-        setThemeState(s.theme || "light");
-        setLangState(s.lang || "en");
-        globalThis.__heevaUser = LOCAL_USER;
-        try {
-          await syncAlerts(LOCAL_USER.id);
-        } catch (e) {
+        const isValidSession = await authApi.verify();
+        if (mounted) {
+          if (isValidSession) {
+            setIsAuthenticated(true);
+            await syncAndInit();
+          } else {
+            setIsAuthenticated(false);
+          }
         }
-        refreshNotifs();
       } catch (e) {
         console.error("Backend boot error", e);
-        setDatabaseError(e?.message || "Unable to connect to the backend server.");
+        if (mounted) {
+          setDatabaseError(e?.message || "Unable to connect to the backend server.");
+        }
       } finally {
-        setBooting(false);
+        if (mounted) {
+          setBooting(false);
+        }
       }
     })();
+    const onUnauthorized = () => {
+      setIsAuthenticated(false);
+    };
+    window.addEventListener("heeva:unauthorized", onUnauthorized);
     const on = () => setOnline(true);
     const off = () => setOnline(false);
     window.addEventListener("online", on);
@@ -1108,13 +1290,39 @@ function AppProvider({ children }) {
     const mq = window.matchMedia("(display-mode: standalone)");
     setStandalone(mq.matches);
     if (mq.addEventListener) mq.addEventListener("change", (e) => setStandalone(e.matches));
+    const onFocusSync = () => {
+      if (typeof document !== "undefined" && document.visibilityState === "visible") {
+        syncFromBackend(db_default).catch(() => {
+        });
+      }
+    };
+    if (typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", onFocusSync);
+    }
+    window.addEventListener("focus", onFocusSync);
     return () => {
+      mounted = false;
+      window.removeEventListener("heeva:unauthorized", onUnauthorized);
       window.removeEventListener("online", on);
       window.removeEventListener("offline", off);
       window.removeEventListener("beforeinstallprompt", bip);
       window.removeEventListener("appinstalled", ai);
+      if (typeof document !== "undefined") {
+        document.removeEventListener("visibilitychange", onFocusSync);
+      }
+      window.removeEventListener("focus", onFocusSync);
     };
-  }, [refreshNotifs]);
+  }, [syncAndInit]);
+  const login = useCallback(async (password) => {
+    const res = await authApi.login(password);
+    setIsAuthenticated(true);
+    await syncAndInit();
+    return res;
+  }, [syncAndInit]);
+  const logout = useCallback(async () => {
+    await authApi.logout();
+    setIsAuthenticated(false);
+  }, []);
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
   }, [theme]);
@@ -1152,6 +1360,9 @@ function AppProvider({ children }) {
   const can = useCallback(() => true, []);
   const value = {
     booting,
+    isAuthenticated,
+    login,
+    logout,
     databaseError,
     user: user3,
     settings,
@@ -1483,7 +1694,7 @@ function printInvoiceA4(bill2, items, payments, s) {
   const paidRows = payments.filter((p) => p.kind === "payment");
   const paymentStatus = { PAID: "Paid", PARTIAL: "Partially Paid", PENDING: "Pending", CANCELLED: "Cancelled" }[bill2.payment_status] || bill2.payment_status;
   printNode(
-    /* @__PURE__ */ React3.createElement("div", { className: "print-job a4" }, /* @__PURE__ */ React3.createElement("style", null, `@page { size: A4 landscape; margin: 0; } .a4-sheet { width: 297mm; height: 210mm; display: flex; flex-direction: row; font-family: Inter, system-ui, sans-serif; color: #16232f; } .a4-copy { width: 50%; height: 210mm; padding: 10mm 8mm; overflow: hidden; position: relative; } .a4-copy + .a4-copy { border-left: 0.3mm dashed #8994a3; } .a4-copy + .a4-copy::before { content: 'CUT HERE'; position: absolute; top: 50%; left: -3.5mm; transform: translate(-50%, -50%) rotate(-90deg); background: #fff; padding: 0 4mm; color: #8994a3; font-size: 8px; letter-spacing: 1px; } .a4-doc { width: 100%; font-size: 8px; line-height: 1.15; } .a4-head { margin-bottom: 3mm; } .a4-brand img { width: 12mm; height: 12mm; } .a4-clinic { font-size: 14px; } .a4-doctype { font-size: 8px; } .a4-parties { margin: 2mm 0; } .a4-pbox { padding: 5px 6px; font-size: 8px; } .a4-pname { font-size: 10px; } .a4-table { margin-top: 2mm; font-size: 8px; } .a4-table th { padding: 4px 5px; font-size: 7px; } .a4-table td { padding: 4px 5px; } .a4-totals { width: 135px; padding: 6px 8px; } .a4-totals .kv { font-size: 8px; } .a4-totals .kv-total b { font-size: 11px; } .a4-sign { margin-top: 12mm; font-size: 8px; }`), /* @__PURE__ */ React3.createElement("div", { className: "a4-sheet" }, [["CLINIC COPY"], ["PATIENT COPY"]].map(([copyLabel]) => /* @__PURE__ */ React3.createElement("div", { className: "a4-copy", key: copyLabel }, /* @__PURE__ */ React3.createElement("div", { className: "a4-doc" }, /* @__PURE__ */ React3.createElement("div", { className: "a4-head" }, /* @__PURE__ */ React3.createElement("div", { className: "a4-brand" }, /* @__PURE__ */ React3.createElement(Logo, { size: 52, src: s.logo }), /* @__PURE__ */ React3.createElement("div", null, /* @__PURE__ */ React3.createElement("div", { className: "a4-clinic" }, s.clinic_name), /* @__PURE__ */ React3.createElement("div", { className: "a4-tag" }, s.tagline), /* @__PURE__ */ React3.createElement("div", { className: "a4-addr" }, s.address), /* @__PURE__ */ React3.createElement("div", { className: "a4-phone" }, "Ph: ", s.phone, " ", s.email ? ` \xB7 ${s.email}` : ""))), /* @__PURE__ */ React3.createElement("div", { className: "a4-billbox" }, /* @__PURE__ */ React3.createElement("div", { className: "a4-doctype" }, "PAYMENT RECEIPT \xB7 ", copyLabel), /* @__PURE__ */ React3.createElement("div", { className: "a4-docno" }, bill2.bill_no), /* @__PURE__ */ React3.createElement("div", null, fmtDateTime(bill2.time)), bill2.status === "CANCELLED" && /* @__PURE__ */ React3.createElement("div", { className: "a4-cancelstamp" }, "CANCELLED"))), /* @__PURE__ */ React3.createElement("div", { className: "a4-parties" }, /* @__PURE__ */ React3.createElement("div", { className: "a4-pbox" }, /* @__PURE__ */ React3.createElement("div", { className: "a4-plabel" }, "Billed To"), /* @__PURE__ */ React3.createElement("div", { className: "a4-pname" }, bill2.patient_name), /* @__PURE__ */ React3.createElement("div", null, "UHID: ", /* @__PURE__ */ React3.createElement("b", null, bill2.uhid)), (bill2.patient_age || bill2.patient_gender) && /* @__PURE__ */ React3.createElement("div", null, "Age / Gender: ", /* @__PURE__ */ React3.createElement("b", null, [bill2.patient_age, bill2.patient_gender].filter(Boolean).join(" / "))), bill2.patient_mobile && /* @__PURE__ */ React3.createElement("div", null, "Mobile: ", /* @__PURE__ */ React3.createElement("b", null, bill2.patient_mobile))), /* @__PURE__ */ React3.createElement("div", { className: "a4-pbox" }, /* @__PURE__ */ React3.createElement("div", { className: "a4-plabel" }, "Clinician"), /* @__PURE__ */ React3.createElement("div", { className: "a4-pname" }, s.doctor_name), /* @__PURE__ */ React3.createElement("div", null, s.doctor_qual), /* @__PURE__ */ React3.createElement("div", null, s.doctor_role)), /* @__PURE__ */ React3.createElement("div", { className: "a4-pbox" }, /* @__PURE__ */ React3.createElement("div", { className: "a4-plabel" }, "Payment Status"), /* @__PURE__ */ React3.createElement("div", { className: "a4-pname" }, paymentStatus), /* @__PURE__ */ React3.createElement("div", null, "Paid: ", /* @__PURE__ */ React3.createElement("b", null, money(bill2.paid, s.currency)), " \xB7 Balance: ", /* @__PURE__ */ React3.createElement("b", null, money(bill2.total - (bill2.paid || 0), s.currency))))), /* @__PURE__ */ React3.createElement("table", { className: "a4-table" }, /* @__PURE__ */ React3.createElement("thead", null, /* @__PURE__ */ React3.createElement("tr", null, /* @__PURE__ */ React3.createElement("th", { style: { width: "6%" } }, "Sr."), /* @__PURE__ */ React3.createElement("th", { style: { width: "42%" } }, "Item Name"), /* @__PURE__ */ React3.createElement("th", null, "Type"), /* @__PURE__ */ React3.createElement("th", { className: "th-right" }, "Qty"), /* @__PURE__ */ React3.createElement("th", { className: "th-right" }, "Unit Price"), /* @__PURE__ */ React3.createElement("th", { className: "th-right" }, "Total"))), /* @__PURE__ */ React3.createElement("tbody", null, items.map((it, index) => /* @__PURE__ */ React3.createElement("tr", { key: it.id }, /* @__PURE__ */ React3.createElement("td", null, index + 1), /* @__PURE__ */ React3.createElement("td", null, it.name, it.batch_no ? /* @__PURE__ */ React3.createElement("span", { className: "a4-sub" }, " \u2014 batch ", it.batch_no) : ""), /* @__PURE__ */ React3.createElement("td", { className: "a4-cap" }, it.item_type), /* @__PURE__ */ React3.createElement("td", { className: "th-right" }, fmtQty(it.qty)), /* @__PURE__ */ React3.createElement("td", { className: "th-right" }, money(it.price, s.currency)), /* @__PURE__ */ React3.createElement("td", { className: "th-right" }, money(it.amount, s.currency)))))), /* @__PURE__ */ React3.createElement("div", { className: "a4-totalrow" }, /* @__PURE__ */ React3.createElement("div", { className: "a4-note" }, bill2.cancel_reason && /* @__PURE__ */ React3.createElement("p", { className: "a4-cancel" }, "Reason for cancellation: ", bill2.cancel_reason), /* @__PURE__ */ React3.createElement("p", { className: "a4-thanks" }, s.receipt_footer || "Thank you. Get well soon!"), /* @__PURE__ */ React3.createElement("p", { className: "a4-contact" }, "For enquiries contact ", s.phone)), /* @__PURE__ */ React3.createElement("div", { className: "a4-totals" }, /* @__PURE__ */ React3.createElement("div", { className: "kv" }, /* @__PURE__ */ React3.createElement("span", null, "Subtotal"), /* @__PURE__ */ React3.createElement("b", null, money(bill2.subtotal, s.currency))), /* @__PURE__ */ React3.createElement("div", { className: "kv" }, /* @__PURE__ */ React3.createElement("span", null, "Discount"), /* @__PURE__ */ React3.createElement("b", null, "\u2212 ", money(bill2.discount, s.currency))), /* @__PURE__ */ React3.createElement("div", { className: "kv kv-total" }, /* @__PURE__ */ React3.createElement("span", null, "Total Amount"), /* @__PURE__ */ React3.createElement("b", null, money(bill2.total, s.currency))))), paidRows.length > 0 && /* @__PURE__ */ React3.createElement("div", { className: "a4-payrow" }, paidRows.map((p) => /* @__PURE__ */ React3.createElement("span", { key: p.id }, p.method, ": ", money(p.amount, s.currency), " \xB7 ", fmtDate(p.at)))), /* @__PURE__ */ React3.createElement("div", { className: "a4-sign" }, /* @__PURE__ */ React3.createElement("div", null, "Payment Method: ", paidRows.map((p) => p.method).join(", ") || "Pending"), /* @__PURE__ */ React3.createElement("div", null, "Thank You")))))))
+    /* @__PURE__ */ React3.createElement("div", { className: "print-job a4" }, /* @__PURE__ */ React3.createElement("style", null, `@page { size: A4 landscape; margin: 0 !important; } .a4-sheet { width: 297mm; height: 210mm; display: flex; flex-direction: row; font-family: Inter, system-ui, sans-serif; color: #16232f; } .a4-copy { width: 50%; height: 210mm; padding: 10mm 8mm; overflow: hidden; position: relative; } .a4-copy + .a4-copy { border-left: 0.3mm dashed #8994a3; } .a4-copy + .a4-copy::before { content: 'CUT HERE'; position: absolute; top: 50%; left: -3.5mm; transform: translate(-50%, -50%) rotate(-90deg); background: #fff; padding: 0 4mm; color: #8994a3; font-size: 8px; letter-spacing: 1px; } .a4-doc { width: 100%; font-size: 8px; line-height: 1.15; } .a4-head { margin-bottom: 3mm; } .a4-brand img { width: 12mm; height: 12mm; } .a4-clinic { font-size: 14px; } .a4-doctype { font-size: 8px; } .a4-parties { margin: 2mm 0; } .a4-pbox { padding: 5px 6px; font-size: 8px; } .a4-pname { font-size: 10px; } .a4-table { margin-top: 2mm; font-size: 8px; } .a4-table th { padding: 4px 5px; font-size: 7px; } .a4-table td { padding: 4px 5px; } .a4-totals { width: 135px; padding: 6px 8px; } .a4-totals .kv { font-size: 8px; } .a4-totals .kv-total b { font-size: 11px; } .a4-sign { margin-top: 12mm; font-size: 8px; }`), /* @__PURE__ */ React3.createElement("div", { className: "a4-sheet" }, [["CLINIC COPY"], ["PATIENT COPY"]].map(([copyLabel]) => /* @__PURE__ */ React3.createElement("div", { className: "a4-copy", key: copyLabel }, /* @__PURE__ */ React3.createElement("div", { className: "a4-doc" }, /* @__PURE__ */ React3.createElement("div", { className: "a4-head" }, /* @__PURE__ */ React3.createElement("div", { className: "a4-brand" }, /* @__PURE__ */ React3.createElement(Logo, { size: 52, src: s.logo }), /* @__PURE__ */ React3.createElement("div", null, /* @__PURE__ */ React3.createElement("div", { className: "a4-clinic" }, s.clinic_name), /* @__PURE__ */ React3.createElement("div", { className: "a4-tag" }, s.tagline), /* @__PURE__ */ React3.createElement("div", { className: "a4-addr" }, s.address), /* @__PURE__ */ React3.createElement("div", { className: "a4-phone" }, "Ph: ", s.phone, " ", s.email ? ` \xB7 ${s.email}` : ""))), /* @__PURE__ */ React3.createElement("div", { className: "a4-billbox" }, /* @__PURE__ */ React3.createElement("div", { className: "a4-doctype" }, "PAYMENT RECEIPT \xB7 ", copyLabel), /* @__PURE__ */ React3.createElement("div", { className: "a4-docno" }, bill2.bill_no), /* @__PURE__ */ React3.createElement("div", null, fmtDateTime(bill2.time)), bill2.status === "CANCELLED" && /* @__PURE__ */ React3.createElement("div", { className: "a4-cancelstamp" }, "CANCELLED"))), /* @__PURE__ */ React3.createElement("div", { className: "a4-parties" }, /* @__PURE__ */ React3.createElement("div", { className: "a4-pbox" }, /* @__PURE__ */ React3.createElement("div", { className: "a4-plabel" }, "Billed To"), /* @__PURE__ */ React3.createElement("div", { className: "a4-pname" }, bill2.patient_name), /* @__PURE__ */ React3.createElement("div", null, "UHID: ", /* @__PURE__ */ React3.createElement("b", null, bill2.uhid)), (bill2.patient_age || bill2.patient_gender) && /* @__PURE__ */ React3.createElement("div", null, "Age / Gender: ", /* @__PURE__ */ React3.createElement("b", null, [bill2.patient_age, bill2.patient_gender].filter(Boolean).join(" / "))), bill2.patient_mobile && /* @__PURE__ */ React3.createElement("div", null, "Mobile: ", /* @__PURE__ */ React3.createElement("b", null, bill2.patient_mobile))), /* @__PURE__ */ React3.createElement("div", { className: "a4-pbox" }, /* @__PURE__ */ React3.createElement("div", { className: "a4-plabel" }, "Clinician"), /* @__PURE__ */ React3.createElement("div", { className: "a4-pname" }, s.doctor_name), /* @__PURE__ */ React3.createElement("div", null, s.doctor_qual), /* @__PURE__ */ React3.createElement("div", null, s.doctor_role)), /* @__PURE__ */ React3.createElement("div", { className: "a4-pbox" }, /* @__PURE__ */ React3.createElement("div", { className: "a4-plabel" }, "Payment Status"), /* @__PURE__ */ React3.createElement("div", { className: "a4-pname" }, paymentStatus), /* @__PURE__ */ React3.createElement("div", null, "Paid: ", /* @__PURE__ */ React3.createElement("b", null, money(bill2.paid, s.currency)), " \xB7 Balance: ", /* @__PURE__ */ React3.createElement("b", null, money(bill2.total - (bill2.paid || 0), s.currency))))), /* @__PURE__ */ React3.createElement("table", { className: "a4-table" }, /* @__PURE__ */ React3.createElement("thead", null, /* @__PURE__ */ React3.createElement("tr", null, /* @__PURE__ */ React3.createElement("th", { style: { width: "6%" } }, "Sr."), /* @__PURE__ */ React3.createElement("th", { style: { width: "42%" } }, "Item Name"), /* @__PURE__ */ React3.createElement("th", null, "Type"), /* @__PURE__ */ React3.createElement("th", { className: "th-right" }, "Qty"), /* @__PURE__ */ React3.createElement("th", { className: "th-right" }, "Unit Price"), /* @__PURE__ */ React3.createElement("th", { className: "th-right" }, "Total"))), /* @__PURE__ */ React3.createElement("tbody", null, items.map((it, index) => /* @__PURE__ */ React3.createElement("tr", { key: it.id }, /* @__PURE__ */ React3.createElement("td", null, index + 1), /* @__PURE__ */ React3.createElement("td", null, it.name, it.batch_no ? /* @__PURE__ */ React3.createElement("span", { className: "a4-sub" }, " \u2014 batch ", it.batch_no) : ""), /* @__PURE__ */ React3.createElement("td", { className: "a4-cap" }, it.item_type), /* @__PURE__ */ React3.createElement("td", { className: "th-right" }, fmtQty(it.qty)), /* @__PURE__ */ React3.createElement("td", { className: "th-right" }, money(it.price, s.currency)), /* @__PURE__ */ React3.createElement("td", { className: "th-right" }, money(it.amount, s.currency)))))), /* @__PURE__ */ React3.createElement("div", { className: "a4-totalrow" }, /* @__PURE__ */ React3.createElement("div", { className: "a4-note" }, bill2.cancel_reason && /* @__PURE__ */ React3.createElement("p", { className: "a4-cancel" }, "Reason for cancellation: ", bill2.cancel_reason), /* @__PURE__ */ React3.createElement("p", { className: "a4-thanks" }, s.receipt_footer || "Thank you. Get well soon!"), /* @__PURE__ */ React3.createElement("p", { className: "a4-contact" }, "For enquiries contact ", s.phone)), /* @__PURE__ */ React3.createElement("div", { className: "a4-totals" }, /* @__PURE__ */ React3.createElement("div", { className: "kv" }, /* @__PURE__ */ React3.createElement("span", null, "Subtotal"), /* @__PURE__ */ React3.createElement("b", null, money(bill2.subtotal, s.currency))), /* @__PURE__ */ React3.createElement("div", { className: "kv" }, /* @__PURE__ */ React3.createElement("span", null, "Discount"), /* @__PURE__ */ React3.createElement("b", null, "\u2212 ", money(bill2.discount, s.currency))), /* @__PURE__ */ React3.createElement("div", { className: "kv kv-total" }, /* @__PURE__ */ React3.createElement("span", null, "Total Amount"), /* @__PURE__ */ React3.createElement("b", null, money(bill2.total, s.currency))))), paidRows.length > 0 && /* @__PURE__ */ React3.createElement("div", { className: "a4-payrow" }, paidRows.map((p) => /* @__PURE__ */ React3.createElement("span", { key: p.id }, p.method, ": ", money(p.amount, s.currency), " \xB7 ", fmtDate(p.at)))), /* @__PURE__ */ React3.createElement("div", { className: "a4-sign" }, /* @__PURE__ */ React3.createElement("div", null, "Payment Method: ", paidRows.map((p) => p.method).join(", ") || "Pending"), /* @__PURE__ */ React3.createElement("div", null, "Thank You")))))))
   );
 }
 function printPrescription(pr, patient2) {
@@ -1491,17 +1702,17 @@ function printPrescription(pr, patient2) {
   const age = patient2 ? ageLabel(patient2) : "";
   const sex = patient2 ? patient2.gender || "" : "";
   printNode(
-    /* @__PURE__ */ React3.createElement("div", { className: "print-job a4" }, /* @__PURE__ */ React3.createElement("style", null, `@page { size: A4; margin: 10mm; } .prx { font-family: Inter, system-ui, sans-serif; color: #111; font-size: 12.5px; }`), /* @__PURE__ */ React3.createElement("div", { className: "prx" }, /* @__PURE__ */ React3.createElement("div", { className: "prx-head" }, /* @__PURE__ */ React3.createElement("div", { className: "prx-brand" }, /* @__PURE__ */ React3.createElement(Logo, { size: 54, src: s.logo }), /* @__PURE__ */ React3.createElement("div", null, /* @__PURE__ */ React3.createElement("div", { className: "prx-clinic" }, s.clinic_name), /* @__PURE__ */ React3.createElement("div", { className: "prx-addr" }, s.address), /* @__PURE__ */ React3.createElement("div", { className: "prx-phone" }, "Ph: ", s.phone))), /* @__PURE__ */ React3.createElement("div", { className: "prx-doc" }, /* @__PURE__ */ React3.createElement("div", { className: "prx-dname" }, s.doctor_name), /* @__PURE__ */ React3.createElement("div", { className: "prx-dqual" }, s.doctor_qual), /* @__PURE__ */ React3.createElement("div", { className: "prx-drole" }, s.doctor_role))), /* @__PURE__ */ React3.createElement("div", { className: "prx-pat" }, /* @__PURE__ */ React3.createElement("span", null, /* @__PURE__ */ React3.createElement("b", null, "Patient:"), " ", patient2?.name || "\u2014", " \xA0 ", /* @__PURE__ */ React3.createElement("b", null, "Age/Sex:"), " ", age, " / ", sex), /* @__PURE__ */ React3.createElement("span", null, /* @__PURE__ */ React3.createElement("b", null, "UHID:"), " ", pr.uhid), /* @__PURE__ */ React3.createElement("span", null, /* @__PURE__ */ React3.createElement("b", null, "Date:"), " ", fmtDate(pr.time))), pr.diagnosis && /* @__PURE__ */ React3.createElement("div", { className: "prx-diag" }, /* @__PURE__ */ React3.createElement("b", null, "Diagnosis:"), " ", pr.diagnosis), /* @__PURE__ */ React3.createElement("div", { className: "prx-rx" }, "\u211E"), /* @__PURE__ */ React3.createElement("table", { className: "prx-table" }, /* @__PURE__ */ React3.createElement("thead", null, /* @__PURE__ */ React3.createElement("tr", null, /* @__PURE__ */ React3.createElement("th", { style: { width: "30%" } }, "Medicine"), /* @__PURE__ */ React3.createElement("th", { style: { width: "16%" } }, "Dosage"), /* @__PURE__ */ React3.createElement("th", { style: { width: "20%" } }, "Frequency"), /* @__PURE__ */ React3.createElement("th", { style: { width: "14%" } }, "Duration"), /* @__PURE__ */ React3.createElement("th", null, "Instructions"))), /* @__PURE__ */ React3.createElement("tbody", null, (pr.items || []).map((it, i) => /* @__PURE__ */ React3.createElement("tr", { key: it.id }, /* @__PURE__ */ React3.createElement("td", null, /* @__PURE__ */ React3.createElement("b", null, i + 1, "."), " ", it.name), /* @__PURE__ */ React3.createElement("td", null, it.dosage || "\u2014"), /* @__PURE__ */ React3.createElement("td", null, it.frequency || "\u2014"), /* @__PURE__ */ React3.createElement("td", null, it.duration || "\u2014"), /* @__PURE__ */ React3.createElement("td", null, it.instruction || "\u2014"))))), pr.advice && /* @__PURE__ */ React3.createElement("div", { className: "prx-advice" }, /* @__PURE__ */ React3.createElement("b", null, "Advice:"), " ", pr.advice), pr.notes && /* @__PURE__ */ React3.createElement("div", { className: "prx-notes" }, /* @__PURE__ */ React3.createElement("b", null, "Notes:"), " ", pr.notes), /* @__PURE__ */ React3.createElement("div", { className: "prx-sign" }, /* @__PURE__ */ React3.createElement("div", { className: "prx-signline" }), /* @__PURE__ */ React3.createElement("div", null, s.doctor_name, /* @__PURE__ */ React3.createElement("br", null), /* @__PURE__ */ React3.createElement("span", { className: "prx-signqual" }, s.doctor_qual))), /* @__PURE__ */ React3.createElement("div", { className: "prx-foot" }, s.receipt_footer || "", " \xB7 ", s.phone)))
+    /* @__PURE__ */ React3.createElement("div", { className: "print-job a4" }, /* @__PURE__ */ React3.createElement("style", null, `@page { size: A4; margin: 0 !important; } .prx { padding: 12mm 14mm; box-sizing: border-box; font-family: Inter, system-ui, sans-serif; color: #111; font-size: 12.5px; }`), /* @__PURE__ */ React3.createElement("div", { className: "prx" }, /* @__PURE__ */ React3.createElement("div", { className: "prx-head" }, /* @__PURE__ */ React3.createElement("div", { className: "prx-brand" }, /* @__PURE__ */ React3.createElement(Logo, { size: 54, src: s.logo }), /* @__PURE__ */ React3.createElement("div", null, /* @__PURE__ */ React3.createElement("div", { className: "prx-clinic" }, s.clinic_name), /* @__PURE__ */ React3.createElement("div", { className: "prx-addr" }, s.address), /* @__PURE__ */ React3.createElement("div", { className: "prx-phone" }, "Ph: ", s.phone))), /* @__PURE__ */ React3.createElement("div", { className: "prx-doc" }, /* @__PURE__ */ React3.createElement("div", { className: "prx-dname" }, s.doctor_name), /* @__PURE__ */ React3.createElement("div", { className: "prx-dqual" }, s.doctor_qual), /* @__PURE__ */ React3.createElement("div", { className: "prx-drole" }, s.doctor_role))), /* @__PURE__ */ React3.createElement("div", { className: "prx-pat" }, /* @__PURE__ */ React3.createElement("span", null, /* @__PURE__ */ React3.createElement("b", null, "Patient:"), " ", patient2?.name || "\u2014", " \xA0 ", /* @__PURE__ */ React3.createElement("b", null, "Age/Sex:"), " ", age, " / ", sex), /* @__PURE__ */ React3.createElement("span", null, /* @__PURE__ */ React3.createElement("b", null, "UHID:"), " ", pr.uhid), /* @__PURE__ */ React3.createElement("span", null, /* @__PURE__ */ React3.createElement("b", null, "Date:"), " ", fmtDate(pr.time))), pr.diagnosis && /* @__PURE__ */ React3.createElement("div", { className: "prx-diag" }, /* @__PURE__ */ React3.createElement("b", null, "Diagnosis:"), " ", pr.diagnosis), /* @__PURE__ */ React3.createElement("div", { className: "prx-rx" }, "\u211E"), /* @__PURE__ */ React3.createElement("table", { className: "prx-table" }, /* @__PURE__ */ React3.createElement("thead", null, /* @__PURE__ */ React3.createElement("tr", null, /* @__PURE__ */ React3.createElement("th", { style: { width: "30%" } }, "Medicine"), /* @__PURE__ */ React3.createElement("th", { style: { width: "16%" } }, "Dosage"), /* @__PURE__ */ React3.createElement("th", { style: { width: "20%" } }, "Frequency"), /* @__PURE__ */ React3.createElement("th", { style: { width: "14%" } }, "Duration"), /* @__PURE__ */ React3.createElement("th", null, "Instructions"))), /* @__PURE__ */ React3.createElement("tbody", null, (pr.items || []).map((it, i) => /* @__PURE__ */ React3.createElement("tr", { key: it.id }, /* @__PURE__ */ React3.createElement("td", null, /* @__PURE__ */ React3.createElement("b", null, i + 1, "."), " ", it.name), /* @__PURE__ */ React3.createElement("td", null, it.dosage || "\u2014"), /* @__PURE__ */ React3.createElement("td", null, it.frequency || "\u2014"), /* @__PURE__ */ React3.createElement("td", null, it.duration || "\u2014"), /* @__PURE__ */ React3.createElement("td", null, it.instruction || "\u2014"))))), pr.advice && /* @__PURE__ */ React3.createElement("div", { className: "prx-advice" }, /* @__PURE__ */ React3.createElement("b", null, "Advice:"), " ", pr.advice), pr.notes && /* @__PURE__ */ React3.createElement("div", { className: "prx-notes" }, /* @__PURE__ */ React3.createElement("b", null, "Notes:"), " ", pr.notes), /* @__PURE__ */ React3.createElement("div", { className: "prx-sign" }, /* @__PURE__ */ React3.createElement("div", { className: "prx-signline" }), /* @__PURE__ */ React3.createElement("div", null, s.doctor_name, /* @__PURE__ */ React3.createElement("br", null), /* @__PURE__ */ React3.createElement("span", { className: "prx-signqual" }, s.doctor_qual))), /* @__PURE__ */ React3.createElement("div", { className: "prx-foot" }, s.receipt_footer || "", " \xB7 ", s.phone)))
   );
 }
 function printReport({ title, subtitle, columns, rows, totals, s }) {
   printNode(
-    /* @__PURE__ */ React3.createElement("div", { className: "print-job a4" }, /* @__PURE__ */ React3.createElement("style", null, `@page { size: A4 landscape; margin: 10mm; } .rpt { font-family: Inter, system-ui, sans-serif; color: #111; font-size: 11px; }`), /* @__PURE__ */ React3.createElement("div", { className: "rpt" }, /* @__PURE__ */ React3.createElement("div", { className: "rpt-head" }, /* @__PURE__ */ React3.createElement("div", null, /* @__PURE__ */ React3.createElement("div", { className: "rpt-clinic" }, s?.clinic_name || "HEEVA CLINIC"), /* @__PURE__ */ React3.createElement("div", { className: "rpt-title" }, title), subtitle && /* @__PURE__ */ React3.createElement("div", { className: "rpt-sub" }, subtitle)), /* @__PURE__ */ React3.createElement("div", { className: "rpt-date" }, "Generated ", fmtDateTime((/* @__PURE__ */ new Date()).toISOString()))), /* @__PURE__ */ React3.createElement("table", { className: "rpt-table" }, /* @__PURE__ */ React3.createElement("thead", null, /* @__PURE__ */ React3.createElement("tr", null, columns.map((c) => /* @__PURE__ */ React3.createElement("th", { key: c.key, className: c.align === "right" ? "th-right" : "" }, c.label)))), /* @__PURE__ */ React3.createElement("tbody", null, (rows || []).map((r, i) => /* @__PURE__ */ React3.createElement("tr", { key: i }, columns.map((c) => /* @__PURE__ */ React3.createElement("td", { key: c.key, className: c.align === "right" ? "th-right" : "" }, c.render ? c.render(r) : r[c.key] ?? "\u2014")))), totals && /* @__PURE__ */ React3.createElement("tr", { className: "rpt-total" }, columns.map((c, i) => /* @__PURE__ */ React3.createElement("td", { key: c.key, className: c.align === "right" ? "th-right" : "" }, i === 0 ? "TOTAL" : totals[c.key] != null ? totals[c.key] : ""))))), /* @__PURE__ */ React3.createElement("div", { className: "rpt-foot" }, s?.receipt_footer || "", " \xB7 ", s?.phone || "")))
+    /* @__PURE__ */ React3.createElement("div", { className: "print-job a4" }, /* @__PURE__ */ React3.createElement("style", null, `@page { size: A4 landscape; margin: 0 !important; } .rpt { padding: 12mm 14mm; box-sizing: border-box; font-family: Inter, system-ui, sans-serif; color: #111; font-size: 11px; }`), /* @__PURE__ */ React3.createElement("div", { className: "rpt" }, /* @__PURE__ */ React3.createElement("div", { className: "rpt-head" }, /* @__PURE__ */ React3.createElement("div", null, /* @__PURE__ */ React3.createElement("div", { className: "rpt-clinic" }, s?.clinic_name || "HEEVA CLINIC"), /* @__PURE__ */ React3.createElement("div", { className: "rpt-title" }, title), subtitle && /* @__PURE__ */ React3.createElement("div", { className: "rpt-sub" }, subtitle)), /* @__PURE__ */ React3.createElement("div", { className: "rpt-date" }, "Generated ", fmtDateTime((/* @__PURE__ */ new Date()).toISOString()))), /* @__PURE__ */ React3.createElement("table", { className: "rpt-table" }, /* @__PURE__ */ React3.createElement("thead", null, /* @__PURE__ */ React3.createElement("tr", null, columns.map((c) => /* @__PURE__ */ React3.createElement("th", { key: c.key, className: c.align === "right" ? "th-right" : "" }, c.label)))), /* @__PURE__ */ React3.createElement("tbody", null, (rows || []).map((r, i) => /* @__PURE__ */ React3.createElement("tr", { key: i }, columns.map((c) => /* @__PURE__ */ React3.createElement("td", { key: c.key, className: c.align === "right" ? "th-right" : "" }, c.render ? c.render(r) : r[c.key] ?? "\u2014")))), totals && /* @__PURE__ */ React3.createElement("tr", { className: "rpt-total" }, columns.map((c, i) => /* @__PURE__ */ React3.createElement("td", { key: c.key, className: c.align === "right" ? "th-right" : "" }, i === 0 ? "TOTAL" : totals[c.key] != null ? totals[c.key] : ""))))), /* @__PURE__ */ React3.createElement("div", { className: "rpt-foot" }, s?.receipt_footer || "", " \xB7 ", s?.phone || "")))
   );
 }
 function printPatientCard(p, s) {
   return printNode(
-    /* @__PURE__ */ React3.createElement("div", { className: "print-job a4" }, /* @__PURE__ */ React3.createElement("style", null, `@page { size: A4; margin: 15mm; } .pcc { font-family: Inter, system-ui, sans-serif; color: #111; }`), /* @__PURE__ */ React3.createElement("div", { className: "pcc" }, /* @__PURE__ */ React3.createElement("div", { className: "pcc-card" }, /* @__PURE__ */ React3.createElement("div", { className: "pcc-top" }, /* @__PURE__ */ React3.createElement("div", { className: "pcc-brand" }, /* @__PURE__ */ React3.createElement(Logo, { size: 40, src: s.logo }), /* @__PURE__ */ React3.createElement("div", null, /* @__PURE__ */ React3.createElement("div", { className: "pcc-clinic" }, s.clinic_name), /* @__PURE__ */ React3.createElement("div", { className: "pcc-tag" }, s.tagline))), /* @__PURE__ */ React3.createElement("div", { className: "pcc-doctor" }, s.doctor_name, /* @__PURE__ */ React3.createElement("br", null), /* @__PURE__ */ React3.createElement("span", { className: "pcc-qual" }, s.doctor_qual))), /* @__PURE__ */ React3.createElement("div", { className: "pcc-body" }, /* @__PURE__ */ React3.createElement("div", { className: "pcc-name" }, p.name), /* @__PURE__ */ React3.createElement("div", { className: "pcc-uhid" }, p.uhid), /* @__PURE__ */ React3.createElement("div", { className: "pcc-grid" }, /* @__PURE__ */ React3.createElement("div", null, /* @__PURE__ */ React3.createElement("span", null, "Age / Sex"), /* @__PURE__ */ React3.createElement("b", null, ageLabel(p), " / ", p.gender || "\u2014")), /* @__PURE__ */ React3.createElement("div", null, /* @__PURE__ */ React3.createElement("span", null, "DOB"), /* @__PURE__ */ React3.createElement("b", null, fmtDate(p.dob))), /* @__PURE__ */ React3.createElement("div", null, /* @__PURE__ */ React3.createElement("span", null, "Blood Group"), /* @__PURE__ */ React3.createElement("b", null, p.blood_group || "\u2014")), /* @__PURE__ */ React3.createElement("div", null, /* @__PURE__ */ React3.createElement("span", null, "Mobile"), /* @__PURE__ */ React3.createElement("b", null, p.mobile || "\u2014")), /* @__PURE__ */ React3.createElement("div", null, /* @__PURE__ */ React3.createElement("span", null, "Allergies"), /* @__PURE__ */ React3.createElement("b", null, p.allergies || "None recorded")), /* @__PURE__ */ React3.createElement("div", null, /* @__PURE__ */ React3.createElement("span", null, "Registered"), /* @__PURE__ */ React3.createElement("b", null, fmtDate(p.reg_date))))), /* @__PURE__ */ React3.createElement("div", { className: "pcc-foot" }, /* @__PURE__ */ React3.createElement("span", { className: "pcc-barcode", "aria-hidden": "true" }), /* @__PURE__ */ React3.createElement("div", { className: "pcc-contact" }, s.address, /* @__PURE__ */ React3.createElement("br", null), "Phone: ", s.phone)))))
+    /* @__PURE__ */ React3.createElement("div", { className: "print-job a4" }, /* @__PURE__ */ React3.createElement("style", null, `@page { size: A4; margin: 0 !important; } .pcc { padding: 16mm; box-sizing: border-box; font-family: Inter, system-ui, sans-serif; color: #111; }`), /* @__PURE__ */ React3.createElement("div", { className: "pcc" }, /* @__PURE__ */ React3.createElement("div", { className: "pcc-card" }, /* @__PURE__ */ React3.createElement("div", { className: "pcc-top" }, /* @__PURE__ */ React3.createElement("div", { className: "pcc-brand" }, /* @__PURE__ */ React3.createElement(Logo, { size: 40, src: s.logo }), /* @__PURE__ */ React3.createElement("div", null, /* @__PURE__ */ React3.createElement("div", { className: "pcc-clinic" }, s.clinic_name), /* @__PURE__ */ React3.createElement("div", { className: "pcc-tag" }, s.tagline))), /* @__PURE__ */ React3.createElement("div", { className: "pcc-doctor" }, s.doctor_name, /* @__PURE__ */ React3.createElement("br", null), /* @__PURE__ */ React3.createElement("span", { className: "pcc-qual" }, s.doctor_qual))), /* @__PURE__ */ React3.createElement("div", { className: "pcc-body" }, /* @__PURE__ */ React3.createElement("div", { className: "pcc-name" }, p.name), /* @__PURE__ */ React3.createElement("div", { className: "pcc-uhid" }, p.uhid), /* @__PURE__ */ React3.createElement("div", { className: "pcc-grid" }, /* @__PURE__ */ React3.createElement("div", null, /* @__PURE__ */ React3.createElement("span", null, "Age / Sex"), /* @__PURE__ */ React3.createElement("b", null, ageLabel(p), " / ", p.gender || "\u2014")), /* @__PURE__ */ React3.createElement("div", null, /* @__PURE__ */ React3.createElement("span", null, "DOB"), /* @__PURE__ */ React3.createElement("b", null, fmtDate(p.dob))), /* @__PURE__ */ React3.createElement("div", null, /* @__PURE__ */ React3.createElement("span", null, "Blood Group"), /* @__PURE__ */ React3.createElement("b", null, p.blood_group || "\u2014")), /* @__PURE__ */ React3.createElement("div", null, /* @__PURE__ */ React3.createElement("span", null, "Mobile"), /* @__PURE__ */ React3.createElement("b", null, p.mobile || "\u2014")), /* @__PURE__ */ React3.createElement("div", null, /* @__PURE__ */ React3.createElement("span", null, "Allergies"), /* @__PURE__ */ React3.createElement("b", null, p.allergies || "None recorded")), /* @__PURE__ */ React3.createElement("div", null, /* @__PURE__ */ React3.createElement("span", null, "Registered"), /* @__PURE__ */ React3.createElement("b", null, fmtDate(p.reg_date))))), /* @__PURE__ */ React3.createElement("div", { className: "pcc-foot" }, /* @__PURE__ */ React3.createElement("span", { className: "pcc-barcode", "aria-hidden": "true" }), /* @__PURE__ */ React3.createElement("div", { className: "pcc-contact" }, s.address, /* @__PURE__ */ React3.createElement("br", null), "Phone: ", s.phone)))))
   );
 }
 var _printFn, printNode, money;
@@ -1583,7 +1794,8 @@ import {
   Sun,
   Download,
   WifiOff,
-  ChevronRight as ChevronRight2
+  ChevronRight as ChevronRight2,
+  Lock
 } from "lucide-react";
 function GlobalSearch() {
   const [q, setQ] = useState4("");
@@ -1654,7 +1866,7 @@ function NotificationBell() {
   )))));
 }
 function AppShell() {
-  const { user: user3, t, settings, theme, setTheme, online, toasts, install, installEvt, standalone, can } = useApp();
+  const { user: user3, t, settings, theme, setTheme, online, toasts, install, installEvt, standalone, can, logout } = useApp();
   const navigate = useNavigate();
   const location = useLocation();
   const today = todayStr();
@@ -1678,7 +1890,7 @@ function AppShell() {
         i.hot && /* @__PURE__ */ React5.createElement("span", { className: "side-hot-dot" })
       );
     }));
-  })), /* @__PURE__ */ React5.createElement("div", { className: "side-foot" }, /* @__PURE__ */ React5.createElement("div", { className: "side-foot-card" }, /* @__PURE__ */ React5.createElement("div", { className: "sfc-name" }, user3?.name || settings.clinic_name), /* @__PURE__ */ React5.createElement("div", { className: "sfc-qual" }, "Administrator")))), /* @__PURE__ */ React5.createElement("div", { className: "main-col" }, /* @__PURE__ */ React5.createElement("header", { className: "topbar" }, /* @__PURE__ */ React5.createElement("div", { className: "topbar-left" }, /* @__PURE__ */ React5.createElement(GlobalSearch, null)), /* @__PURE__ */ React5.createElement("div", { className: "topbar-center" }, /* @__PURE__ */ React5.createElement(Btn, { variant: "accent", icon: Plus, size: "sm", onClick: () => navigate("/patients?new=1"), title: "Register a new patient" }, t("new_patient", "New Patient"))), /* @__PURE__ */ React5.createElement("div", { className: "topbar-right" }, !online && /* @__PURE__ */ React5.createElement("span", { className: "offline-pill", title: t("offline") }, /* @__PURE__ */ React5.createElement(WifiOff, { size: 13 }), " Offline"), /* @__PURE__ */ React5.createElement("span", { className: "topbar-date" }, dateLabel), installEvt && !standalone && /* @__PURE__ */ React5.createElement(Btn, { variant: "ghost", size: "sm", icon: Download, onClick: install, title: "Install HEEVA Clinic as a desktop app" }, t("install_app", "Install")), /* @__PURE__ */ React5.createElement(NotificationBell, null), /* @__PURE__ */ React5.createElement(IconBtn, { title: theme === "light" ? "Switch to dark mode" : "Switch to light mode", icon: theme === "light" ? Moon : Sun, onClick: () => setTheme(theme === "light" ? "dark" : "light") }))), !online && /* @__PURE__ */ React5.createElement("div", { className: "offline-banner" }, /* @__PURE__ */ React5.createElement(WifiOff, { size: 14 }), " ", t("offline", "Offline \u2014 changes are saved on this device")), /* @__PURE__ */ React5.createElement("main", { className: "content" }, /* @__PURE__ */ React5.createElement(Outlet, null))), /* @__PURE__ */ React5.createElement(ToastStack, { toasts }));
+  })), /* @__PURE__ */ React5.createElement("div", { className: "side-foot" }, /* @__PURE__ */ React5.createElement("div", { className: "side-foot-card" }, /* @__PURE__ */ React5.createElement("div", { className: "sfc-name" }, user3?.name || settings.clinic_name), /* @__PURE__ */ React5.createElement("div", { className: "sfc-qual" }, "Administrator")))), /* @__PURE__ */ React5.createElement("div", { className: "main-col" }, /* @__PURE__ */ React5.createElement("header", { className: "topbar" }, /* @__PURE__ */ React5.createElement("div", { className: "topbar-left" }, /* @__PURE__ */ React5.createElement(GlobalSearch, null)), /* @__PURE__ */ React5.createElement("div", { className: "topbar-center" }, /* @__PURE__ */ React5.createElement(Btn, { variant: "accent", icon: Plus, size: "sm", onClick: () => navigate("/patients?new=1"), title: "Register a new patient" }, t("new_patient", "New Patient"))), /* @__PURE__ */ React5.createElement("div", { className: "topbar-right" }, !online && /* @__PURE__ */ React5.createElement("span", { className: "offline-pill", title: t("offline") }, /* @__PURE__ */ React5.createElement(WifiOff, { size: 13 }), " Offline"), /* @__PURE__ */ React5.createElement("span", { className: "topbar-date" }, dateLabel), installEvt && !standalone && /* @__PURE__ */ React5.createElement(Btn, { variant: "ghost", size: "sm", icon: Download, onClick: install, title: "Install HEEVA Clinic as a desktop app" }, t("install_app", "Install")), /* @__PURE__ */ React5.createElement(NotificationBell, null), /* @__PURE__ */ React5.createElement(IconBtn, { title: theme === "light" ? "Switch to dark mode" : "Switch to light mode", icon: theme === "light" ? Moon : Sun, onClick: () => setTheme(theme === "light" ? "dark" : "light") }), /* @__PURE__ */ React5.createElement(IconBtn, { title: "Lock Application", icon: Lock, onClick: logout }))), !online && /* @__PURE__ */ React5.createElement("div", { className: "offline-banner" }, /* @__PURE__ */ React5.createElement(WifiOff, { size: 14 }), " ", t("offline", "Offline \u2014 changes are saved on this device")), /* @__PURE__ */ React5.createElement("main", { className: "content" }, /* @__PURE__ */ React5.createElement(Outlet, null))), /* @__PURE__ */ React5.createElement(ToastStack, { toasts }));
 }
 var NAV;
 var init_AppShell = __esm({
@@ -2058,11 +2270,11 @@ __export(patients_exports, {
   addVitals: () => addVitals,
   ageOf: () => ageOf,
   archivePatient: () => archivePatient,
-  deletePatient: () => deletePatient,
+  deletePatient: () => deletePatient2,
   patientVisits: () => patientVisits,
   reactivatePatient: () => reactivatePatient,
   registerPatient: () => registerPatient,
-  updatePatient: () => updatePatient
+  updatePatient: () => updatePatient2
 });
 async function registerPatient(data, userId, { temp = false } = {}) {
   const settings = await getSettings();
@@ -2108,7 +2320,7 @@ async function registerPatient(data, userId, { temp = false } = {}) {
     return p;
   });
 }
-async function updatePatient(id, patch, userId) {
+async function updatePatient2(id, patch, userId) {
   return db_default.transaction("rw", [db_default.patients, db_default.activity_logs], async () => {
     const p = await db_default.patients.get(id);
     if (!p) throw new Error("Patient not found");
@@ -2140,7 +2352,7 @@ async function reactivatePatient(id, userId) {
     return updated;
   });
 }
-async function deletePatient(id, userId) {
+async function deletePatient2(id, userId) {
   return db_default.transaction("rw", [db_default.patients, db_default.consultations, db_default.bills, db_default.prescriptions, db_default.appointments, db_default.patient_vitals, db_default.activity_logs], async () => {
     const p = await db_default.patients.get(id);
     if (!p) throw new Error("Patient not found");
@@ -3257,7 +3469,7 @@ var init_CsvImportModal = __esm({
 import React9, { useState as useState6, useEffect as useEffect6, useMemo as useMemo5 } from "react";
 import { useNavigate as useNavigate3, useSearchParams } from "react-router-dom";
 import { useLiveQuery as useLiveQuery3 } from "dexie-react-hooks";
-import { UserPlus as UserPlus2, Download as Download3, Upload as Upload2, Search as Search3, CheckCircle2 as CheckCircle23, Phone, Droplets } from "lucide-react";
+import { UserPlus as UserPlus2, Download as Download3, Upload as Upload2, Search as Search3, CheckCircle2 as CheckCircle23, Phone, Droplets, Trash2 } from "lucide-react";
 function emptyForm() {
   return {
     name: "",
@@ -3350,7 +3562,7 @@ function RegisterModal({ open, onClose, prefill = {} }) {
   );
 }
 function Patients() {
-  const { t, settings } = useApp();
+  const { t, settings, user: user3, pushToast } = useApp();
   const navigate = useNavigate3();
   const [params, setParams] = useSearchParams();
   const [q, setQ] = useState6("");
@@ -3358,6 +3570,8 @@ function Patients() {
   const [reg, setReg] = useState6(params.get("new") === "1");
   const [importOpen, setImportOpen] = useState6(false);
   const [qMobile, setQMobile] = useState6("");
+  const [deleteTarget, setDeleteTarget] = useState6(null);
+  const [isDeleting, setIsDeleting] = useState6(false);
   const patients = useLiveQuery3(async () => {
     const all = await db_default.patients.toArray();
     const consults = await db_default.consultations.toArray();
@@ -3403,7 +3617,21 @@ function Patients() {
         { key: "age", label: "Age / Gender", sortable: true, sortValue: (p) => ageLabel(p), render: (p) => `${ageLabel(p)} \xB7 ${p.gender || "\u2014"}` },
         { key: "mobile", label: "Mobile", sortable: true, render: (p) => /* @__PURE__ */ React9.createElement("span", { className: "cell-mono" }, p.mobile || "\u2014") },
         { key: "reg_date", label: "Registered", sortable: true, render: (p) => fmtDate(p.reg_date) },
-        { key: "last_visit", label: "Last Visit", sortable: true, sortValue: (p) => p.last_visit || "", render: (p) => p.last_visit ? fmtDate(p.last_visit) : /* @__PURE__ */ React9.createElement(Badge, { tone: "gray" }, "First visit") }
+        { key: "last_visit", label: "Last Visit", sortable: true, sortValue: (p) => p.last_visit || "", render: (p) => p.last_visit ? fmtDate(p.last_visit) : /* @__PURE__ */ React9.createElement(Badge, { tone: "gray" }, "First visit") },
+        {
+          key: "actions",
+          label: "",
+          align: "right",
+          render: (p) => /* @__PURE__ */ React9.createElement("div", { className: "row-actions", onClick: (e) => e.stopPropagation() }, /* @__PURE__ */ React9.createElement(
+            IconBtn,
+            {
+              title: "Delete Patient",
+              icon: Trash2,
+              className: "text-danger",
+              onClick: () => setDeleteTarget(p)
+            }
+          ))
+        }
       ],
       rows: patients,
       pageSize: 12,
@@ -3419,7 +3647,31 @@ function Patients() {
       ),
       loading: !patients
     }
-  )), /* @__PURE__ */ React9.createElement(RegisterModal, { open: reg, onClose: () => setReg(false) }), /* @__PURE__ */ React9.createElement(CsvImportModal, { open: importOpen, onClose: () => setImportOpen(false), type: "patients" }));
+  )), /* @__PURE__ */ React9.createElement(RegisterModal, { open: reg, onClose: () => setReg(false) }), /* @__PURE__ */ React9.createElement(CsvImportModal, { open: importOpen, onClose: () => setImportOpen(false), type: "patients" }), /* @__PURE__ */ React9.createElement(
+    Confirm,
+    {
+      open: !!deleteTarget,
+      onClose: () => setDeleteTarget(null),
+      danger: true,
+      busy: isDeleting,
+      title: "Delete Patient Record?",
+      message: `Are you sure you want to permanently delete ${deleteTarget?.name} (${deleteTarget?.uhid})? Patients with medical or billing history cannot be deleted.`,
+      confirmText: "Delete Patient",
+      onConfirm: async () => {
+        if (!deleteTarget) return;
+        setIsDeleting(true);
+        try {
+          await deletePatient2(deleteTarget.id, user3?.id);
+          pushToast("success", `Patient ${deleteTarget.name} deleted.`);
+          setDeleteTarget(null);
+        } catch (err) {
+          pushToast("error", err.message);
+        } finally {
+          setIsDeleting(false);
+        }
+      }
+    }
+  ));
 }
 var BLOOD_GROUPS2;
 var init_Patients = __esm({
@@ -3802,7 +4054,8 @@ import {
   NotebookPen,
   Pencil,
   Printer,
-  Plus as Plus3
+  Plus as Plus3,
+  Trash2 as Trash22
 } from "lucide-react";
 function trend(v, prev) {
   if (v == null || prev == null || v === prev) return null;
@@ -3917,7 +4170,7 @@ function EditPatientModal({ open, onClose, patient: patient2, user: user3 }) {
     }
     setBusy(true);
     try {
-      await updatePatient(patient2.id, f, user3.id);
+      await updatePatient2(patient2.id, f, user3.id);
       pushToast("success", "Patient updated");
       onClose();
     } catch (e) {
@@ -3943,11 +4196,13 @@ function EditPatientModal({ open, onClose, patient: patient2, user: user3 }) {
 function PatientProfile() {
   const { id } = useParams();
   const navigate = useNavigate4();
-  const { user: user3, settings, t, can } = useApp();
+  const { user: user3, settings, t, can, pushToast } = useApp();
   const [tab, setTab] = useState7("overview");
   const [vitalsOpen, setVitalsOpen] = useState7(false);
   const [editOpen, setEditOpen] = useState7(false);
   const [billView, setBillView] = useState7(null);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState7(false);
+  const [isDeleting, setIsDeleting] = useState7(false);
   const patient2 = useLiveQuery4(() => db_default.patients.get(id), [id]);
   const vitals = useLiveQuery4(() => db_default.patient_vitals.where("patient_id").equals(id).reverse().sortBy("recorded_at"), [id]);
   const consults = useLiveQuery4(() => db_default.consultations.where("patient_id").equals(id).reverse().sortBy("time"), [id]);
@@ -3963,7 +4218,7 @@ function PatientProfile() {
     const full = await getBill(b.id);
     if (full) setBillView(full);
   };
-  return /* @__PURE__ */ React10.createElement("div", { className: "page" }, /* @__PURE__ */ React10.createElement("div", { className: "pt-head" }, /* @__PURE__ */ React10.createElement(Avatar, { name: p.name, size: 64, tone: p.gender === "Female" ? "teal" : "navy" }), /* @__PURE__ */ React10.createElement("div", { className: "pt-id" }, /* @__PURE__ */ React10.createElement("div", { className: "pt-name-row" }, /* @__PURE__ */ React10.createElement("h1", null, p.name), p.needs_completion && /* @__PURE__ */ React10.createElement(Badge, { tone: "red" }, "Profile incomplete \u2014 complete details"), p.blood_group && /* @__PURE__ */ React10.createElement(Badge, { tone: "red" }, "Blood group: ", p.blood_group), p.allergies && /* @__PURE__ */ React10.createElement(Badge, { tone: "amber" }, "\u26A0 ", p.allergies.split(",")[0])), /* @__PURE__ */ React10.createElement("div", { className: "pt-meta" }, /* @__PURE__ */ React10.createElement(UhidChip, { uhid: p.uhid }), /* @__PURE__ */ React10.createElement("span", null, ageLabel(p), " \xB7 ", p.gender || "\u2014"), p.mobile && /* @__PURE__ */ React10.createElement("span", { className: "pt-meta-item" }, /* @__PURE__ */ React10.createElement(Phone2, { size: 13 }), " ", p.mobile), /* @__PURE__ */ React10.createElement("span", { className: "pt-meta-item" }, /* @__PURE__ */ React10.createElement(MapPin, { size: 13 }), " ", p.city || "\u2014", p.pin ? ` ${p.pin}` : ""), /* @__PURE__ */ React10.createElement("span", { className: "pt-meta-item" }, "Registered ", fmtDate(p.reg_date)))), /* @__PURE__ */ React10.createElement("div", { className: "pt-actions" }, can("consultations") && /* @__PURE__ */ React10.createElement(Btn, { variant: "primary", icon: Stethoscope3, size: "sm", onClick: () => navigate(`/consultations?new=1&patient=${p.id}`) }, "New Consultation"), can("billing") && /* @__PURE__ */ React10.createElement(Btn, { variant: "accent", icon: ReceiptText3, size: "sm", onClick: () => navigate(`/billing?new=1&patient=${p.id}`) }, "New Bill"), can("prescriptions") && /* @__PURE__ */ React10.createElement(Btn, { variant: "outline", icon: FileText2, size: "sm", onClick: () => navigate(`/prescriptions?new=1&patient=${p.id}`) }, "Prescription"), /* @__PURE__ */ React10.createElement(Btn, { variant: "outline", icon: Activity, size: "sm", onClick: () => setVitalsOpen(true) }, "Add Vitals"), can("patients") && /* @__PURE__ */ React10.createElement(Btn, { variant: "ghost", icon: Pencil, size: "sm", onClick: () => setEditOpen(true) }, "Edit"), /* @__PURE__ */ React10.createElement(Btn, { variant: "ghost", icon: Printer, size: "sm", onClick: () => printPatientCard(p, settings) }, "ID Card"))), (p.allergies || p.conditions) && /* @__PURE__ */ React10.createElement("div", { className: "pt-medstrip" }, p.allergies && /* @__PURE__ */ React10.createElement("span", { className: "medstrip-item warn" }, "\u26A0 Allergies: ", p.allergies), p.conditions && /* @__PURE__ */ React10.createElement("span", { className: "medstrip-item info" }, "\u{1F4CB} Conditions: ", p.conditions), p.current_meds && /* @__PURE__ */ React10.createElement("span", { className: "medstrip-item" }, "\u{1F48A} Current meds: ", p.current_meds)), /* @__PURE__ */ React10.createElement(
+  return /* @__PURE__ */ React10.createElement("div", { className: "page" }, /* @__PURE__ */ React10.createElement("div", { className: "pt-head" }, /* @__PURE__ */ React10.createElement(Avatar, { name: p.name, size: 64, tone: p.gender === "Female" ? "teal" : "navy" }), /* @__PURE__ */ React10.createElement("div", { className: "pt-id" }, /* @__PURE__ */ React10.createElement("div", { className: "pt-name-row" }, /* @__PURE__ */ React10.createElement("h1", null, p.name), p.needs_completion && /* @__PURE__ */ React10.createElement(Badge, { tone: "red" }, "Profile incomplete \u2014 complete details"), p.blood_group && /* @__PURE__ */ React10.createElement(Badge, { tone: "red" }, "Blood group: ", p.blood_group), p.allergies && /* @__PURE__ */ React10.createElement(Badge, { tone: "amber" }, "\u26A0 ", p.allergies.split(",")[0])), /* @__PURE__ */ React10.createElement("div", { className: "pt-meta" }, /* @__PURE__ */ React10.createElement(UhidChip, { uhid: p.uhid }), /* @__PURE__ */ React10.createElement("span", null, ageLabel(p), " \xB7 ", p.gender || "\u2014"), p.mobile && /* @__PURE__ */ React10.createElement("span", { className: "pt-meta-item" }, /* @__PURE__ */ React10.createElement(Phone2, { size: 13 }), " ", p.mobile), /* @__PURE__ */ React10.createElement("span", { className: "pt-meta-item" }, /* @__PURE__ */ React10.createElement(MapPin, { size: 13 }), " ", p.city || "\u2014", p.pin ? ` ${p.pin}` : ""), /* @__PURE__ */ React10.createElement("span", { className: "pt-meta-item" }, "Registered ", fmtDate(p.reg_date)))), /* @__PURE__ */ React10.createElement("div", { className: "pt-actions" }, can("consultations") && /* @__PURE__ */ React10.createElement(Btn, { variant: "primary", icon: Stethoscope3, size: "sm", onClick: () => navigate(`/consultations?new=1&patient=${p.id}`) }, "New Consultation"), can("billing") && /* @__PURE__ */ React10.createElement(Btn, { variant: "accent", icon: ReceiptText3, size: "sm", onClick: () => navigate(`/billing?new=1&patient=${p.id}`) }, "New Bill"), can("prescriptions") && /* @__PURE__ */ React10.createElement(Btn, { variant: "outline", icon: FileText2, size: "sm", onClick: () => navigate(`/prescriptions?new=1&patient=${p.id}`) }, "Prescription"), /* @__PURE__ */ React10.createElement(Btn, { variant: "outline", icon: Activity, size: "sm", onClick: () => setVitalsOpen(true) }, "Add Vitals"), can("patients") && /* @__PURE__ */ React10.createElement(Btn, { variant: "ghost", icon: Pencil, size: "sm", onClick: () => setEditOpen(true) }, "Edit"), /* @__PURE__ */ React10.createElement(Btn, { variant: "ghost", icon: Printer, size: "sm", onClick: () => printPatientCard(p, settings) }, "ID Card"), can("patients") && /* @__PURE__ */ React10.createElement(Btn, { variant: "danger", icon: Trash22, size: "sm", onClick: () => setDeleteConfirmOpen(true) }, "Delete"))), (p.allergies || p.conditions) && /* @__PURE__ */ React10.createElement("div", { className: "pt-medstrip" }, p.allergies && /* @__PURE__ */ React10.createElement("span", { className: "medstrip-item warn" }, "\u26A0 Allergies: ", p.allergies), p.conditions && /* @__PURE__ */ React10.createElement("span", { className: "medstrip-item info" }, "\u{1F4CB} Conditions: ", p.conditions), p.current_meds && /* @__PURE__ */ React10.createElement("span", { className: "medstrip-item" }, "\u{1F48A} Current meds: ", p.current_meds)), /* @__PURE__ */ React10.createElement(
     Tabs,
     {
       className: "pt-tabs",
@@ -4050,7 +4305,30 @@ function PatientProfile() {
       actions: /* @__PURE__ */ React10.createElement(Btn, { size: "sm", variant: "accent", icon: Plus3, onClick: () => setVitalsOpen(true) }, "Record vitals")
     },
     /* @__PURE__ */ React10.createElement(VitalsTable, { rows: vitals || [] })
-  ), tab === "notes" && /* @__PURE__ */ React10.createElement(Card, { title: "Medical Notes" }, /* @__PURE__ */ React10.createElement("div", { className: "notes-box" }, p.notes ? /* @__PURE__ */ React10.createElement("p", null, p.notes) : /* @__PURE__ */ React10.createElement(EmptyState, { compact: true, icon: "\u{1F5D2}\uFE0F", title: "No general notes", action: can("patients") ? /* @__PURE__ */ React10.createElement(Btn, { size: "sm", variant: "outline", onClick: () => setEditOpen(true) }, "Add notes") : null })), (consults || []).filter((c) => c.notes).length > 0 && /* @__PURE__ */ React10.createElement(React10.Fragment, null, /* @__PURE__ */ React10.createElement("h4", { className: "sub-head" }, "Notes from consultations"), (consults || []).filter((c) => c.notes).map((c) => /* @__PURE__ */ React10.createElement("div", { className: "note-item", key: c.id }, /* @__PURE__ */ React10.createElement("span", { className: "note-when" }, fmtDateTime(c.time), " \xB7 ", c.consultation_no), /* @__PURE__ */ React10.createElement("p", null, c.notes))))), /* @__PURE__ */ React10.createElement(AddVitalsModal, { open: vitalsOpen, onClose: () => setVitalsOpen(false), patient: p, user: user3 }), /* @__PURE__ */ React10.createElement(EditPatientModal, { open: editOpen, onClose: () => setEditOpen(false), patient: p, user: user3 }), billView && /* @__PURE__ */ React10.createElement(BillViewer, { full: billView, onClose: () => setBillView(null), patient: p }));
+  ), tab === "notes" && /* @__PURE__ */ React10.createElement(Card, { title: "Medical Notes" }, /* @__PURE__ */ React10.createElement("div", { className: "notes-box" }, p.notes ? /* @__PURE__ */ React10.createElement("p", null, p.notes) : /* @__PURE__ */ React10.createElement(EmptyState, { compact: true, icon: "\u{1F5D2}\uFE0F", title: "No general notes", action: can("patients") ? /* @__PURE__ */ React10.createElement(Btn, { size: "sm", variant: "outline", onClick: () => setEditOpen(true) }, "Add notes") : null })), (consults || []).filter((c) => c.notes).length > 0 && /* @__PURE__ */ React10.createElement(React10.Fragment, null, /* @__PURE__ */ React10.createElement("h4", { className: "sub-head" }, "Notes from consultations"), (consults || []).filter((c) => c.notes).map((c) => /* @__PURE__ */ React10.createElement("div", { className: "note-item", key: c.id }, /* @__PURE__ */ React10.createElement("span", { className: "note-when" }, fmtDateTime(c.time), " \xB7 ", c.consultation_no), /* @__PURE__ */ React10.createElement("p", null, c.notes))))), /* @__PURE__ */ React10.createElement(AddVitalsModal, { open: vitalsOpen, onClose: () => setVitalsOpen(false), patient: p, user: user3 }), /* @__PURE__ */ React10.createElement(EditPatientModal, { open: editOpen, onClose: () => setEditOpen(false), patient: p, user: user3 }), billView && /* @__PURE__ */ React10.createElement(BillViewer, { full: billView, onClose: () => setBillView(null), patient: p }), /* @__PURE__ */ React10.createElement(
+    Confirm,
+    {
+      open: deleteConfirmOpen,
+      onClose: () => setDeleteConfirmOpen(false),
+      danger: true,
+      busy: isDeleting,
+      title: "Delete Patient Record?",
+      message: `Are you sure you want to delete ${p.name} (${p.uhid})? Patients with clinical or billing history cannot be permanently deleted.`,
+      confirmText: "Delete Patient",
+      onConfirm: async () => {
+        setIsDeleting(true);
+        try {
+          await deletePatient2(p.id, user3?.id);
+          pushToast("success", `Patient ${p.name} deleted.`);
+          navigate("/patients");
+        } catch (err) {
+          pushToast("error", err.message);
+        } finally {
+          setIsDeleting(false);
+        }
+      }
+    }
+  ));
 }
 function BillViewer({ full, onClose, patient: patient2 }) {
   const { settings } = useApp();
@@ -4179,7 +4457,7 @@ async function createPrescription(data, userId) {
     return pr;
   });
 }
-async function createAppointment(data, userId) {
+async function createAppointment2(data, userId) {
   const settings = await getSettings();
   return db_default.transaction("rw", [db_default.appointments, db_default.counters, db_default.activity_logs, db_default.patients], async () => {
     const patient2 = await db_default.patients.get(data.patient_id);
@@ -4206,7 +4484,7 @@ async function createAppointment(data, userId) {
     return a;
   });
 }
-async function updateAppointment(id, data, userId) {
+async function updateAppointment2(id, data, userId) {
   return db_default.transaction("rw", [db_default.appointments, db_default.activity_logs, db_default.patients], async () => {
     const current = await db_default.appointments.get(id);
     if (!current) throw new Error("Appointment not found");
@@ -4288,6 +4566,38 @@ async function deleteDoctor(id, userId) {
   await db_default.doctors.delete(id);
   await audit(userId, "DOCTOR_DELETE", "doctor", id, existing.name);
 }
+async function deleteAppointment2(id, userId) {
+  return db_default.transaction("rw", [db_default.appointments, db_default.activity_logs], async () => {
+    const a = await db_default.appointments.get(id);
+    if (!a) throw new Error("Appointment not found");
+    await db_default.appointments.delete(id);
+    await audit(userId, "APPOINTMENT_DELETE", "appointment", id, `${a.appointment_no || id}`);
+  });
+}
+async function deleteConsultation(id, userId) {
+  return db_default.transaction("rw", [db_default.consultations, db_default.prescriptions, db_default.activity_logs], async () => {
+    const c = await db_default.consultations.get(id);
+    if (!c) throw new Error("Consultation not found");
+    const presCount = await db_default.prescriptions.where("consultation_id").equals(id).count();
+    if (presCount > 0) {
+      throw new Error("Cannot delete consultation with linked prescriptions. Please delete the linked prescriptions first.");
+    }
+    await db_default.consultations.delete(id);
+    await audit(userId, "CONSULTATION_DELETE", "consultation", id, `${c.consultation_no || id}`);
+  });
+}
+async function deletePrescription(id, userId) {
+  return db_default.transaction("rw", [db_default.prescriptions, db_default.prescription_items, db_default.activity_logs], async () => {
+    const p = await db_default.prescriptions.get(id);
+    if (!p) throw new Error("Prescription not found");
+    const items = await db_default.prescription_items.where("prescription_id").equals(id).toArray();
+    for (const item of items) {
+      await db_default.prescription_items.delete(item.id);
+    }
+    await db_default.prescriptions.delete(id);
+    await audit(userId, "PRESCRIPTION_DELETE", "prescription", id, `${p.prescription_no || id}`);
+  });
+}
 var APPT_STATUSES;
 var init_clinical = __esm({
   "src/services/clinical.js"() {
@@ -4303,7 +4613,7 @@ var init_clinical = __esm({
 import React11, { useState as useState8, useEffect as useEffect7 } from "react";
 import { useNavigate as useNavigate5, useSearchParams as useSearchParams2 } from "react-router-dom";
 import { useLiveQuery as useLiveQuery5 } from "dexie-react-hooks";
-import { Stethoscope as Stethoscope4, Siren, Clock as Clock2, CheckCircle2 as CheckCircle24, FileText as FileText3, ReceiptText as ReceiptText4 } from "lucide-react";
+import { Stethoscope as Stethoscope4, Siren, Clock as Clock2, CheckCircle2 as CheckCircle24, FileText as FileText3, ReceiptText as ReceiptText4, Trash2 as Trash23 } from "lucide-react";
 function NewConsultModal({ open, onClose, prefillPatient, onDone }) {
   const { user: user3, settings, pushToast } = useApp();
   const patients = useLiveQuery5(async () => (await db_default.patients.toArray()).sort((a, b) => a.name.localeCompare(b.name)), []);
@@ -4384,12 +4694,14 @@ function NewConsultModal({ open, onClose, prefillPatient, onDone }) {
   );
 }
 function Consultations() {
-  const { t } = useApp();
+  const { t, user: user3, pushToast } = useApp();
   const navigate = useNavigate5();
   const [params, setParams] = useSearchParams2();
   const [modal, setModal] = useState8(false);
   const [pre, setPre] = useState8(null);
   const [done, setDone] = useState8(null);
+  const [deleteTarget, setDeleteTarget] = useState8(null);
+  const [isDeleting, setIsDeleting] = useState8(false);
   const [from, setFrom] = useState8(dkey(new Date(Date.now() - 29 * 864e5)));
   const [to, setTo] = useState8(todayStr());
   const [doctorF, setDoctorF] = useState8("");
@@ -4440,7 +4752,21 @@ function Consultations() {
         { key: "doctor_name", label: "Doctor", render: (c) => c.doctor_name || "\u2014" },
         { key: "chief", label: "Chief Complaint", render: (c) => /* @__PURE__ */ React11.createElement("span", { className: "cell-ellip", title: c.chief }, c.chief || "\u2014") },
         { key: "diagnosis", label: "Diagnosis", render: (c) => /* @__PURE__ */ React11.createElement("span", { className: "cell-ellip", title: c.diagnosis }, c.diagnosis || "\u2014") },
-        { key: "follow_up", label: "Follow-up", render: (c) => c.follow_up ? /* @__PURE__ */ React11.createElement("span", { className: "follow-chip" }, /* @__PURE__ */ React11.createElement(Clock2, { size: 12 }), " ", fmtDate(c.follow_up)) : "\u2014" }
+        { key: "follow_up", label: "Follow-up", render: (c) => c.follow_up ? /* @__PURE__ */ React11.createElement("span", { className: "follow-chip" }, /* @__PURE__ */ React11.createElement(Clock2, { size: 12 }), " ", fmtDate(c.follow_up)) : "\u2014" },
+        {
+          key: "actions",
+          label: "",
+          align: "right",
+          render: (c) => /* @__PURE__ */ React11.createElement("div", { className: "row-actions", onClick: (e) => e.stopPropagation() }, /* @__PURE__ */ React11.createElement(
+            IconBtn,
+            {
+              title: "Delete Consultation",
+              icon: Trash23,
+              className: "text-danger",
+              onClick: () => setDeleteTarget(c)
+            }
+          ))
+        }
       ],
       rows,
       pageSize: 12,
@@ -4470,6 +4796,30 @@ function Consultations() {
       setDone(null);
       navigate(`/patients/${d.patient.id}`);
     } }, "View Patient")))
+  ), /* @__PURE__ */ React11.createElement(
+    Confirm,
+    {
+      open: !!deleteTarget,
+      onClose: () => setDeleteTarget(null),
+      danger: true,
+      busy: isDeleting,
+      title: "Delete Consultation?",
+      message: `Are you sure you want to delete consultation ${deleteTarget?.consultation_no} for ${deleteTarget?.patient?.name || "patient"}? Consultations linked to prescriptions cannot be deleted until those prescriptions are removed.`,
+      confirmText: "Delete Consultation",
+      onConfirm: async () => {
+        if (!deleteTarget) return;
+        setIsDeleting(true);
+        try {
+          await deleteConsultation(deleteTarget.id, user3?.id);
+          pushToast("success", `Consultation ${deleteTarget.consultation_no} deleted.`);
+          setDeleteTarget(null);
+        } catch (err) {
+          pushToast("error", err.message);
+        } finally {
+          setIsDeleting(false);
+        }
+      }
+    }
   ));
 }
 var VITAL_INPUTS;
@@ -4498,7 +4848,7 @@ var init_Consultations = __esm({
 import React12, { useState as useState9, useEffect as useEffect8 } from "react";
 import { useNavigate as useNavigate6 } from "react-router-dom";
 import { useLiveQuery as useLiveQuery6 } from "dexie-react-hooks";
-import { CalendarDays as CalendarDays3, ChevronLeft as ChevronLeft2, ChevronRight as ChevronRight3, UserPlus as UserPlus3, Pencil as Pencil2, Search as Search4 } from "lucide-react";
+import { CalendarDays as CalendarDays3, ChevronLeft as ChevronLeft2, ChevronRight as ChevronRight3, UserPlus as UserPlus3, Pencil as Pencil2, Search as Search4, Trash2 as Trash24 } from "lucide-react";
 function NewApptModal({ open, onClose, editing }) {
   const { user: user3, pushToast } = useApp();
   const patients = useLiveQuery6(async () => (await db_default.patients.toArray()).sort((a, b) => a.name.localeCompare(b.name)), []) || [];
@@ -4526,7 +4876,7 @@ function NewApptModal({ open, onClose, editing }) {
     }
     setBusy(true);
     try {
-      const a = editing ? await updateAppointment(editing.id, { patient_id: patient2.id, doctor_id: f.doctor_id, date: f.date, time: f.time, reason: f.reason }, user3.id) : await createAppointment({ patient_id: patient2.id, doctor_id: f.doctor_id, date: f.date, time: f.time, reason: f.reason }, user3.id);
+      const a = editing ? await updateAppointment2(editing.id, { patient_id: patient2.id, doctor_id: f.doctor_id, date: f.date, time: f.time, reason: f.reason }, user3.id) : await createAppointment2({ patient_id: patient2.id, doctor_id: f.doctor_id, date: f.date, time: f.time, reason: f.reason }, user3.id);
       pushToast("success", editing ? `Appointment ${a.appointment_no} updated` : `Appointment ${a.appointment_no} scheduled`);
       onClose();
     } catch (e) {
@@ -4557,6 +4907,7 @@ function Appointments() {
   const [q, setQ] = useState9("");
   const [statusFilter, setStatusFilter] = useState9("");
   const [cancelTarget, setCancelTarget] = useState9(null);
+  const [deleteTarget, setDeleteTarget] = useState9(null);
   const [busyId, setBusyId] = useState9(null);
   const doctors = useLiveQuery6(() => db_default.doctors.toArray(), []);
   const dayAppts = useLiveQuery6(async () => {
@@ -4605,7 +4956,15 @@ function Appointments() {
   } }, "+ Schedule Appointment") }) : /* @__PURE__ */ React12.createElement("div", { className: "queue" }, dayAppts.map((a, i) => /* @__PURE__ */ React12.createElement("div", { key: a.id, className: `queue-item q-${a.status}` }, /* @__PURE__ */ React12.createElement("div", { className: "q-time" }, /* @__PURE__ */ React12.createElement("span", { className: "q-slotslot" }, i + 1), /* @__PURE__ */ React12.createElement("span", { className: "q-t" }, fmtTime(a.time + ":00"))), /* @__PURE__ */ React12.createElement("div", { className: "q-main" }, /* @__PURE__ */ React12.createElement("span", { className: "q-name" }, a.patient?.name || "Unknown", a.status === "scheduled" && /* @__PURE__ */ React12.createElement("span", { className: "q-dot", title: "Scheduled" })), /* @__PURE__ */ React12.createElement("span", { className: "q-sub" }, /* @__PURE__ */ React12.createElement(UhidChip, { uhid: a.uhid, size: "sm" }), a.reason && /* @__PURE__ */ React12.createElement("span", null, "\xB7 ", a.reason), a.doctor && /* @__PURE__ */ React12.createElement("span", null, "\xB7 ", a.doctor.name))), /* @__PURE__ */ React12.createElement(ApptBadge, { status: a.status }), /* @__PURE__ */ React12.createElement("div", { className: "q-actions" }, !["completed", "cancelled", "no_show"].includes(a.status) && /* @__PURE__ */ React12.createElement(Btn, { size: "sm", variant: "ghost", icon: Pencil2, onClick: () => {
     setEditing(a);
     setModal(true);
-  } }, "Edit"), (NEXT[a.status] || []).map((s) => /* @__PURE__ */ React12.createElement(Btn, { key: s, size: "sm", variant: s === "cancelled" ? "ghost" : s === "completed" ? "accent" : "outline", disabled: busyId === a.id, onClick: () => advance(a, s) }, NEXT_LABEL[s])), a.status === "completed" && a.patient && /* @__PURE__ */ React12.createElement(Btn, { size: "sm", variant: "ghost", onClick: () => navigate(`/patients/${a.patient.id}`) }, "Open")))))), /* @__PURE__ */ React12.createElement(NewApptModal, { open: modal, editing, onClose: () => {
+  } }, "Edit"), (NEXT[a.status] || []).map((s) => /* @__PURE__ */ React12.createElement(Btn, { key: s, size: "sm", variant: s === "cancelled" ? "ghost" : s === "completed" ? "accent" : "outline", disabled: busyId === a.id, onClick: () => advance(a, s) }, NEXT_LABEL[s])), a.status === "completed" && a.patient && /* @__PURE__ */ React12.createElement(Btn, { size: "sm", variant: "ghost", onClick: () => navigate(`/patients/${a.patient.id}`) }, "Open"), /* @__PURE__ */ React12.createElement(
+    IconBtn,
+    {
+      title: "Delete Appointment",
+      icon: Trash24,
+      className: "text-danger",
+      onClick: () => setDeleteTarget(a)
+    }
+  )))))), /* @__PURE__ */ React12.createElement(NewApptModal, { open: modal, editing, onClose: () => {
     setModal(false);
     setEditing(null);
   } }), /* @__PURE__ */ React12.createElement(
@@ -4623,6 +4982,26 @@ function Appointments() {
         await setAppointmentStatus(cancelTarget.id, "cancelled", user3.id);
         pushToast("success", "Appointment cancelled");
         setCancelTarget(null);
+      }
+    }
+  ), /* @__PURE__ */ React12.createElement(
+    Confirm,
+    {
+      open: !!deleteTarget,
+      onClose: () => setDeleteTarget(null),
+      danger: true,
+      title: "Delete Appointment?",
+      message: `Are you sure you want to permanently delete appointment ${deleteTarget?.appointment_no} for ${deleteTarget?.patient?.name || "patient"}?`,
+      confirmText: "Delete Appointment",
+      onConfirm: async () => {
+        if (!deleteTarget) return;
+        try {
+          await deleteAppointment2(deleteTarget.id, user3?.id);
+          pushToast("success", `Appointment ${deleteTarget.appointment_no} deleted.`);
+          setDeleteTarget(null);
+        } catch (err) {
+          pushToast("error", err.message);
+        }
       }
     }
   ));
@@ -4652,7 +5031,7 @@ var init_Appointments = __esm({
 import React13, { useState as useState10, useEffect as useEffect9 } from "react";
 import { useNavigate as useNavigate7, useSearchParams as useSearchParams3 } from "react-router-dom";
 import { useLiveQuery as useLiveQuery7 } from "dexie-react-hooks";
-import { FileText as FileText4, Printer as Printer2, Plus as Plus4, Trash2, CheckCircle2 as CheckCircle25 } from "lucide-react";
+import { FileText as FileText4, Printer as Printer2, Plus as Plus4, Trash2 as Trash25, CheckCircle2 as CheckCircle25 } from "lucide-react";
 function NewPrescriptionModal({ open, onClose, prefillPatient, onDone }) {
   const { user: user3, settings, pushToast } = useApp();
   const patients = useLiveQuery7(async () => (await db_default.patients.toArray()).sort((a, b) => a.name.localeCompare(b.name)), []) || [];
@@ -4755,17 +5134,19 @@ function NewPrescriptionModal({ open, onClose, prefillPatient, onDone }) {
         getSearch: (m) => `${m.name} ${m.generic} ${m.barcode}`,
         placeholder: "Search medicine by name, generic or barcode\u2026"
       }
-    ), /* @__PURE__ */ React13.createElement(Btn, { variant: "primary", icon: Plus4, onClick: addMed, disabled: !pickMed }, "Add")), !items.length && /* @__PURE__ */ React13.createElement(EmptyState, { compact: true, icon: "\u{1F48A}", title: "No medicines added yet", message: "Search and add medicines above." }), items.map((it, i) => /* @__PURE__ */ React13.createElement("div", { className: "prx-line", key: it.medicine_id }, /* @__PURE__ */ React13.createElement("div", { className: "prx-line-name" }, /* @__PURE__ */ React13.createElement("b", null, i + 1, "."), " ", it.name, /* @__PURE__ */ React13.createElement("button", { type: "button", className: "prx-rm", title: "Remove", onClick: () => setItems((x) => x.filter((_, j) => j !== i)) }, /* @__PURE__ */ React13.createElement(Trash2, { size: 13 }))), /* @__PURE__ */ React13.createElement("div", { className: "prx-line-grid" }, /* @__PURE__ */ React13.createElement(Field, { label: "Dosage" }, /* @__PURE__ */ React13.createElement(Input, { value: it.dosage, onChange: (e) => setItem(i, "dosage", e.target.value), placeholder: "1 tablet" })), /* @__PURE__ */ React13.createElement(Field, { label: "Frequency" }, /* @__PURE__ */ React13.createElement(Select, { value: it.frequency, onChange: (e) => setItem(i, "frequency", e.target.value) }, FREQS.map((fr) => /* @__PURE__ */ React13.createElement("option", { key: fr }, fr)))), /* @__PURE__ */ React13.createElement(Field, { label: "Duration" }, /* @__PURE__ */ React13.createElement(Input, { value: it.duration, onChange: (e) => setItem(i, "duration", e.target.value), placeholder: "5 days" })), /* @__PURE__ */ React13.createElement(Field, { label: "Instructions" }, /* @__PURE__ */ React13.createElement(Input, { value: it.instruction, onChange: (e) => setItem(i, "instruction", e.target.value), placeholder: "After food" }))))), /* @__PURE__ */ React13.createElement(Field, { label: "Additional notes", className: "prx-notes-field" }, /* @__PURE__ */ React13.createElement(Textarea, { rows: 2, value: notes, onChange: (e) => setNotes(e.target.value) })))
+    ), /* @__PURE__ */ React13.createElement(Btn, { variant: "primary", icon: Plus4, onClick: addMed, disabled: !pickMed }, "Add")), !items.length && /* @__PURE__ */ React13.createElement(EmptyState, { compact: true, icon: "\u{1F48A}", title: "No medicines added yet", message: "Search and add medicines above." }), items.map((it, i) => /* @__PURE__ */ React13.createElement("div", { className: "prx-line", key: it.medicine_id }, /* @__PURE__ */ React13.createElement("div", { className: "prx-line-name" }, /* @__PURE__ */ React13.createElement("b", null, i + 1, "."), " ", it.name, /* @__PURE__ */ React13.createElement("button", { type: "button", className: "prx-rm", title: "Remove", onClick: () => setItems((x) => x.filter((_, j) => j !== i)) }, /* @__PURE__ */ React13.createElement(Trash25, { size: 13 }))), /* @__PURE__ */ React13.createElement("div", { className: "prx-line-grid" }, /* @__PURE__ */ React13.createElement(Field, { label: "Dosage" }, /* @__PURE__ */ React13.createElement(Input, { value: it.dosage, onChange: (e) => setItem(i, "dosage", e.target.value), placeholder: "1 tablet" })), /* @__PURE__ */ React13.createElement(Field, { label: "Frequency" }, /* @__PURE__ */ React13.createElement(Select, { value: it.frequency, onChange: (e) => setItem(i, "frequency", e.target.value) }, FREQS.map((fr) => /* @__PURE__ */ React13.createElement("option", { key: fr }, fr)))), /* @__PURE__ */ React13.createElement(Field, { label: "Duration" }, /* @__PURE__ */ React13.createElement(Input, { value: it.duration, onChange: (e) => setItem(i, "duration", e.target.value), placeholder: "5 days" })), /* @__PURE__ */ React13.createElement(Field, { label: "Instructions" }, /* @__PURE__ */ React13.createElement(Input, { value: it.instruction, onChange: (e) => setItem(i, "instruction", e.target.value), placeholder: "After food" }))))), /* @__PURE__ */ React13.createElement(Field, { label: "Additional notes", className: "prx-notes-field" }, /* @__PURE__ */ React13.createElement(Textarea, { rows: 2, value: notes, onChange: (e) => setNotes(e.target.value) })))
   );
 }
 function Prescriptions() {
-  const { settings } = useApp();
+  const { settings, user: user3, pushToast } = useApp();
   const navigate = useNavigate7();
   const [params, setParams] = useSearchParams3();
   const [modal, setModal] = useState10(false);
   const [pre, setPre] = useState10(null);
   const [done, setDone] = useState10(null);
   const [q, setQ] = useState10("");
+  const [deleteTarget, setDeleteTarget] = useState10(null);
+  const [isDeleting, setIsDeleting] = useState10(false);
   const rows = useLiveQuery7(async () => {
     const list = await db_default.prescriptions.toArray();
     const pmap = new Map((await db_default.patients.toArray()).map((p) => [p.id, p]));
@@ -4807,7 +5188,30 @@ function Prescriptions() {
         { key: "patient", label: "Patient", sortable: true, sortValue: (x) => x.patient.name, render: (x) => /* @__PURE__ */ React13.createElement("span", { className: "cell-person" }, /* @__PURE__ */ React13.createElement("span", { className: "cell-main" }, x.patient.name), /* @__PURE__ */ React13.createElement("span", { className: "cell-sub" }, /* @__PURE__ */ React13.createElement(UhidChip, { uhid: x.patient.uhid, size: "sm" }))) },
         { key: "doctor_name", label: "Doctor", render: (x) => x.doctor_name || "\u2014" },
         { key: "diagnosis", label: "Diagnosis", render: (x) => /* @__PURE__ */ React13.createElement("span", { className: "cell-ellip" }, x.diagnosis || "\u2014") },
-        { key: "print", label: "", render: async (x) => null, align: "right" }
+        {
+          key: "actions",
+          label: "",
+          align: "right",
+          render: (x) => /* @__PURE__ */ React13.createElement("div", { className: "row-actions", onClick: (e) => e.stopPropagation() }, /* @__PURE__ */ React13.createElement(
+            IconBtn,
+            {
+              title: "Print Prescription",
+              icon: Printer2,
+              onClick: async () => {
+                const full = await withItems(x);
+                printPrescription({ ...full, settings }, full.patient);
+              }
+            }
+          ), /* @__PURE__ */ React13.createElement(
+            IconBtn,
+            {
+              title: "Delete Prescription",
+              icon: Trash25,
+              className: "text-danger",
+              onClick: () => setDeleteTarget(x)
+            }
+          ))
+        }
       ],
       rows,
       pageSize: 12,
@@ -4839,6 +5243,30 @@ function Prescriptions() {
       setDone(null);
       navigate(`/patients/${d.patient.id}`);
     } }, "View Patient")))
+  ), /* @__PURE__ */ React13.createElement(
+    Confirm,
+    {
+      open: !!deleteTarget,
+      onClose: () => setDeleteTarget(null),
+      danger: true,
+      busy: isDeleting,
+      title: "Delete Prescription?",
+      message: `Are you sure you want to delete prescription ${deleteTarget?.prescription_no} for ${deleteTarget?.patient?.name || "patient"}? All associated prescribed items will also be removed.`,
+      confirmText: "Delete Prescription",
+      onConfirm: async () => {
+        if (!deleteTarget) return;
+        setIsDeleting(true);
+        try {
+          await deletePrescription(deleteTarget.id, user3?.id);
+          pushToast("success", `Prescription ${deleteTarget.prescription_no} deleted.`);
+          setDeleteTarget(null);
+        } catch (err) {
+          pushToast("error", err.message);
+        } finally {
+          setIsDeleting(false);
+        }
+      }
+    }
   ));
 }
 var FREQS;
@@ -4958,7 +5386,7 @@ import {
   Pill as Pill3,
   Stethoscope as Stethoscope5,
   Sparkles,
-  Trash2 as Trash22,
+  Trash2 as Trash26,
   Minus,
   Plus as Plus5,
   UserPlus as UserPlus4,
@@ -5010,7 +5438,7 @@ function PaymentModal({ open, onClose, total, onComplete, defaultMethod }) {
         }
       } }, "Save as Pending"), /* @__PURE__ */ React15.createElement(Btn, { variant: "accent", size: "lg", disabled: busy || paid <= 0, onClick: complete }, busy ? "Completing\u2026" : `Complete \xB7 ${fmtMoney(paid)}`))
     },
-    /* @__PURE__ */ React15.createElement("div", { className: "pay-rows" }, rows.map((r, i) => /* @__PURE__ */ React15.createElement("div", { className: "pay-row", key: i }, /* @__PURE__ */ React15.createElement(Select, { value: r.method, onChange: (e) => setRow(i, "method", e.target.value) }, PAY_METHODS.map((m) => /* @__PURE__ */ React15.createElement("option", { key: m }, m))), /* @__PURE__ */ React15.createElement(Input, { type: "number", min: "0", step: "0.01", value: r.amount, onChange: (e) => setRow(i, "amount", e.target.value), placeholder: "Amount" }), /* @__PURE__ */ React15.createElement(Btn, { size: "sm", variant: "ghost", onClick: () => setRow(i, "amount", String(Math.max(0, remaining))) }, "Rest"), rows.length > 1 && /* @__PURE__ */ React15.createElement(Btn, { size: "sm", variant: "ghost", icon: Trash22, onClick: () => setRows((x) => x.filter((_, j) => j !== i)), title: "Remove payment" })))),
+    /* @__PURE__ */ React15.createElement("div", { className: "pay-rows" }, rows.map((r, i) => /* @__PURE__ */ React15.createElement("div", { className: "pay-row", key: i }, /* @__PURE__ */ React15.createElement(Select, { value: r.method, onChange: (e) => setRow(i, "method", e.target.value) }, PAY_METHODS.map((m) => /* @__PURE__ */ React15.createElement("option", { key: m }, m))), /* @__PURE__ */ React15.createElement(Input, { type: "number", min: "0", step: "0.01", value: r.amount, onChange: (e) => setRow(i, "amount", e.target.value), placeholder: "Amount" }), /* @__PURE__ */ React15.createElement(Btn, { size: "sm", variant: "ghost", onClick: () => setRow(i, "amount", String(Math.max(0, remaining))) }, "Rest"), rows.length > 1 && /* @__PURE__ */ React15.createElement(Btn, { size: "sm", variant: "ghost", icon: Trash26, onClick: () => setRows((x) => x.filter((_, j) => j !== i)), title: "Remove payment" })))),
     /* @__PURE__ */ React15.createElement("div", { className: "pay-summary" }, /* @__PURE__ */ React15.createElement("span", null, "Collected: ", /* @__PURE__ */ React15.createElement("b", null, fmtMoney(paid))), /* @__PURE__ */ React15.createElement("span", null, "Remaining: ", /* @__PURE__ */ React15.createElement("b", { className: remaining > 5e-3 ? "pay-due" : "pay-ok" }, fmtMoney(remaining))), paid < total && /* @__PURE__ */ React15.createElement("span", { className: "pay-status" }, /* @__PURE__ */ React15.createElement(Badge, { tone: "amber" }, "Bill will be marked PARTIALLY PAID"))),
     /* @__PURE__ */ React15.createElement("div", { className: "pay-actions" }, /* @__PURE__ */ React15.createElement(Btn, { size: "sm", variant: "outline", icon: Plus5, onClick: () => setRows((x) => [...x, { method: "Cash", amount: "" }]) }, "Add payment method"), /* @__PURE__ */ React15.createElement(Btn, { size: "sm", variant: "ghost", onClick: () => setRows([{ method: defaultMethod || "Cash", amount: String(total) }]) }, "Full amount"))
   );
@@ -5146,7 +5574,7 @@ function Billing() {
     const left = available - cartQty(m.id);
     const exp = next_expiry ? daysUntil(next_expiry) : null;
     return /* @__PURE__ */ React15.createElement("button", { key: m.id, className: "pos-med", onClick: () => addMedicine(m), disabled: left <= 0 }, /* @__PURE__ */ React15.createElement("span", { className: "pos-med-name" }, m.name, m.strength && /* @__PURE__ */ React15.createElement("span", { className: "cell-sub" }, " ", m.strength)), /* @__PURE__ */ React15.createElement("span", { className: "pos-med-right" }, /* @__PURE__ */ React15.createElement(Badge, { tone: left <= 0 ? "red" : left <= (m.min_stock || 0) ? "amber" : "green" }, left <= 0 ? "OUT" : `${left} ${m.unit}`), exp != null && exp <= 90 && /* @__PURE__ */ React15.createElement(Badge, { tone: exp <= 30 ? "red" : "amber" }, "exp ", exp, "d"), /* @__PURE__ */ React15.createElement("b", null, money2(m.selling_price))));
-  }))), tab === "consultation" && /* @__PURE__ */ React15.createElement("div", { className: "pos-svc-list" }, consultationSvcs.map((s) => /* @__PURE__ */ React15.createElement("button", { key: s.id, className: "pos-svc", onClick: () => addService(s, "consultation") }, /* @__PURE__ */ React15.createElement("span", null, s.name), /* @__PURE__ */ React15.createElement("span", { className: "pos-svc-price" }, money2(s.price))))), tab === "services" && /* @__PURE__ */ React15.createElement("div", { className: "pos-svc-list" }, serviceSvcs.map((s) => /* @__PURE__ */ React15.createElement("button", { key: s.id, className: "pos-svc", onClick: () => addService(s, "service") }, /* @__PURE__ */ React15.createElement("span", null, s.name), /* @__PURE__ */ React15.createElement("span", { className: "pos-svc-price" }, money2(s.price))))))), /* @__PURE__ */ React15.createElement("div", { className: "pos-right" }, /* @__PURE__ */ React15.createElement(Card, { title: "2 \xB7 Bill Items", sub: cart.length ? `${cart.length} line(s)` : "Add consultation, services or medicines", pad: true, className: "pos-cart-card" }, cart.length === 0 ? /* @__PURE__ */ React15.createElement(EmptyState, { compact: true, title: "Bill is empty", message: "Select a patient on the left and add items." }) : /* @__PURE__ */ React15.createElement("div", { className: "cart-lines" }, cart.map((it, i) => /* @__PURE__ */ React15.createElement("div", { className: `cart-line cl-${it.item_type}`, key: `${it.item_type}-${it.ref_id}` }, /* @__PURE__ */ React15.createElement("div", { className: "cl-top" }, /* @__PURE__ */ React15.createElement(Badge, { tone: it.item_type === "medicine" ? "teal" : it.item_type === "consultation" ? "navy" : "blue" }, it.item_type === "consultation" ? "CONSULT" : it.item_type === "service" ? "SERVICE" : "MED"), /* @__PURE__ */ React15.createElement("span", { className: "cl-name" }, it.name), /* @__PURE__ */ React15.createElement("button", { className: "cl-rm", title: "Remove", onClick: () => removeItem(i) }, /* @__PURE__ */ React15.createElement(Trash22, { size: 13 }))), /* @__PURE__ */ React15.createElement("div", { className: "cl-bottom" }, /* @__PURE__ */ React15.createElement("span", { className: "cl-qty" }, /* @__PURE__ */ React15.createElement("button", { onClick: () => setQty(i, it.qty - 1) }, /* @__PURE__ */ React15.createElement(Minus, { size: 12 })), /* @__PURE__ */ React15.createElement("b", null, fmtQty(it.qty)), /* @__PURE__ */ React15.createElement("button", { onClick: () => setQty(i, it.qty + 1) }, /* @__PURE__ */ React15.createElement(Plus5, { size: 12 }))), /* @__PURE__ */ React15.createElement("span", { className: "cl-price" }, "\xD7 ", /* @__PURE__ */ React15.createElement(Input, { className: "cl-price-input", type: "number", min: "0", step: "0.01", value: it.price, onChange: (e) => setPrice(i, e.target.value) })), /* @__PURE__ */ React15.createElement("b", { className: "cl-amt" }, money2(it.qty * (Number(it.price) || 0))))))), /* @__PURE__ */ React15.createElement("div", { className: "cart-totals" }, /* @__PURE__ */ React15.createElement("div", { className: "kv" }, /* @__PURE__ */ React15.createElement("span", null, "Subtotal"), /* @__PURE__ */ React15.createElement("b", null, money2(subtotal))), /* @__PURE__ */ React15.createElement("div", { className: "cart-disc" }, /* @__PURE__ */ React15.createElement("span", { className: "kv-label" }, "Discount"), /* @__PURE__ */ React15.createElement(Seg, { size: "sm", value: discMode, onChange: setDiscMode, options: [{ value: "amt", label: "\u20B9" }, { value: "pct", label: "%" }] }), /* @__PURE__ */ React15.createElement(Input, { className: "cart-disc-input", type: "number", min: "0", value: discVal, onChange: (e) => setDiscVal(e.target.value), placeholder: "0" }), /* @__PURE__ */ React15.createElement("b", null, "\u2212 ", money2(disc))), /* @__PURE__ */ React15.createElement("div", { className: "kv kv-total" }, /* @__PURE__ */ React15.createElement("span", null, "TOTAL AMOUNT"), /* @__PURE__ */ React15.createElement("b", null, money2(total)))), /* @__PURE__ */ React15.createElement("div", { className: "cart-actions" }, /* @__PURE__ */ React15.createElement(
+  }))), tab === "consultation" && /* @__PURE__ */ React15.createElement("div", { className: "pos-svc-list" }, consultationSvcs.map((s) => /* @__PURE__ */ React15.createElement("button", { key: s.id, className: "pos-svc", onClick: () => addService(s, "consultation") }, /* @__PURE__ */ React15.createElement("span", null, s.name), /* @__PURE__ */ React15.createElement("span", { className: "pos-svc-price" }, money2(s.price))))), tab === "services" && /* @__PURE__ */ React15.createElement("div", { className: "pos-svc-list" }, serviceSvcs.map((s) => /* @__PURE__ */ React15.createElement("button", { key: s.id, className: "pos-svc", onClick: () => addService(s, "service") }, /* @__PURE__ */ React15.createElement("span", null, s.name), /* @__PURE__ */ React15.createElement("span", { className: "pos-svc-price" }, money2(s.price))))))), /* @__PURE__ */ React15.createElement("div", { className: "pos-right" }, /* @__PURE__ */ React15.createElement(Card, { title: "2 \xB7 Bill Items", sub: cart.length ? `${cart.length} line(s)` : "Add consultation, services or medicines", pad: true, className: "pos-cart-card" }, cart.length === 0 ? /* @__PURE__ */ React15.createElement(EmptyState, { compact: true, title: "Bill is empty", message: "Select a patient on the left and add items." }) : /* @__PURE__ */ React15.createElement("div", { className: "cart-lines" }, cart.map((it, i) => /* @__PURE__ */ React15.createElement("div", { className: `cart-line cl-${it.item_type}`, key: `${it.item_type}-${it.ref_id}` }, /* @__PURE__ */ React15.createElement("div", { className: "cl-top" }, /* @__PURE__ */ React15.createElement(Badge, { tone: it.item_type === "medicine" ? "teal" : it.item_type === "consultation" ? "navy" : "blue" }, it.item_type === "consultation" ? "CONSULT" : it.item_type === "service" ? "SERVICE" : "MED"), /* @__PURE__ */ React15.createElement("span", { className: "cl-name" }, it.name), /* @__PURE__ */ React15.createElement("button", { className: "cl-rm", title: "Remove", onClick: () => removeItem(i) }, /* @__PURE__ */ React15.createElement(Trash26, { size: 13 }))), /* @__PURE__ */ React15.createElement("div", { className: "cl-bottom" }, /* @__PURE__ */ React15.createElement("span", { className: "cl-qty" }, /* @__PURE__ */ React15.createElement("button", { onClick: () => setQty(i, it.qty - 1) }, /* @__PURE__ */ React15.createElement(Minus, { size: 12 })), /* @__PURE__ */ React15.createElement("b", null, fmtQty(it.qty)), /* @__PURE__ */ React15.createElement("button", { onClick: () => setQty(i, it.qty + 1) }, /* @__PURE__ */ React15.createElement(Plus5, { size: 12 }))), /* @__PURE__ */ React15.createElement("span", { className: "cl-price" }, "\xD7 ", /* @__PURE__ */ React15.createElement(Input, { className: "cl-price-input", type: "number", min: "0", step: "0.01", value: it.price, onChange: (e) => setPrice(i, e.target.value) })), /* @__PURE__ */ React15.createElement("b", { className: "cl-amt" }, money2(it.qty * (Number(it.price) || 0))))))), /* @__PURE__ */ React15.createElement("div", { className: "cart-totals" }, /* @__PURE__ */ React15.createElement("div", { className: "kv" }, /* @__PURE__ */ React15.createElement("span", null, "Subtotal"), /* @__PURE__ */ React15.createElement("b", null, money2(subtotal))), /* @__PURE__ */ React15.createElement("div", { className: "cart-disc" }, /* @__PURE__ */ React15.createElement("span", { className: "kv-label" }, "Discount"), /* @__PURE__ */ React15.createElement(Seg, { size: "sm", value: discMode, onChange: setDiscMode, options: [{ value: "amt", label: "\u20B9" }, { value: "pct", label: "%" }] }), /* @__PURE__ */ React15.createElement(Input, { className: "cart-disc-input", type: "number", min: "0", value: discVal, onChange: (e) => setDiscVal(e.target.value), placeholder: "0" }), /* @__PURE__ */ React15.createElement("b", null, "\u2212 ", money2(disc))), /* @__PURE__ */ React15.createElement("div", { className: "kv kv-total" }, /* @__PURE__ */ React15.createElement("span", null, "TOTAL AMOUNT"), /* @__PURE__ */ React15.createElement("b", null, money2(total)))), /* @__PURE__ */ React15.createElement("div", { className: "cart-actions" }, /* @__PURE__ */ React15.createElement(
     Btn,
     {
       variant: "accent",
@@ -5368,7 +5796,7 @@ var init_Payments = __esm({
 import React17, { useState as useState14, useEffect as useEffect11 } from "react";
 import { useSearchParams as useSearchParams6 } from "react-router-dom";
 import { useLiveQuery as useLiveQuery10 } from "dexie-react-hooks";
-import { Pill as Pill4, Plus as Plus7, Archive, Download as Download5, Upload as Upload3, Pencil as Pencil3, Search as Search7, Trash2 as Trash23, FolderPlus, Tag } from "lucide-react";
+import { Pill as Pill4, Plus as Plus7, Archive, Download as Download5, Upload as Upload3, Pencil as Pencil3, Search as Search7, Trash2 as Trash27, FolderPlus, Tag } from "lucide-react";
 function MedFormModal({ open, onClose, editing }) {
   const { user: user3, pushToast, settings } = useApp();
   const cats = useLiveQuery10(() => categoryList(), []);
@@ -5415,10 +5843,10 @@ function MedFormModal({ open, onClose, editing }) {
         min_stock: Number(f.min_stock) || 0
       };
       if (editing) {
-        await updateMedicine(editing.id, data, user3.id);
+        await updateMedicine2(editing.id, data, user3.id);
         pushToast("success", `${f.name} updated`);
       } else {
-        await createMedicine2(data, user3.id);
+        await createMedicine3(data, user3.id);
         pushToast("success", `${f.name} added to the medicine master`);
       }
       onClose();
@@ -5599,8 +6027,8 @@ function Medicines() {
           render: (m) => /* @__PURE__ */ React17.createElement("span", { className: "cell-actions", onClick: (e) => e.stopPropagation() }, /* @__PURE__ */ React17.createElement(Btn, { size: "sm", variant: "ghost", icon: Pencil3, onClick: () => {
             setEditing(m);
             setFormOpen(true);
-          } }, "Edit"), m.active ? /* @__PURE__ */ React17.createElement(React17.Fragment, null, /* @__PURE__ */ React17.createElement(Btn, { size: "sm", variant: "ghost", icon: Archive, onClick: () => setArchiveTarget(m) }, "Archive"), /* @__PURE__ */ React17.createElement(Btn, { size: "sm", variant: "ghost", icon: Trash23, onClick: () => setDeleteTarget(m) }, "Delete")) : /* @__PURE__ */ React17.createElement(Btn, { size: "sm", variant: "ghost", onClick: async () => {
-            await updateMedicine(m.id, { active: 1 }, user3.id);
+          } }, "Edit"), m.active ? /* @__PURE__ */ React17.createElement(React17.Fragment, null, /* @__PURE__ */ React17.createElement(Btn, { size: "sm", variant: "ghost", icon: Archive, onClick: () => setArchiveTarget(m) }, "Archive"), /* @__PURE__ */ React17.createElement(Btn, { size: "sm", variant: "ghost", icon: Trash27, onClick: () => setDeleteTarget(m) }, "Delete")) : /* @__PURE__ */ React17.createElement(Btn, { size: "sm", variant: "ghost", onClick: async () => {
+            await updateMedicine2(m.id, { active: 1 }, user3.id);
             pushToast("success", "Medicine reactivated");
           } }, "Restore"))
         }
@@ -5638,7 +6066,7 @@ function Medicines() {
           render: (c) => /* @__PURE__ */ React17.createElement("span", { className: "cell-actions" }, /* @__PURE__ */ React17.createElement(Btn, { size: "sm", variant: "ghost", icon: Pencil3, onClick: () => {
             setEditingCat(c);
             setCatModalOpen(true);
-          } }, "Edit"), /* @__PURE__ */ React17.createElement(Btn, { size: "sm", variant: "ghost", icon: Trash23, onClick: () => setDeleteCatTarget(c) }, "Delete"))
+          } }, "Edit"), /* @__PURE__ */ React17.createElement(Btn, { size: "sm", variant: "ghost", icon: Trash27, onClick: () => setDeleteCatTarget(c) }, "Delete"))
         }
       ],
       rows: cats,
@@ -5681,7 +6109,7 @@ function Medicines() {
       confirmText: "Delete medicine",
       onConfirm: async () => {
         try {
-          await deleteMedicine(deleteTarget.id, user3.id);
+          await deleteMedicine2(deleteTarget.id, user3.id);
           pushToast("success", `${deleteTarget.name} deleted`);
           setDeleteTarget(null);
         } catch (e) {
@@ -5757,7 +6185,7 @@ var init_Medicines = __esm({
 // src/pages/Inventory.jsx
 import React18, { useState as useState15 } from "react";
 import { useLiveQuery as useLiveQuery11 } from "dexie-react-hooks";
-import { Boxes as Boxes2, PackagePlus as PackagePlus2, AlertTriangle as AlertTriangle5, Hourglass as Hourglass2, ScrollText, Wrench, Plus as Plus8, Pencil as Pencil4, Trash2 as Trash24, Upload as Upload4 } from "lucide-react";
+import { Boxes as Boxes2, PackagePlus as PackagePlus2, AlertTriangle as AlertTriangle5, Hourglass as Hourglass2, ScrollText, Wrench, Plus as Plus8, Pencil as Pencil4, Trash2 as Trash28, Upload as Upload4 } from "lucide-react";
 function AdjustModal({ open, onClose }) {
   const { user: user3, pushToast } = useApp();
   const meds = useLiveQuery11(async () => (await db_default.medicines.where("active").equals(1).toArray()).sort((a, b) => a.name.localeCompare(b.name)), []);
@@ -6029,7 +6457,7 @@ function Inventory() {
             render: (b) => /* @__PURE__ */ React18.createElement("span", { className: "cell-actions", onClick: (e) => e.stopPropagation() }, /* @__PURE__ */ React18.createElement(Btn, { size: "sm", variant: "ghost", icon: Pencil4, onClick: () => {
               setEditingBatch(b);
               setBatchModalOpen(true);
-            } }, "Edit"), b.status !== "expired" && b.available > 0 && /* @__PURE__ */ React18.createElement(Btn, { size: "sm", variant: "ghost", onClick: () => setExpireTarget(b) }, "Expire"), /* @__PURE__ */ React18.createElement(Btn, { size: "sm", variant: "ghost", icon: Trash24, onClick: () => setDeleteBatchTarget(b) }, "Delete"))
+            } }, "Edit"), b.status !== "expired" && b.available > 0 && /* @__PURE__ */ React18.createElement(Btn, { size: "sm", variant: "ghost", onClick: () => setExpireTarget(b) }, "Expire"), /* @__PURE__ */ React18.createElement(Btn, { size: "sm", variant: "ghost", icon: Trash28, onClick: () => setDeleteBatchTarget(b) }, "Delete"))
           }
         ],
         rows: batches,
@@ -6318,6 +6746,14 @@ async function expenseTotals(from, to) {
   }
   return { total, byCat };
 }
+async function deleteExpense(id, userId) {
+  return db_default.transaction("rw", [db_default.expenses, db_default.activity_logs], async () => {
+    const e = await db_default.expenses.get(id);
+    if (!e) throw new Error("Expense not found");
+    await db_default.expenses.delete(id);
+    await audit(userId, "EXPENSE_DELETE", "expense", id, `${e.expense_no} \xB7 ${e.category} \xB7 ${e.amount}`);
+  });
+}
 var EXPENSE_CATEGORIES;
 var init_expenses = __esm({
   "src/services/expenses.js"() {
@@ -6331,11 +6767,12 @@ var init_expenses = __esm({
 // src/pages/Expenses.jsx
 import React20, { useState as useState17 } from "react";
 import { useLiveQuery as useLiveQuery13 } from "dexie-react-hooks";
-import { Wallet as Wallet3, Plus as Plus10, Download as Download6, CircleSlash } from "lucide-react";
+import { Wallet as Wallet3, Plus as Plus10, Download as Download6, CircleSlash, Trash2 as Trash29 } from "lucide-react";
 function Expenses() {
   const { user: user3, settings, pushToast } = useApp();
   const [modal, setModal] = useState17(false);
   const [voidTarget, setVoidTarget] = useState17(null);
+  const [deleteTarget, setDeleteTarget] = useState17(null);
   const [f, setF] = useState17({ category: "Rent", amount: "", date: dkey(/* @__PURE__ */ new Date()), description: "", method: "Cash" });
   const [err, setErr] = useState17("");
   const [busy, setBusy] = useState17(false);
@@ -6398,7 +6835,21 @@ function Expenses() {
         {
           key: "status",
           label: "Status",
-          render: (e) => e.status === "void" ? /* @__PURE__ */ React20.createElement(Badge, { tone: "gray" }, "VOID \u2014 ", e.void_reason) : /* @__PURE__ */ React20.createElement(Btn, { size: "sm", variant: "ghost", icon: CircleSlash, onClick: () => setVoidTarget(e) }, "Void")
+          render: (e) => e.status === "void" ? /* @__PURE__ */ React20.createElement(Badge, { tone: "gray" }, "VOID \u2014 ", e.void_reason) : /* @__PURE__ */ React20.createElement(Badge, { tone: "green" }, "Active")
+        },
+        {
+          key: "actions",
+          label: "",
+          align: "right",
+          render: (e) => /* @__PURE__ */ React20.createElement("div", { className: "row-actions", onClick: (ev) => ev.stopPropagation() }, e.status !== "void" && /* @__PURE__ */ React20.createElement(Btn, { size: "sm", variant: "ghost", icon: CircleSlash, onClick: () => setVoidTarget(e) }, "Void"), /* @__PURE__ */ React20.createElement(
+            IconBtn,
+            {
+              title: "Delete Expense",
+              icon: Trash29,
+              className: "text-danger",
+              onClick: () => setDeleteTarget(e)
+            }
+          ))
         }
       ],
       rows,
@@ -6431,6 +6882,26 @@ function Expenses() {
         await voidExpense(voidTarget.id, reason, user3.id);
         pushToast("success", "Expense voided (kept in records)");
         setVoidTarget(null);
+      }
+    }
+  ), /* @__PURE__ */ React20.createElement(
+    Confirm,
+    {
+      open: !!deleteTarget,
+      onClose: () => setDeleteTarget(null),
+      danger: true,
+      title: `Delete expense ${deleteTarget?.expense_no}?`,
+      message: `Are you sure you want to permanently delete this expense record (${deleteTarget?.category} \xB7 ${fmtMoney(deleteTarget?.amount || 0, settings.currency)})?`,
+      confirmText: "Delete Expense",
+      onConfirm: async () => {
+        if (!deleteTarget) return;
+        try {
+          await deleteExpense(deleteTarget.id, user3?.id);
+          pushToast("success", `Expense ${deleteTarget.expense_no} deleted.`);
+          setDeleteTarget(null);
+        } catch (err2) {
+          pushToast("error", err2.message);
+        }
       }
     }
   ));
@@ -6725,7 +7196,7 @@ var init_Alerts = __esm({
 // src/pages/Staff.jsx
 import React23, { useState as useState20, useEffect as useEffect13 } from "react";
 import { useLiveQuery as useLiveQuery16 } from "dexie-react-hooks";
-import { Pencil as Pencil5, Archive as Archive2, Trash2 as Trash25, Plus as Plus11, Upload as Upload5 } from "lucide-react";
+import { Pencil as Pencil5, Archive as Archive2, Trash2 as Trash210, Plus as Plus11, Upload as Upload5 } from "lucide-react";
 function DoctorModal({ open, onClose, editing }) {
   const { user: me, pushToast } = useApp();
   const [form, setForm] = useState20({ name: "", qualification: "", specialization: "", phone: "", email: "" });
@@ -6792,7 +7263,7 @@ function Staff() {
     { key: "actions", label: "", align: "right", render: (doctor) => /* @__PURE__ */ React23.createElement("span", { className: "cell-actions", onClick: (event) => event.stopPropagation() }, /* @__PURE__ */ React23.createElement(Btn, { size: "sm", variant: "ghost", icon: Pencil5, onClick: () => {
       setEditingDoctor(doctor);
       setDoctorModal(true);
-    } }, "Edit"), /* @__PURE__ */ React23.createElement(Btn, { size: "sm", variant: "ghost", icon: Archive2, onClick: () => setArchiveTarget(doctor) }, doctor.active ? "Archive" : "Reactivate"), /* @__PURE__ */ React23.createElement(Btn, { size: "sm", variant: "ghost", icon: Trash25, onClick: () => setDeleteTarget(doctor) }, "Delete")) }
+    } }, "Edit"), /* @__PURE__ */ React23.createElement(Btn, { size: "sm", variant: "ghost", icon: Archive2, onClick: () => setArchiveTarget(doctor) }, doctor.active ? "Archive" : "Reactivate"), /* @__PURE__ */ React23.createElement(Btn, { size: "sm", variant: "ghost", icon: Trash210, onClick: () => setDeleteTarget(doctor) }, "Delete")) }
   ], rows: doctors, pageSize: 10, loading: !doctors, empty: /* @__PURE__ */ React23.createElement(EmptyState, { icon: "\u{1FA7A}", title: "No doctors registered", action: /* @__PURE__ */ React23.createElement(Btn, { size: "sm", variant: "accent", onClick: () => setDoctorModal(true) }, "+ Add Doctor") }) })), tab === "audit" && /* @__PURE__ */ React23.createElement(Card, { title: "Activity Log", sub: "Chronological record of clinic operations" }, /* @__PURE__ */ React23.createElement(DataTable, { dense: true, columns: [{ key: "at", label: "When", sortable: true, render: (log) => /* @__PURE__ */ React23.createElement("span", { className: "cell-sub" }, fmtDateTime(log.at)) }, { key: "user_name", label: "User", render: (log) => /* @__PURE__ */ React23.createElement("b", null, log.user_name || "system") }, { key: "action", label: "Action", render: (log) => /* @__PURE__ */ React23.createElement(Badge, { tone: "navy" }, log.action) }, { key: "entity", label: "Entity", render: (log) => log.entity || "\u2014" }, { key: "detail", label: "Detail", render: (log) => /* @__PURE__ */ React23.createElement("span", { className: "cell-ellip", title: log.detail }, log.detail || "\u2014") }], rows: logs, pageSize: 15, empty: /* @__PURE__ */ React23.createElement(EmptyState, { icon: "\u{1F4DC}", title: "No activity yet" }) })), /* @__PURE__ */ React23.createElement(DoctorModal, { open: doctorModal, onClose: () => {
     setDoctorModal(false);
     setEditingDoctor(null);
@@ -6825,7 +7296,24 @@ var init_Staff = __esm({
 import React24, { useState as useState21, useEffect as useEffect14, useRef as useRef3 } from "react";
 import { useSearchParams as useSearchParams7 } from "react-router-dom";
 import { useLiveQuery as useLiveQuery17 } from "dexie-react-hooks";
-import { Building2, ReceiptText as ReceiptText6, Fingerprint, Boxes as Boxes3, Printer as Printer7, Palette, Database, ShieldCheck, Upload as Upload6, Download as Download8, RotateCcw as RotateCcw2, AlertTriangle as AlertTriangle7 } from "lucide-react";
+import {
+  Building2,
+  ReceiptText as ReceiptText6,
+  Fingerprint,
+  Boxes as Boxes3,
+  Printer as Printer7,
+  Palette,
+  Database,
+  ShieldCheck,
+  Upload as Upload6,
+  Download as Download8,
+  RotateCcw as RotateCcw2,
+  AlertTriangle as AlertTriangle7,
+  KeyRound,
+  Plus as Plus12,
+  Trash2 as Trash211,
+  Pencil as Pencil6
+} from "lucide-react";
 function Section({ icon: Icon, title, sub, children }) {
   return /* @__PURE__ */ React24.createElement(Card, { title, sub, actions: /* @__PURE__ */ React24.createElement("span", { className: "set-ic" }, /* @__PURE__ */ React24.createElement(Icon, { size: 17 })) }, children);
 }
@@ -6837,8 +7325,18 @@ function SettingsPage() {
   const [f, setF] = useState21({});
   const [busy, setBusy] = useState21(false);
   const [resetOpen, setResetOpen] = useState21(false);
+  const [resetPassword, setResetPassword] = useState21("");
+  const [resetError, setResetError] = useState21("");
+  const [isResetting, setIsResetting] = useState21(false);
+  const [serviceModal, setServiceModal] = useState21(false);
+  const [editingService, setEditingService] = useState21(null);
+  const [deleteServiceTarget, setDeleteServiceTarget] = useState21(null);
+  const [serviceForm, setServiceForm] = useState21({ name: "", type: "service", price: "", description: "" });
+  const [serviceBusy, setServiceBusy] = useState21(false);
+  const [serviceError, setServiceError] = useState21("");
   const logoRef = useRef3(null);
   const importRef = useRef3(null);
+  const services = useLiveQuery17(() => db_default.services.toArray(), []) || [];
   useEffect14(() => {
     const t = params.get("tab");
     if (t) setTab(t);
@@ -6866,30 +7364,31 @@ function SettingsPage() {
     return { patients, bills, meds };
   }, []);
   useEffect14(() => {
+    const s = { ...DEFAULT_SETTINGS, ...settings || {} };
     setF({
-      clinic_name: settings.clinic_name,
-      tagline: settings.tagline,
-      doctor_name: settings.doctor_name,
-      doctor_qual: settings.doctor_qual,
-      doctor_role: settings.doctor_role,
-      address: settings.address,
-      phone: settings.phone,
-      email: settings.email,
-      receipt_footer: settings.receipt_footer,
-      logo: settings.logo,
-      currency: settings.currency,
-      bill_prefix: settings.bill_prefix,
-      bill_padding: settings.bill_padding,
-      default_payment: settings.default_payment,
-      uhid_prefix: settings.uhid_prefix,
-      uhid_include_year: settings.uhid_include_year,
-      uhid_padding: settings.uhid_padding,
-      uhid_start: settings.uhid_start,
-      low_stock_default: settings.low_stock_default,
-      expiry_30: settings.expiry_30,
-      expiry_60: settings.expiry_60,
-      expiry_90: settings.expiry_90,
-      fefo: settings.fefo
+      clinic_name: s.clinic_name || "",
+      tagline: s.tagline || "",
+      doctor_name: s.doctor_name || "",
+      doctor_qual: s.doctor_qual || "",
+      doctor_role: s.doctor_role || "",
+      address: s.address || "",
+      phone: s.phone || "",
+      email: s.email || "",
+      receipt_footer: s.receipt_footer || "",
+      logo: s.logo || "",
+      currency: s.currency || "\u20B9",
+      bill_prefix: s.bill_prefix || "HC-BILL",
+      bill_padding: s.bill_padding ?? 6,
+      default_payment: s.default_payment || "Cash",
+      uhid_prefix: s.uhid_prefix || "HC",
+      uhid_include_year: s.uhid_include_year ?? true,
+      uhid_padding: s.uhid_padding ?? 6,
+      uhid_start: s.uhid_start ?? 1,
+      low_stock_default: s.low_stock_default ?? 10,
+      expiry_30: s.expiry_30 ?? 30,
+      expiry_60: s.expiry_60 ?? 60,
+      expiry_90: s.expiry_90 ?? 90,
+      fefo: s.fefo ?? true
     });
   }, [settings]);
   const set = (k) => (e) => setF((x) => ({ ...x, [k]: e.target.value }));
@@ -6913,31 +7412,40 @@ function SettingsPage() {
     reader.readAsDataURL(file);
   };
   const exportBackup = async () => {
-    const tables = {};
-    for (const t of db_default.tables) {
-      tables[t.name] = await t.toArray();
+    try {
+      const tables = {};
+      for (const t of db_default.tables) {
+        tables[t.name] = await t.toArray();
+      }
+      const payload = { app: "HEEVA CLINIC", version: 1, exported_at: (/* @__PURE__ */ new Date()).toISOString(), data: tables };
+      download(`heeva-backup-${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}.json`, JSON.stringify(payload), "application/json");
+      pushToast("success", "Backup exported");
+    } catch (e) {
+      console.error("Export backup error", e);
+      pushToast("error", `Backup failed: ${e.message}`);
     }
-    const payload = { app: "HEEVA CLINIC", version: 1, exported_at: (/* @__PURE__ */ new Date()).toISOString(), data: tables };
-    download(`heeva-backup-${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}.json`, JSON.stringify(payload), "application/json");
-    pushToast("success", "Backup exported");
   };
   const importBackup = async (file) => {
+    if (!file) return;
     try {
       const text = await file.text();
       const payload = JSON.parse(text);
-      if (payload.app !== "HEEVA CLINIC" || !payload.data) throw new Error("Not a valid HEEVA CLINIC backup file");
+      if (!payload || payload.app !== "HEEVA CLINIC" || !payload.data) throw new Error("Not a valid HEEVA CLINIC backup file");
       await db_default.transaction("rw", db_default.tables, async () => {
         for (const t of db_default.tables) {
           const rows = payload.data[t.name];
           if (!Array.isArray(rows)) continue;
           await t.clear();
-          await t.bulkPut(rows);
+          if (rows.length > 0) {
+            await t.bulkPut(rows);
+          }
         }
       });
       await updateSettings({});
       pushToast("success", "Backup restored");
       setTimeout(() => window.location.reload(), 900);
     } catch (e) {
+      console.error("Import backup error", e);
       pushToast("error", `Import failed: ${e.message}`);
     }
   };
@@ -6956,22 +7464,231 @@ function SettingsPage() {
     const pad = Number(f.uhid_padding) || 6;
     return `${(f.uhid_prefix || "HC").toUpperCase()}${f.uhid_include_year ? `-${year}` : ""}-${String(n).padStart(pad, "0")}`;
   })();
-  return /* @__PURE__ */ React24.createElement("div", { className: "page" }, /* @__PURE__ */ React24.createElement(PageHeader, { title: "Settings", sub: "Configure the clinic profile, numbering, inventory rules and app behaviour" }), msg && /* @__PURE__ */ React24.createElement("div", { className: "set-msg" }, "\u2713 ", msg), /* @__PURE__ */ React24.createElement("div", { className: "tabs rep-tabs" }, tabDefs.map((t) => /* @__PURE__ */ React24.createElement("button", { key: t.key, className: `tab ${tab === t.key ? "tab-active" : ""}`, onClick: () => setTab(t.key) }, /* @__PURE__ */ React24.createElement(t.icon, { size: 14 }), " ", t.label))), tab === "clinic" && /* @__PURE__ */ React24.createElement(Section, { icon: Building2, title: "Clinic Profile", sub: "Shown on payment receipts and prescription letterheads" }, /* @__PURE__ */ React24.createElement("div", { className: "form-grid" }, /* @__PURE__ */ React24.createElement(Field, { label: "Clinic Name", className: "fg-2" }, /* @__PURE__ */ React24.createElement(Input, { value: f.clinic_name, onChange: set("clinic_name") })), /* @__PURE__ */ React24.createElement(Field, { label: "Tagline", className: "fg-2" }, /* @__PURE__ */ React24.createElement(Input, { value: f.tagline, onChange: set("tagline") })), /* @__PURE__ */ React24.createElement(Field, { label: "Doctor Name" }, /* @__PURE__ */ React24.createElement(Input, { value: f.doctor_name, onChange: set("doctor_name") })), /* @__PURE__ */ React24.createElement(Field, { label: "Qualifications" }, /* @__PURE__ */ React24.createElement(Input, { value: f.doctor_qual, onChange: set("doctor_qual") })), /* @__PURE__ */ React24.createElement(Field, { label: "Role" }, /* @__PURE__ */ React24.createElement(Input, { value: f.doctor_role, onChange: set("doctor_role") })), /* @__PURE__ */ React24.createElement(Field, { label: "Phone" }, /* @__PURE__ */ React24.createElement(Input, { value: f.phone, onChange: set("phone") })), /* @__PURE__ */ React24.createElement(Field, { label: "Email", className: "fg-2" }, /* @__PURE__ */ React24.createElement(Input, { value: f.email, onChange: set("email") })), /* @__PURE__ */ React24.createElement(Field, { label: "Address", className: "fg-2" }, /* @__PURE__ */ React24.createElement(Textarea, { rows: 2, value: f.address, onChange: set("address") })), /* @__PURE__ */ React24.createElement(Field, { label: "Receipt Footer", className: "fg-2" }, /* @__PURE__ */ React24.createElement(Input, { value: f.receipt_footer, onChange: set("receipt_footer") })), /* @__PURE__ */ React24.createElement(Field, { label: "Logo", hint: "PNG/JPG \u2014 used on A4 documents" }, /* @__PURE__ */ React24.createElement("div", { className: "logo-row" }, f.logo ? /* @__PURE__ */ React24.createElement("img", { src: f.logo, alt: "logo", className: "logo-preview" }) : /* @__PURE__ */ React24.createElement(Logo, { size: 44 }), /* @__PURE__ */ React24.createElement("input", { type: "file", accept: "image/*", hidden: true, ref: logoRef, onChange: (e) => e.target.files?.[0] && uploadLogo(e.target.files[0]) }), /* @__PURE__ */ React24.createElement(Btn, { size: "sm", variant: "ghost", onClick: () => logoRef.current?.click() }, "Upload"), f.logo && /* @__PURE__ */ React24.createElement(Btn, { size: "sm", variant: "ghost", onClick: () => setF((x) => ({ ...x, logo: "" })) }, "Remove")))), /* @__PURE__ */ React24.createElement("div", { className: "set-save" }, /* @__PURE__ */ React24.createElement(Btn, { variant: "accent", disabled: busy, onClick: () => save(["clinic_name", "tagline", "doctor_name", "doctor_qual", "doctor_role", "address", "phone", "email", "receipt_footer", "logo"]) }, busy ? "Saving\u2026" : "Save clinic profile"))), tab === "billing" && /* @__PURE__ */ React24.createElement(Section, { icon: ReceiptText6, title: "Billing Settings", sub: "Currency, bill numbering and default payment method" }, /* @__PURE__ */ React24.createElement("div", { className: "form-grid" }, /* @__PURE__ */ React24.createElement(Field, { label: "Currency Symbol" }, /* @__PURE__ */ React24.createElement(Input, { value: f.currency, onChange: set("currency") })), /* @__PURE__ */ React24.createElement(Field, { label: "Bill Number Prefix" }, /* @__PURE__ */ React24.createElement(Input, { value: f.bill_prefix, onChange: set("bill_prefix") })), /* @__PURE__ */ React24.createElement(Field, { label: "Bill Number Padding" }, /* @__PURE__ */ React24.createElement(Input, { type: "number", min: "3", max: "10", value: f.bill_padding, onChange: set("bill_padding") })), /* @__PURE__ */ React24.createElement(Field, { label: "Default Payment Method" }, /* @__PURE__ */ React24.createElement(Select, { value: f.default_payment, onChange: set("default_payment") }, ["Cash", "UPI", "Card", "Bank Transfer", "Other"].map((m) => /* @__PURE__ */ React24.createElement("option", { key: m }, m)))), /* @__PURE__ */ React24.createElement("div", { className: "set-preview" }, /* @__PURE__ */ React24.createElement("span", { className: "set-preview-label" }, "Next bill number preview"), /* @__PURE__ */ React24.createElement(Badge, { tone: "navy", className: "set-preview-badge" }, f.bill_prefix, "-", (/* @__PURE__ */ new Date()).getFullYear(), "-000001"))), /* @__PURE__ */ React24.createElement("div", { className: "set-save" }, /* @__PURE__ */ React24.createElement(Btn, { variant: "accent", disabled: busy, onClick: () => save(["currency", "bill_prefix", "bill_padding", "default_payment"]) }, busy ? "Saving\u2026" : "Save billing settings"))), tab === "uhid" && /* @__PURE__ */ React24.createElement(Section, { icon: Fingerprint, title: "UHID Configuration", sub: "Unique Health Identification format \u2014 applied to NEW registrations only; existing UHIDs never change" }, /* @__PURE__ */ React24.createElement("div", { className: "form-grid" }, /* @__PURE__ */ React24.createElement(Field, { label: "UHID Prefix" }, /* @__PURE__ */ React24.createElement(Input, { value: f.uhid_prefix, onChange: set("uhid_prefix"), placeholder: "HC" })), /* @__PURE__ */ React24.createElement(Field, { label: "Include Registration Year" }, /* @__PURE__ */ React24.createElement(Toggle, { checked: !!f.uhid_include_year, onChange: setBool("uhid_include_year"), label: f.uhid_include_year ? "Yes \u2014 HC-2026-000001" : "No \u2014 HC-000001" })), /* @__PURE__ */ React24.createElement(Field, { label: "Number Padding (digits)" }, /* @__PURE__ */ React24.createElement(Input, { type: "number", min: "3", max: "10", value: f.uhid_padding, onChange: set("uhid_padding") })), /* @__PURE__ */ React24.createElement(Field, { label: "Starting Number", hint: "Applies to the first UHID of a new year/scope" }, /* @__PURE__ */ React24.createElement(Input, { type: "number", min: "1", value: f.uhid_start, onChange: set("uhid_start") })), /* @__PURE__ */ React24.createElement("div", { className: "set-preview fg-2" }, /* @__PURE__ */ React24.createElement("span", { className: "set-preview-label" }, "Next UHID preview"), /* @__PURE__ */ React24.createElement(Badge, { tone: "teal", className: "set-preview-badge" }, uhidPreview))), /* @__PURE__ */ React24.createElement("div", { className: "uhid-rules" }, /* @__PURE__ */ React24.createElement(ShieldCheck, { size: 16 }), /* @__PURE__ */ React24.createElement("span", null, "UHID is assigned once, permanently linked to the patient, stored with a unique database constraint, and appears on bills, prescriptions, receipts and history.")), /* @__PURE__ */ React24.createElement("div", { className: "set-save" }, /* @__PURE__ */ React24.createElement(Btn, { variant: "accent", disabled: busy, onClick: () => save(["uhid_prefix", "uhid_include_year", "uhid_padding", "uhid_start"]) }, busy ? "Saving\u2026" : "Save UHID settings"))), tab === "inventory" && /* @__PURE__ */ React24.createElement(Section, { icon: Boxes3, title: "Inventory Rules", sub: "Low-stock thresholds, expiry alert windows and batch selection" }, /* @__PURE__ */ React24.createElement("div", { className: "form-grid" }, /* @__PURE__ */ React24.createElement(Field, { label: "Default Low-Stock Level" }, /* @__PURE__ */ React24.createElement(Input, { type: "number", min: "0", value: f.low_stock_default, onChange: set("low_stock_default") })), /* @__PURE__ */ React24.createElement(Field, { label: "Expiry Alert Window 1 (days)" }, /* @__PURE__ */ React24.createElement(Input, { type: "number", min: "1", value: f.expiry_30, onChange: set("expiry_30") })), /* @__PURE__ */ React24.createElement(Field, { label: "Expiry Alert Window 2 (days)" }, /* @__PURE__ */ React24.createElement(Input, { type: "number", min: "1", value: f.expiry_60, onChange: set("expiry_60") })), /* @__PURE__ */ React24.createElement(Field, { label: "Expiry Alert Window 3 (days)" }, /* @__PURE__ */ React24.createElement(Input, { type: "number", min: "1", value: f.expiry_90, onChange: set("expiry_90") })), /* @__PURE__ */ React24.createElement(Field, { label: "FEFO (First Expired First Out)" }, /* @__PURE__ */ React24.createElement(Toggle, { checked: !!f.fefo, onChange: setBool("fefo"), label: f.fefo ? "Enabled \u2014 billing picks earliest-expiry batch" : "Disabled \u2014 FIFO by manufacturing date" }))), /* @__PURE__ */ React24.createElement("div", { className: "set-save" }, /* @__PURE__ */ React24.createElement(Btn, { variant: "accent", disabled: busy, onClick: () => save(["low_stock_default", "expiry_30", "expiry_60", "expiry_90", "fefo"]) }, busy ? "Saving\u2026" : "Save inventory rules"))), tab === "print" && /* @__PURE__ */ React24.createElement(Section, { icon: Printer7, title: "Print Settings", sub: "A4 landscape payment receipt with clinic and patient copies" }, /* @__PURE__ */ React24.createElement("div", { className: "set-preview" }, /* @__PURE__ */ React24.createElement("span", { className: "set-preview-label" }, "Available format"), /* @__PURE__ */ React24.createElement("div", { className: "set-chips" }, /* @__PURE__ */ React24.createElement(Badge, { tone: "teal" }, "A4 landscape \xB7 2 copies"), /* @__PURE__ */ React24.createElement(Badge, { tone: "gray" }, "Clinic copy"), /* @__PURE__ */ React24.createElement(Badge, { tone: "gray" }, "Patient copy")))), tab === "appearance" && /* @__PURE__ */ React24.createElement(Section, { icon: Palette, title: "Appearance", sub: "Theme and language" }, /* @__PURE__ */ React24.createElement("div", { className: "form-grid" }, /* @__PURE__ */ React24.createElement(Field, { label: "Theme" }, /* @__PURE__ */ React24.createElement("div", { className: "theme-opts" }, /* @__PURE__ */ React24.createElement(Btn, { variant: theme === "light" ? "primary" : "ghost", onClick: () => setTheme("light") }, "\u2600\uFE0F Light"), /* @__PURE__ */ React24.createElement(Btn, { variant: theme === "dark" ? "primary" : "ghost", onClick: () => setTheme("dark") }, "\u{1F319} Dark"))), /* @__PURE__ */ React24.createElement(Field, { label: "Language", hint: "Gujarati UI is in progress \u2014 English labels are used as fallback" }, /* @__PURE__ */ React24.createElement(Select, { value: lang, onChange: (e) => setLang(e.target.value) }, /* @__PURE__ */ React24.createElement("option", { value: "en" }, "English"), /* @__PURE__ */ React24.createElement("option", { value: "gu" }, "\u0A97\u0AC1\u0A9C\u0AB0\u0ABE\u0AA4\u0AC0 (Gujarati)"))))), tab === "data" && /* @__PURE__ */ React24.createElement(Section, { icon: Database, title: "Data, Backup & Maintenance", sub: "All data is stored locally on this device (offline-first). Export regular backups." }, /* @__PURE__ */ React24.createElement("div", { className: "data-grid" }, /* @__PURE__ */ React24.createElement("div", { className: "data-tile" }, /* @__PURE__ */ React24.createElement("span", null, "Patients"), /* @__PURE__ */ React24.createElement("b", null, counts?.patients ?? "\u2014")), /* @__PURE__ */ React24.createElement("div", { className: "data-tile" }, /* @__PURE__ */ React24.createElement("span", null, "Bills"), /* @__PURE__ */ React24.createElement("b", null, counts?.bills ?? "\u2014")), /* @__PURE__ */ React24.createElement("div", { className: "data-tile" }, /* @__PURE__ */ React24.createElement("span", null, "Medicines"), /* @__PURE__ */ React24.createElement("b", null, counts?.meds ?? "\u2014"))), /* @__PURE__ */ React24.createElement("div", { className: "data-actions" }, /* @__PURE__ */ React24.createElement(Btn, { variant: "outline", icon: Download8, onClick: exportBackup }, "Export Full Backup (JSON)"), /* @__PURE__ */ React24.createElement(Btn, { variant: "outline", icon: Upload6, onClick: () => importRef.current?.click() }, "Import Backup"), /* @__PURE__ */ React24.createElement("input", { type: "file", accept: "application/json", hidden: true, ref: importRef, onChange: (e) => {
+  return /* @__PURE__ */ React24.createElement("div", { className: "page" }, /* @__PURE__ */ React24.createElement(PageHeader, { title: "Settings", sub: "Configure the clinic profile, numbering, inventory rules and app behaviour" }), msg && /* @__PURE__ */ React24.createElement("div", { className: "set-msg" }, "\u2713 ", msg), /* @__PURE__ */ React24.createElement("div", { className: "tabs rep-tabs" }, tabDefs.map((t) => /* @__PURE__ */ React24.createElement("button", { key: t.key, className: `tab ${tab === t.key ? "tab-active" : ""}`, onClick: () => setTab(t.key) }, /* @__PURE__ */ React24.createElement(t.icon, { size: 14 }), " ", t.label))), tab === "clinic" && /* @__PURE__ */ React24.createElement(Section, { icon: Building2, title: "Clinic Profile", sub: "Shown on payment receipts and prescription letterheads" }, /* @__PURE__ */ React24.createElement("div", { className: "form-grid" }, /* @__PURE__ */ React24.createElement(Field, { label: "Clinic Name", className: "fg-2" }, /* @__PURE__ */ React24.createElement(Input, { value: f.clinic_name, onChange: set("clinic_name") })), /* @__PURE__ */ React24.createElement(Field, { label: "Tagline", className: "fg-2" }, /* @__PURE__ */ React24.createElement(Input, { value: f.tagline, onChange: set("tagline") })), /* @__PURE__ */ React24.createElement(Field, { label: "Doctor Name" }, /* @__PURE__ */ React24.createElement(Input, { value: f.doctor_name, onChange: set("doctor_name") })), /* @__PURE__ */ React24.createElement(Field, { label: "Qualifications" }, /* @__PURE__ */ React24.createElement(Input, { value: f.doctor_qual, onChange: set("doctor_qual") })), /* @__PURE__ */ React24.createElement(Field, { label: "Role" }, /* @__PURE__ */ React24.createElement(Input, { value: f.doctor_role, onChange: set("doctor_role") })), /* @__PURE__ */ React24.createElement(Field, { label: "Phone" }, /* @__PURE__ */ React24.createElement(Input, { value: f.phone, onChange: set("phone") })), /* @__PURE__ */ React24.createElement(Field, { label: "Email", className: "fg-2" }, /* @__PURE__ */ React24.createElement(Input, { value: f.email, onChange: set("email") })), /* @__PURE__ */ React24.createElement(Field, { label: "Address", className: "fg-2" }, /* @__PURE__ */ React24.createElement(Textarea, { rows: 2, value: f.address, onChange: set("address") })), /* @__PURE__ */ React24.createElement(Field, { label: "Receipt Footer", className: "fg-2" }, /* @__PURE__ */ React24.createElement(Input, { value: f.receipt_footer, onChange: set("receipt_footer") })), /* @__PURE__ */ React24.createElement(Field, { label: "Logo", hint: "PNG/JPG \u2014 used on A4 documents" }, /* @__PURE__ */ React24.createElement("div", { className: "logo-row" }, f.logo ? /* @__PURE__ */ React24.createElement("img", { src: f.logo, alt: "logo", className: "logo-preview" }) : /* @__PURE__ */ React24.createElement(Logo, { size: 44 }), /* @__PURE__ */ React24.createElement("input", { type: "file", accept: "image/*", hidden: true, ref: logoRef, onChange: (e) => e.target.files?.[0] && uploadLogo(e.target.files[0]) }), /* @__PURE__ */ React24.createElement(Btn, { size: "sm", variant: "ghost", onClick: () => logoRef.current?.click() }, "Upload"), f.logo && /* @__PURE__ */ React24.createElement(Btn, { size: "sm", variant: "ghost", onClick: () => setF((x) => ({ ...x, logo: "" })) }, "Remove")))), /* @__PURE__ */ React24.createElement("div", { className: "set-save" }, /* @__PURE__ */ React24.createElement(Btn, { variant: "accent", disabled: busy, onClick: () => save(["clinic_name", "tagline", "doctor_name", "doctor_qual", "doctor_role", "address", "phone", "email", "receipt_footer", "logo"]) }, busy ? "Saving\u2026" : "Save clinic profile"))), tab === "billing" && /* @__PURE__ */ React24.createElement(Section, { icon: ReceiptText6, title: "Billing Settings", sub: "Currency, bill numbering and default payment method" }, /* @__PURE__ */ React24.createElement("div", { className: "form-grid" }, /* @__PURE__ */ React24.createElement(Field, { label: "Currency Symbol" }, /* @__PURE__ */ React24.createElement(Input, { value: f.currency, onChange: set("currency") })), /* @__PURE__ */ React24.createElement(Field, { label: "Bill Number Prefix" }, /* @__PURE__ */ React24.createElement(Input, { value: f.bill_prefix, onChange: set("bill_prefix") })), /* @__PURE__ */ React24.createElement(Field, { label: "Bill Number Padding" }, /* @__PURE__ */ React24.createElement(Input, { type: "number", min: "3", max: "10", value: f.bill_padding, onChange: set("bill_padding") })), /* @__PURE__ */ React24.createElement(Field, { label: "Default Payment Method" }, /* @__PURE__ */ React24.createElement(Select, { value: f.default_payment, onChange: set("default_payment") }, ["Cash", "UPI", "Card", "Bank Transfer", "Other"].map((m) => /* @__PURE__ */ React24.createElement("option", { key: m }, m)))), /* @__PURE__ */ React24.createElement("div", { className: "set-preview" }, /* @__PURE__ */ React24.createElement("span", { className: "set-preview-label" }, "Next bill number preview"), /* @__PURE__ */ React24.createElement(Badge, { tone: "navy", className: "set-preview-badge" }, f.bill_prefix, "-", (/* @__PURE__ */ new Date()).getFullYear(), "-000001"))), /* @__PURE__ */ React24.createElement("div", { className: "set-save" }, /* @__PURE__ */ React24.createElement(Btn, { variant: "accent", disabled: busy, onClick: () => save(["currency", "bill_prefix", "bill_padding", "default_payment"]) }, busy ? "Saving\u2026" : "Save billing settings")), /* @__PURE__ */ React24.createElement("div", { style: { marginTop: 28, paddingTop: 20, borderTop: "1px solid var(--border)" } }, /* @__PURE__ */ React24.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 } }, /* @__PURE__ */ React24.createElement("div", null, /* @__PURE__ */ React24.createElement("h4", { style: { margin: 0, fontSize: 15, fontWeight: 700 } }, "Clinic Billable Services"), /* @__PURE__ */ React24.createElement("div", { style: { fontSize: 12, color: "var(--text-3)" } }, "Standard consultation fees, laboratory tests, and clinical procedures")), /* @__PURE__ */ React24.createElement(
+    Btn,
+    {
+      size: "sm",
+      variant: "accent",
+      icon: Plus12,
+      onClick: () => {
+        setEditingService(null);
+        setServiceForm({ name: "", type: "service", price: "", description: "" });
+        setServiceError("");
+        setServiceModal(true);
+      }
+    },
+    "Add Service"
+  )), /* @__PURE__ */ React24.createElement(
+    DataTable,
+    {
+      columns: [
+        { key: "service_code", label: "Code", render: (s) => /* @__PURE__ */ React24.createElement("span", { className: "cell-mono" }, s.service_code) },
+        { key: "name", label: "Service Name", render: (s) => /* @__PURE__ */ React24.createElement("b", null, s.name) },
+        { key: "type", label: "Type", render: (s) => /* @__PURE__ */ React24.createElement(Badge, { tone: s.type === "consultation" ? "teal" : "navy" }, s.type) },
+        { key: "price", label: "Price", align: "right", render: (s) => `${f.currency || "\u20B9"} ${s.price}` },
+        { key: "description", label: "Description", render: (s) => s.description || "\u2014" },
+        {
+          key: "actions",
+          label: "",
+          align: "right",
+          render: (s) => /* @__PURE__ */ React24.createElement("div", { className: "row-actions", onClick: (e) => e.stopPropagation() }, /* @__PURE__ */ React24.createElement(
+            IconBtn,
+            {
+              title: "Edit Service",
+              icon: Pencil6,
+              onClick: () => {
+                setEditingService(s);
+                setServiceForm({ name: s.name, type: s.type || "service", price: s.price, description: s.description || "" });
+                setServiceError("");
+                setServiceModal(true);
+              }
+            }
+          ), /* @__PURE__ */ React24.createElement(
+            IconBtn,
+            {
+              title: "Delete Service",
+              icon: Trash211,
+              className: "text-danger",
+              onClick: () => setDeleteServiceTarget(s)
+            }
+          ))
+        }
+      ],
+      rows: services,
+      pageSize: 8,
+      empty: /* @__PURE__ */ React24.createElement(EmptyState, { compact: true, title: "No clinic services configured", message: "Add consultation fees or medical services to include in patient bills." })
+    }
+  ))), tab === "uhid" && /* @__PURE__ */ React24.createElement(Section, { icon: Fingerprint, title: "UHID Configuration", sub: "Unique Health Identification format \u2014 applied to NEW registrations only; existing UHIDs never change" }, /* @__PURE__ */ React24.createElement("div", { className: "form-grid" }, /* @__PURE__ */ React24.createElement(Field, { label: "UHID Prefix" }, /* @__PURE__ */ React24.createElement(Input, { value: f.uhid_prefix, onChange: set("uhid_prefix"), placeholder: "HC" })), /* @__PURE__ */ React24.createElement(Field, { label: "Include Registration Year" }, /* @__PURE__ */ React24.createElement(Toggle, { checked: !!f.uhid_include_year, onChange: setBool("uhid_include_year"), label: f.uhid_include_year ? "Yes \u2014 HC-2026-000001" : "No \u2014 HC-000001" })), /* @__PURE__ */ React24.createElement(Field, { label: "Number Padding (digits)" }, /* @__PURE__ */ React24.createElement(Input, { type: "number", min: "3", max: "10", value: f.uhid_padding, onChange: set("uhid_padding") })), /* @__PURE__ */ React24.createElement(Field, { label: "Starting Number", hint: "Applies to the first UHID of a new year/scope" }, /* @__PURE__ */ React24.createElement(Input, { type: "number", min: "1", value: f.uhid_start, onChange: set("uhid_start") })), /* @__PURE__ */ React24.createElement("div", { className: "set-preview fg-2" }, /* @__PURE__ */ React24.createElement("span", { className: "set-preview-label" }, "Next UHID preview"), /* @__PURE__ */ React24.createElement(Badge, { tone: "teal", className: "set-preview-badge" }, uhidPreview))), /* @__PURE__ */ React24.createElement("div", { className: "uhid-rules" }, /* @__PURE__ */ React24.createElement(ShieldCheck, { size: 16 }), /* @__PURE__ */ React24.createElement("span", null, "UHID is assigned once, permanently linked to the patient, stored with a unique database constraint, and appears on bills, prescriptions, receipts and history.")), /* @__PURE__ */ React24.createElement("div", { className: "set-save" }, /* @__PURE__ */ React24.createElement(Btn, { variant: "accent", disabled: busy, onClick: () => save(["uhid_prefix", "uhid_include_year", "uhid_padding", "uhid_start"]) }, busy ? "Saving\u2026" : "Save UHID settings"))), tab === "inventory" && /* @__PURE__ */ React24.createElement(Section, { icon: Boxes3, title: "Inventory Rules", sub: "Low-stock thresholds, expiry alert windows and batch selection" }, /* @__PURE__ */ React24.createElement("div", { className: "form-grid" }, /* @__PURE__ */ React24.createElement(Field, { label: "Default Low-Stock Level" }, /* @__PURE__ */ React24.createElement(Input, { type: "number", min: "0", value: f.low_stock_default, onChange: set("low_stock_default") })), /* @__PURE__ */ React24.createElement(Field, { label: "Expiry Alert Window 1 (days)" }, /* @__PURE__ */ React24.createElement(Input, { type: "number", min: "1", value: f.expiry_30, onChange: set("expiry_30") })), /* @__PURE__ */ React24.createElement(Field, { label: "Expiry Alert Window 2 (days)" }, /* @__PURE__ */ React24.createElement(Input, { type: "number", min: "1", value: f.expiry_60, onChange: set("expiry_60") })), /* @__PURE__ */ React24.createElement(Field, { label: "Expiry Alert Window 3 (days)" }, /* @__PURE__ */ React24.createElement(Input, { type: "number", min: "1", value: f.expiry_90, onChange: set("expiry_90") })), /* @__PURE__ */ React24.createElement(Field, { label: "FEFO (First Expired First Out)" }, /* @__PURE__ */ React24.createElement(Toggle, { checked: !!f.fefo, onChange: setBool("fefo"), label: f.fefo ? "Enabled \u2014 billing picks earliest-expiry batch" : "Disabled \u2014 FIFO by manufacturing date" }))), /* @__PURE__ */ React24.createElement("div", { className: "set-save" }, /* @__PURE__ */ React24.createElement(Btn, { variant: "accent", disabled: busy, onClick: () => save(["low_stock_default", "expiry_30", "expiry_60", "expiry_90", "fefo"]) }, busy ? "Saving\u2026" : "Save inventory rules"))), tab === "print" && /* @__PURE__ */ React24.createElement(Section, { icon: Printer7, title: "Print Settings", sub: "A4 landscape payment receipt with clinic and patient copies" }, /* @__PURE__ */ React24.createElement("div", { className: "set-preview" }, /* @__PURE__ */ React24.createElement("span", { className: "set-preview-label" }, "Available format"), /* @__PURE__ */ React24.createElement("div", { className: "set-chips" }, /* @__PURE__ */ React24.createElement(Badge, { tone: "teal" }, "A4 landscape \xB7 2 copies"), /* @__PURE__ */ React24.createElement(Badge, { tone: "gray" }, "Clinic copy"), /* @__PURE__ */ React24.createElement(Badge, { tone: "gray" }, "Patient copy")))), tab === "appearance" && /* @__PURE__ */ React24.createElement(Section, { icon: Palette, title: "Appearance", sub: "Theme and language" }, /* @__PURE__ */ React24.createElement("div", { className: "form-grid" }, /* @__PURE__ */ React24.createElement(Field, { label: "Theme" }, /* @__PURE__ */ React24.createElement("div", { className: "theme-opts" }, /* @__PURE__ */ React24.createElement(Btn, { variant: theme === "light" ? "primary" : "ghost", onClick: () => setTheme("light") }, "\u2600\uFE0F Light"), /* @__PURE__ */ React24.createElement(Btn, { variant: theme === "dark" ? "primary" : "ghost", onClick: () => setTheme("dark") }, "\u{1F319} Dark"))), /* @__PURE__ */ React24.createElement(Field, { label: "Language", hint: "Gujarati UI is in progress \u2014 English labels are used as fallback" }, /* @__PURE__ */ React24.createElement(Select, { value: lang, onChange: (e) => setLang(e.target.value) }, /* @__PURE__ */ React24.createElement("option", { value: "en" }, "English"), /* @__PURE__ */ React24.createElement("option", { value: "gu" }, "\u0A97\u0AC1\u0A9C\u0AB0\u0ABE\u0AA4\u0AC0 (Gujarati)"))))), tab === "data" && /* @__PURE__ */ React24.createElement(Section, { icon: Database, title: "Data, Backup & Maintenance", sub: "All data is stored locally on this device (offline-first). Export regular backups." }, /* @__PURE__ */ React24.createElement("div", { className: "data-grid" }, /* @__PURE__ */ React24.createElement("div", { className: "data-tile" }, /* @__PURE__ */ React24.createElement("span", null, "Patients"), /* @__PURE__ */ React24.createElement("b", null, counts?.patients ?? "\u2014")), /* @__PURE__ */ React24.createElement("div", { className: "data-tile" }, /* @__PURE__ */ React24.createElement("span", null, "Bills"), /* @__PURE__ */ React24.createElement("b", null, counts?.bills ?? "\u2014")), /* @__PURE__ */ React24.createElement("div", { className: "data-tile" }, /* @__PURE__ */ React24.createElement("span", null, "Medicines"), /* @__PURE__ */ React24.createElement("b", null, counts?.meds ?? "\u2014"))), /* @__PURE__ */ React24.createElement("div", { className: "data-actions" }, /* @__PURE__ */ React24.createElement(Btn, { variant: "outline", icon: Download8, onClick: exportBackup }, "Export Full Backup (JSON)"), /* @__PURE__ */ React24.createElement(Btn, { variant: "outline", icon: Upload6, onClick: () => importRef.current?.click() }, "Import Backup"), /* @__PURE__ */ React24.createElement("input", { type: "file", accept: "application/json", hidden: true, ref: importRef, onChange: (e) => {
     const f2 = e.target.files?.[0];
     if (f2) importBackup(f2);
     e.target.value = "";
-  } }), user3?.role === "admin" && /* @__PURE__ */ React24.createElement(Btn, { variant: "danger", icon: RotateCcw2, onClick: () => setResetOpen(true) }, "Reset All Clinic Data")), /* @__PURE__ */ React24.createElement("div", { className: "data-warn" }, /* @__PURE__ */ React24.createElement(AlertTriangle7, { size: 15 }), " Bills, financial records and medicines with history are never deleted \u2014 they are cancelled/archived/voided with a full audit trail."), logs?.length > 0 && /* @__PURE__ */ React24.createElement(React24.Fragment, null, /* @__PURE__ */ React24.createElement("h4", { className: "sub-head" }, "Recent activity"), /* @__PURE__ */ React24.createElement("div", { className: "audit-mini" }, logs.map((l) => /* @__PURE__ */ React24.createElement("div", { key: l.id, className: "audit-row" }, /* @__PURE__ */ React24.createElement("span", { className: "audit-when" }, fmtDateTime(l.at)), /* @__PURE__ */ React24.createElement(Badge, { tone: "navy" }, l.action), /* @__PURE__ */ React24.createElement("span", { className: "audit-detail" }, l.user_name, " \u2014 ", l.detail)))))), /* @__PURE__ */ React24.createElement(
-    Confirm,
+  } }), user3?.role === "admin" && /* @__PURE__ */ React24.createElement(Btn, { variant: "danger", icon: RotateCcw2, onClick: () => setResetOpen(true) }, "Reset All Clinic Data")), /* @__PURE__ */ React24.createElement("div", { className: "data-warn" }, /* @__PURE__ */ React24.createElement(AlertTriangle7, { size: 15 }), " Bills, financial records and medicines with history are never deleted \u2014 they are cancelled/archived/voided with a full audit trail."), logs?.length > 0 && /* @__PURE__ */ React24.createElement(React24.Fragment, null, /* @__PURE__ */ React24.createElement("h4", { className: "sub-head" }, "Recent activity"), /* @__PURE__ */ React24.createElement("div", { className: "audit-mini" }, logs.map((l, idx) => /* @__PURE__ */ React24.createElement("div", { key: l?.id || l?.at || idx, className: "audit-row" }, /* @__PURE__ */ React24.createElement("span", { className: "audit-when" }, fmtDateTime(l?.at)), /* @__PURE__ */ React24.createElement(Badge, { tone: "navy" }, l?.action || "ACTION"), /* @__PURE__ */ React24.createElement("span", { className: "audit-detail" }, l?.user_name || "System", " \u2014 ", l?.detail || "\u2014")))))), /* @__PURE__ */ React24.createElement(
+    Modal,
     {
       open: resetOpen,
-      onClose: () => setResetOpen(false),
-      title: "Reset all clinic data?",
-      message: "This deletes all local clinic records on this device. The authorized clinic account will be recreated on the next start. Export a backup first if you have real data.",
+      onClose: () => {
+        if (!isResetting) {
+          setResetOpen(false);
+          setResetPassword("");
+          setResetError("");
+        }
+      },
+      title: "\u26A0\uFE0F Reset All Clinic Data",
+      sub: "Permanent wipe of all Cloudflare D1 and local clinic records",
+      width: "md",
+      footer: /* @__PURE__ */ React24.createElement(React24.Fragment, null, /* @__PURE__ */ React24.createElement(
+        Btn,
+        {
+          variant: "ghost",
+          disabled: isResetting,
+          onClick: () => {
+            setResetOpen(false);
+            setResetPassword("");
+            setResetError("");
+          }
+        },
+        "Cancel"
+      ), /* @__PURE__ */ React24.createElement(
+        Btn,
+        {
+          variant: "danger",
+          disabled: isResetting || !resetPassword.trim(),
+          onClick: async () => {
+            setIsResetting(true);
+            setResetError("");
+            try {
+              await adminApi.resetDatabase(resetPassword);
+              await db_default.delete();
+              window.location.reload();
+            } catch (err) {
+              setResetError(err?.message || "Failed to reset clinic data. Verify password.");
+              setIsResetting(false);
+            }
+          }
+        },
+        isResetting ? "Wiping All Data\u2026" : "Wipe & Reset All Clinic Data"
+      ))
+    },
+    /* @__PURE__ */ React24.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 14 } }, /* @__PURE__ */ React24.createElement("div", { style: {
+      background: "var(--red-50, #fee2e2)",
+      border: "1px solid var(--red-200, #fca5a5)",
+      borderRadius: 10,
+      padding: "12px 14px",
+      color: "var(--red-800, #991b1b)",
+      fontSize: 13,
+      lineHeight: 1.5
+    } }, /* @__PURE__ */ React24.createElement("div", { style: { fontWeight: 700, marginBottom: 4, display: "flex", alignItems: "center", gap: 6 } }, /* @__PURE__ */ React24.createElement(AlertTriangle7, { size: 16 }), " Irreversible Database Wipe"), /* @__PURE__ */ React24.createElement("div", null, "This will ", /* @__PURE__ */ React24.createElement("strong", null, "permanently erase all records"), " from both ", /* @__PURE__ */ React24.createElement("strong", null, "Cloudflare D1"), " and this local browser:"), /* @__PURE__ */ React24.createElement("ul", { style: { margin: "6px 0 0 18px", padding: 0, fontSize: 12.5 } }, /* @__PURE__ */ React24.createElement("li", null, "Patients, Vitals, Consultations, Prescriptions"), /* @__PURE__ */ React24.createElement("li", null, "Bills, Payments, Inventory Transactions & Batches"), /* @__PURE__ */ React24.createElement("li", null, "Expenses, Notifications & Activity Logs")), /* @__PURE__ */ React24.createElement("div", { style: { marginTop: 6, fontSize: 12 } }, "Clinic settings will be reset to defaults.")), /* @__PURE__ */ React24.createElement(Field, { label: "Enter Clinic Password to Authorize Reset", required: true, error: resetError }, /* @__PURE__ */ React24.createElement("div", { className: "input-with-icon", style: { height: 42 } }, /* @__PURE__ */ React24.createElement(KeyRound, { size: 16 }), /* @__PURE__ */ React24.createElement(
+      "input",
+      {
+        type: "password",
+        className: "input",
+        placeholder: "Enter clinic password...",
+        value: resetPassword,
+        onChange: (e) => {
+          setResetPassword(e.target.value);
+          if (resetError) setResetError("");
+        },
+        disabled: isResetting,
+        autoFocus: true
+      }
+    ))))
+  ), /* @__PURE__ */ React24.createElement(
+    Modal,
+    {
+      open: serviceModal,
+      onClose: () => setServiceModal(false),
+      title: editingService ? "Edit Clinic Service" : "Add New Service",
+      width: "md",
+      footer: /* @__PURE__ */ React24.createElement(React24.Fragment, null, /* @__PURE__ */ React24.createElement(Btn, { variant: "ghost", onClick: () => setServiceModal(false) }, "Cancel"), /* @__PURE__ */ React24.createElement(
+        Btn,
+        {
+          variant: "accent",
+          disabled: serviceBusy || !serviceForm.name.trim() || !serviceForm.price,
+          onClick: async () => {
+            setServiceBusy(true);
+            setServiceError("");
+            try {
+              if (editingService) {
+                await updateService(editingService.id, {
+                  name: serviceForm.name,
+                  type: serviceForm.type,
+                  price: Number(serviceForm.price),
+                  description: serviceForm.description
+                }, user3?.id);
+                pushToast("success", "Service updated successfully");
+              } else {
+                await createService({
+                  name: serviceForm.name,
+                  type: serviceForm.type,
+                  price: Number(serviceForm.price),
+                  description: serviceForm.description
+                }, user3?.id);
+                pushToast("success", "New service added");
+              }
+              setServiceModal(false);
+            } catch (err) {
+              setServiceError(err.message);
+            } finally {
+              setServiceBusy(false);
+            }
+          }
+        },
+        serviceBusy ? "Saving\u2026" : editingService ? "Save Changes" : "Create Service"
+      ))
+    },
+    serviceError && /* @__PURE__ */ React24.createElement("div", { className: "form-alert" }, serviceError),
+    /* @__PURE__ */ React24.createElement("div", { className: "form-grid" }, /* @__PURE__ */ React24.createElement(Field, { label: "Service Name", required: true, className: "fg-2" }, /* @__PURE__ */ React24.createElement(
+      Input,
+      {
+        value: serviceForm.name,
+        onChange: (e) => setServiceForm((s) => ({ ...s, name: e.target.value })),
+        placeholder: "e.g. Consultation Fee, Dressing, ECG..."
+      }
+    )), /* @__PURE__ */ React24.createElement(Field, { label: "Service Type", required: true }, /* @__PURE__ */ React24.createElement(
+      Select,
+      {
+        value: serviceForm.type,
+        onChange: (e) => setServiceForm((s) => ({ ...s, type: e.target.value }))
+      },
+      /* @__PURE__ */ React24.createElement("option", { value: "service" }, "Clinical Service / Procedure"),
+      /* @__PURE__ */ React24.createElement("option", { value: "consultation" }, "Doctor Consultation")
+    )), /* @__PURE__ */ React24.createElement(Field, { label: `Price (${f.currency || "\u20B9"})`, required: true }, /* @__PURE__ */ React24.createElement(
+      Input,
+      {
+        type: "number",
+        min: "0",
+        step: "0.01",
+        value: serviceForm.price,
+        onChange: (e) => setServiceForm((s) => ({ ...s, price: e.target.value })),
+        placeholder: "0.00"
+      }
+    )), /* @__PURE__ */ React24.createElement(Field, { label: "Description", className: "fg-2" }, /* @__PURE__ */ React24.createElement(
+      Textarea,
+      {
+        rows: 2,
+        value: serviceForm.description,
+        onChange: (e) => setServiceForm((s) => ({ ...s, description: e.target.value })),
+        placeholder: "Optional notes or details regarding this service..."
+      }
+    )))
+  ), /* @__PURE__ */ React24.createElement(
+    Confirm,
+    {
+      open: !!deleteServiceTarget,
+      onClose: () => setDeleteServiceTarget(null),
       danger: true,
-      confirmText: "Yes, reset local data",
+      title: "Delete Clinic Service?",
+      message: `Are you sure you want to permanently delete service "${deleteServiceTarget?.name}"? Services that have been billed to patients cannot be deleted.`,
+      confirmText: "Delete Service",
       onConfirm: async () => {
-        await db_default.delete();
-        window.location.reload();
+        if (!deleteServiceTarget) return;
+        try {
+          await deleteService(deleteServiceTarget.id, user3?.id);
+          pushToast("success", `Service "${deleteServiceTarget.name}" deleted.`);
+          setDeleteServiceTarget(null);
+        } catch (err) {
+          pushToast("error", err.message);
+        }
       }
     }
   ));
@@ -6982,6 +7699,108 @@ var init_SettingsPage = __esm({
     init_AppContext();
     init_ui();
     init_utils();
+    init_core();
+    init_api();
+    init_billing();
+  }
+});
+
+// src/components/LockScreen.jsx
+import React25, { useState as useState22, useRef as useRef4, useEffect as useEffect15 } from "react";
+import { Lock as Lock2, Eye, EyeOff, KeyRound as KeyRound2, AlertCircle, Loader2 } from "lucide-react";
+function LockScreen({ onLogin }) {
+  const [password, setPassword] = useState22("");
+  const [showPassword, setShowPassword] = useState22(false);
+  const [loading, setLoading] = useState22(false);
+  const [error, setError] = useState22("");
+  const inputRef = useRef4(null);
+  useEffect15(() => {
+    inputRef.current?.focus();
+  }, []);
+  const handleSubmit = async (e) => {
+    e?.preventDefault();
+    if (!password.trim() || loading) return;
+    setError("");
+    setLoading(true);
+    try {
+      await onLogin(password);
+    } catch (err) {
+      setError(err?.message || "Incorrect clinic password. Please try again.");
+      setPassword("");
+      inputRef.current?.focus();
+    } finally {
+      setLoading(false);
+    }
+  };
+  return /* @__PURE__ */ React25.createElement("div", { className: "login-wrap" }, /* @__PURE__ */ React25.createElement("div", { className: "login-brand" }, /* @__PURE__ */ React25.createElement("div", { className: "login-brand-inner" }, /* @__PURE__ */ React25.createElement("div", { className: "login-logo-row" }, /* @__PURE__ */ React25.createElement(Logo, { size: 52 }), /* @__PURE__ */ React25.createElement("div", null, /* @__PURE__ */ React25.createElement("div", { className: "login-clinic" }, "HEEVA CLINIC"), /* @__PURE__ */ React25.createElement("div", { className: "login-tag" }, "Trusted care, every time."))), /* @__PURE__ */ React25.createElement("div", { className: "login-headline" }, "Secure, edge-backed clinical practice."), /* @__PURE__ */ React25.createElement("ul", { className: "login-points" }, /* @__PURE__ */ React25.createElement("li", null, "Single-password clinical access for doctors & clinic staff"), /* @__PURE__ */ React25.createElement("li", null, "Real-time patient history, appointments, and consultations"), /* @__PURE__ */ React25.createElement("li", null, "A4 and thermal invoicing with inventory tracking"), /* @__PURE__ */ React25.createElement("li", null, "Cloudflare D1 resilient database architecture")), /* @__PURE__ */ React25.createElement("div", { className: "login-foot" }, "HEEVA CLINIC Management System \xB7 Surat, Gujarat"))), /* @__PURE__ */ React25.createElement("div", { className: "login-panel" }, /* @__PURE__ */ React25.createElement("div", { className: "login-card" }, /* @__PURE__ */ React25.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10, marginBottom: 4 } }, /* @__PURE__ */ React25.createElement("div", { style: {
+    width: 38,
+    height: 38,
+    borderRadius: 10,
+    background: "var(--teal-50, #e6f7f6)",
+    color: "var(--teal-600, #0e9594)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center"
+  } }, /* @__PURE__ */ React25.createElement(Lock2, { size: 20 })), /* @__PURE__ */ React25.createElement("div", null, /* @__PURE__ */ React25.createElement("h1", { style: { margin: 0, fontSize: 20 } }, "Unlock Workspace"), /* @__PURE__ */ React25.createElement("div", { style: { fontSize: 12, color: "var(--text-3)" } }, "Authorized clinic access only"))), /* @__PURE__ */ React25.createElement("p", { className: "login-sub" }, "Enter the clinic password to access patient records and clinical tools."), /* @__PURE__ */ React25.createElement("form", { onSubmit: handleSubmit, className: "login-form" }, /* @__PURE__ */ React25.createElement("div", { className: "input-with-icon", style: { height: 46 } }, /* @__PURE__ */ React25.createElement(KeyRound2, { size: 18 }), /* @__PURE__ */ React25.createElement(
+    "input",
+    {
+      ref: inputRef,
+      type: showPassword ? "text" : "password",
+      className: "input",
+      placeholder: "Enter clinic password...",
+      value: password,
+      onChange: (e) => {
+        setPassword(e.target.value);
+        if (error) setError("");
+      },
+      disabled: loading,
+      autoComplete: "current-password",
+      style: { height: "100%", fontSize: 14 }
+    }
+  ), /* @__PURE__ */ React25.createElement(
+    "button",
+    {
+      type: "button",
+      className: "icon-btn",
+      onClick: () => setShowPassword(!showPassword),
+      tabIndex: -1,
+      title: showPassword ? "Hide password" : "Show password",
+      style: { border: "none", background: "transparent", cursor: "pointer", padding: 4 }
+    },
+    showPassword ? /* @__PURE__ */ React25.createElement(EyeOff, { size: 16 }) : /* @__PURE__ */ React25.createElement(Eye, { size: 16 })
+  )), error && /* @__PURE__ */ React25.createElement("div", { style: {
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    padding: "9px 12px",
+    borderRadius: 8,
+    background: "var(--red-50, #fee2e2)",
+    color: "var(--red-600, #dc2626)",
+    fontSize: 13,
+    fontWeight: 500
+  } }, /* @__PURE__ */ React25.createElement(AlertCircle, { size: 16, style: { flexShrink: 0 } }), /* @__PURE__ */ React25.createElement("span", null, error)), /* @__PURE__ */ React25.createElement(
+    "button",
+    {
+      type: "submit",
+      className: "btn btn-primary login-btn",
+      disabled: loading || !password.trim(),
+      style: { height: 44, fontSize: 14, fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }
+    },
+    loading ? /* @__PURE__ */ React25.createElement(React25.Fragment, null, /* @__PURE__ */ React25.createElement(Loader2, { size: 16, className: "spin" }), /* @__PURE__ */ React25.createElement("span", null, "Unlocking...")) : /* @__PURE__ */ React25.createElement(React25.Fragment, null, /* @__PURE__ */ React25.createElement(Lock2, { size: 16 }), /* @__PURE__ */ React25.createElement("span", null, "Unlock Clinic"))
+  )), /* @__PURE__ */ React25.createElement("div", { style: {
+    marginTop: 24,
+    paddingTop: 16,
+    borderTop: "1px solid var(--border-2)",
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    fontSize: 11,
+    color: "var(--text-3)"
+  } }, /* @__PURE__ */ React25.createElement("span", null, "HEEVA CLINIC v2.0"), /* @__PURE__ */ React25.createElement("span", null, "Cloudflare D1 Protected")))));
+}
+var init_LockScreen = __esm({
+  "src/components/LockScreen.jsx"() {
+    init_ui();
   }
 });
 
@@ -6990,20 +7809,21 @@ var App_exports = {};
 __export(App_exports, {
   default: () => App
 });
-import React25 from "react";
+import React26 from "react";
 import { Routes, Route, Navigate } from "react-router-dom";
 import { Loader } from "lucide-react";
 function DatabaseErrorScreen({ message }) {
-  return /* @__PURE__ */ React25.createElement("div", { className: "boot-screen" }, /* @__PURE__ */ React25.createElement(Logo, { size: 64 }), /* @__PURE__ */ React25.createElement("div", { className: "boot-name" }, "Database connection required"), /* @__PURE__ */ React25.createElement("div", { className: "boot-sub" }, message), /* @__PURE__ */ React25.createElement("button", { className: "btn btn-primary", onClick: () => window.location.reload() }, "Retry connection"));
+  return /* @__PURE__ */ React26.createElement("div", { className: "boot-screen" }, /* @__PURE__ */ React26.createElement(Logo, { size: 64 }), /* @__PURE__ */ React26.createElement("div", { className: "boot-name" }, "Database connection required"), /* @__PURE__ */ React26.createElement("div", { className: "boot-sub" }, message), /* @__PURE__ */ React26.createElement("button", { className: "btn btn-primary", onClick: () => window.location.reload() }, "Retry connection"));
 }
 function BootScreen() {
-  return /* @__PURE__ */ React25.createElement("div", { className: "boot-screen" }, /* @__PURE__ */ React25.createElement(Logo, { size: 64 }), /* @__PURE__ */ React25.createElement("div", { className: "boot-name" }, "HEEVA CLINIC"), /* @__PURE__ */ React25.createElement("div", { className: "boot-sub" }, "Trusted care, every time."), /* @__PURE__ */ React25.createElement("div", { className: "boot-spinner" }, /* @__PURE__ */ React25.createElement(Loader, { size: 22, className: "spin" })));
+  return /* @__PURE__ */ React26.createElement("div", { className: "boot-screen" }, /* @__PURE__ */ React26.createElement(Logo, { size: 64 }), /* @__PURE__ */ React26.createElement("div", { className: "boot-name" }, "HEEVA CLINIC"), /* @__PURE__ */ React26.createElement("div", { className: "boot-sub" }, "Trusted care, every time."), /* @__PURE__ */ React26.createElement("div", { className: "boot-spinner" }, /* @__PURE__ */ React26.createElement(Loader, { size: 22, className: "spin" })));
 }
 function App() {
-  const { booting, databaseError } = useApp();
-  if (booting) return /* @__PURE__ */ React25.createElement(BootScreen, null);
-  if (databaseError) return /* @__PURE__ */ React25.createElement(DatabaseErrorScreen, { message: databaseError });
-  return /* @__PURE__ */ React25.createElement(ErrorBoundary, null, /* @__PURE__ */ React25.createElement(Routes, null, /* @__PURE__ */ React25.createElement(Route, { element: /* @__PURE__ */ React25.createElement(AppShell, null) }, /* @__PURE__ */ React25.createElement(Route, { path: "/", element: /* @__PURE__ */ React25.createElement(Dashboard, null) }), /* @__PURE__ */ React25.createElement(Route, { path: "/patients", element: /* @__PURE__ */ React25.createElement(Patients, null) }), /* @__PURE__ */ React25.createElement(Route, { path: "/patients/:id", element: /* @__PURE__ */ React25.createElement(PatientProfile, null) }), /* @__PURE__ */ React25.createElement(Route, { path: "/consultations", element: /* @__PURE__ */ React25.createElement(Consultations, null) }), /* @__PURE__ */ React25.createElement(Route, { path: "/appointments", element: /* @__PURE__ */ React25.createElement(Appointments, null) }), /* @__PURE__ */ React25.createElement(Route, { path: "/prescriptions", element: /* @__PURE__ */ React25.createElement(Prescriptions, null) }), /* @__PURE__ */ React25.createElement(Route, { path: "/billing", element: /* @__PURE__ */ React25.createElement(Billing, null) }), /* @__PURE__ */ React25.createElement(Route, { path: "/payments", element: /* @__PURE__ */ React25.createElement(Payments, null) }), /* @__PURE__ */ React25.createElement(Route, { path: "/medicines", element: /* @__PURE__ */ React25.createElement(Medicines, null) }), /* @__PURE__ */ React25.createElement(Route, { path: "/inventory", element: /* @__PURE__ */ React25.createElement(Inventory, null) }), /* @__PURE__ */ React25.createElement(Route, { path: "/returns", element: /* @__PURE__ */ React25.createElement(Returns, null) }), /* @__PURE__ */ React25.createElement(Route, { path: "/expenses", element: /* @__PURE__ */ React25.createElement(Expenses, null) }), /* @__PURE__ */ React25.createElement(Route, { path: "/reports", element: /* @__PURE__ */ React25.createElement(Reports, null) }), /* @__PURE__ */ React25.createElement(Route, { path: "/alerts", element: /* @__PURE__ */ React25.createElement(Alerts, null) }), /* @__PURE__ */ React25.createElement(Route, { path: "/staff", element: /* @__PURE__ */ React25.createElement(Staff, null) }), /* @__PURE__ */ React25.createElement(Route, { path: "/settings", element: /* @__PURE__ */ React25.createElement(SettingsPage, null) })), /* @__PURE__ */ React25.createElement(Route, { path: "*", element: /* @__PURE__ */ React25.createElement(Navigate, { to: "/", replace: true }) })));
+  const { booting, databaseError, isAuthenticated, login } = useApp();
+  if (booting) return /* @__PURE__ */ React26.createElement(BootScreen, null);
+  if (databaseError) return /* @__PURE__ */ React26.createElement(DatabaseErrorScreen, { message: databaseError });
+  if (!isAuthenticated) return /* @__PURE__ */ React26.createElement(LockScreen, { onLogin: login });
+  return /* @__PURE__ */ React26.createElement(ErrorBoundary, null, /* @__PURE__ */ React26.createElement(Routes, null, /* @__PURE__ */ React26.createElement(Route, { element: /* @__PURE__ */ React26.createElement(AppShell, null) }, /* @__PURE__ */ React26.createElement(Route, { path: "/", element: /* @__PURE__ */ React26.createElement(Dashboard, null) }), /* @__PURE__ */ React26.createElement(Route, { path: "/patients", element: /* @__PURE__ */ React26.createElement(Patients, null) }), /* @__PURE__ */ React26.createElement(Route, { path: "/patients/:id", element: /* @__PURE__ */ React26.createElement(PatientProfile, null) }), /* @__PURE__ */ React26.createElement(Route, { path: "/consultations", element: /* @__PURE__ */ React26.createElement(Consultations, null) }), /* @__PURE__ */ React26.createElement(Route, { path: "/appointments", element: /* @__PURE__ */ React26.createElement(Appointments, null) }), /* @__PURE__ */ React26.createElement(Route, { path: "/prescriptions", element: /* @__PURE__ */ React26.createElement(Prescriptions, null) }), /* @__PURE__ */ React26.createElement(Route, { path: "/billing", element: /* @__PURE__ */ React26.createElement(Billing, null) }), /* @__PURE__ */ React26.createElement(Route, { path: "/payments", element: /* @__PURE__ */ React26.createElement(Payments, null) }), /* @__PURE__ */ React26.createElement(Route, { path: "/medicines", element: /* @__PURE__ */ React26.createElement(Medicines, null) }), /* @__PURE__ */ React26.createElement(Route, { path: "/inventory", element: /* @__PURE__ */ React26.createElement(Inventory, null) }), /* @__PURE__ */ React26.createElement(Route, { path: "/returns", element: /* @__PURE__ */ React26.createElement(Returns, null) }), /* @__PURE__ */ React26.createElement(Route, { path: "/expenses", element: /* @__PURE__ */ React26.createElement(Expenses, null) }), /* @__PURE__ */ React26.createElement(Route, { path: "/reports", element: /* @__PURE__ */ React26.createElement(Reports, null) }), /* @__PURE__ */ React26.createElement(Route, { path: "/alerts", element: /* @__PURE__ */ React26.createElement(Alerts, null) }), /* @__PURE__ */ React26.createElement(Route, { path: "/staff", element: /* @__PURE__ */ React26.createElement(Staff, null) }), /* @__PURE__ */ React26.createElement(Route, { path: "/settings", element: /* @__PURE__ */ React26.createElement(SettingsPage, null) })), /* @__PURE__ */ React26.createElement(Route, { path: "*", element: /* @__PURE__ */ React26.createElement(Navigate, { to: "/", replace: true }) })));
 }
 var ErrorBoundary;
 var init_App = __esm({
@@ -7026,8 +7846,9 @@ var init_App = __esm({
     init_Alerts();
     init_Staff();
     init_SettingsPage();
+    init_LockScreen();
     init_ui();
-    ErrorBoundary = class extends React25.Component {
+    ErrorBoundary = class extends React26.Component {
       constructor(props) {
         super(props);
         this.state = { error: null };
@@ -7040,7 +7861,7 @@ var init_App = __esm({
       }
       render() {
         if (!this.state.error) return this.props.children;
-        return /* @__PURE__ */ React25.createElement("div", { className: "error-screen" }, /* @__PURE__ */ React25.createElement(Logo, { size: 56 }), /* @__PURE__ */ React25.createElement("h1", null, "HEEVA CLINIC"), /* @__PURE__ */ React25.createElement("h2", null, "Something went wrong"), /* @__PURE__ */ React25.createElement("p", null, "The application could not display this screen."), /* @__PURE__ */ React25.createElement("div", { className: "error-actions" }, /* @__PURE__ */ React25.createElement("button", { className: "btn btn-primary", onClick: () => this.setState({ error: null }) }, "Try Again"), /* @__PURE__ */ React25.createElement("button", { className: "btn btn-outline", onClick: () => window.location.reload() }, "Reload Application")));
+        return /* @__PURE__ */ React26.createElement("div", { className: "error-screen" }, /* @__PURE__ */ React26.createElement(Logo, { size: 56 }), /* @__PURE__ */ React26.createElement("h1", null, "HEEVA CLINIC"), /* @__PURE__ */ React26.createElement("h2", null, "Something went wrong"), /* @__PURE__ */ React26.createElement("p", null, "The application could not display this screen."), /* @__PURE__ */ React26.createElement("div", { className: "error-actions" }, /* @__PURE__ */ React26.createElement("button", { className: "btn btn-primary", onClick: () => this.setState({ error: null }) }, "Try Again"), /* @__PURE__ */ React26.createElement("button", { className: "btn btn-outline", onClick: () => window.location.reload() }, "Reload Application")));
       }
     };
   }
@@ -7093,7 +7914,7 @@ console.error = (...a) => {
   if (!/Warning:|act\(\)|useLayoutEffect|findDOMNode|non-boolean|Each child|validateDOMNesting|deprecated/i.test(s)) errors.push("console.error: " + s.slice(0, 300));
   origConsoleError(...a);
 };
-var React26 = (await import("react")).default;
+var React27 = (await import("react")).default;
 var { createRoot } = await import("react-dom/client");
 var { MemoryRouter } = await import("react-router-dom");
 var { AppProvider: AppProvider2 } = await Promise.resolve().then(() => (init_AppContext(), AppContext_exports));
@@ -7103,8 +7924,9 @@ var db2 = (await Promise.resolve().then(() => (init_db(), db_exports))).default;
 var patientService = await Promise.resolve().then(() => (init_patients(), patients_exports));
 var inventory = await Promise.resolve().then(() => (init_inventory(), inventory_exports));
 var billing = await Promise.resolve().then(() => (init_billing(), billing_exports));
+var { authApi: authApi2 } = await Promise.resolve().then(() => (init_api(), api_exports));
 var sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-var h = React26.createElement;
+var h = React27.createElement;
 var passed = 0;
 var ok = (m) => {
   console.log("  \u2713", m);
@@ -7159,6 +7981,9 @@ async function renderRoute(path, expectText, waitMs = 600) {
   root.unmount();
   return text;
 }
+await renderRoute("/", ["Unlock Workspace", "HEEVA CLINIC", "Unlock Clinic"], 800);
+ok("Unauthenticated session properly presents LockScreen");
+authApi2.verify = async () => true;
 var firstPatient = (await db2.patients.toArray())[0];
 var pid = firstPatient.id;
 var bill = await db2.bills.where("status").equals("completed").first();
@@ -7179,6 +8004,8 @@ await renderRoute("/reports", ["Report", "Sales"]);
 await renderRoute("/alerts", ["Alerts", "otification".toLowerCase()]);
 await renderRoute("/staff", ["Staff", "Doctor"]);
 await renderRoute("/settings", ["Settings", "Clinic Profile"]);
+await renderRoute("/settings?tab=billing", ["Clinic Billable Services"]);
+await renderRoute("/settings?tab=data", ["Data, Backup & Maintenance"]);
 console.log(`
-${passed} checks passed \u2014 every page renders.`);
+${passed} checks passed \u2014 lock screen and every page render.`);
 process.exit(0);

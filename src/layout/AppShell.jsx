@@ -8,7 +8,7 @@ import { Logo, Btn, IconBtn, ToastStack } from '../components/ui';
 import {
   Home, Users, Stethoscope, CalendarDays, FileText, ReceiptText, CreditCard,
   Pill, Boxes, Undo2, Wallet, BarChart3, Bell, UserCog, Settings as SettingsIcon,
-  Search, Plus, Moon, Sun, Download, WifiOff, ChevronRight,
+  Search, Plus, Moon, Sun, Download, WifiOff, ChevronRight, Lock,
 } from 'lucide-react';
 import { fmtDateTime, fmtDate, dkey, todayStr, cx } from '../utils';
 
@@ -170,7 +170,7 @@ function NotificationBell() {
 }
 
 export default function AppShell() {
-  const { user, t, settings, theme, setTheme, online, toasts, install, installEvt, standalone, can } = useApp();
+  const { user, t, settings, theme, setTheme, online, toasts, install, installEvt, standalone, can, logout } = useApp();
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -247,6 +247,7 @@ export default function AppShell() {
             )}
             <NotificationBell />
             <IconBtn title={theme === 'light' ? 'Switch to dark mode' : 'Switch to light mode'} icon={theme === 'light' ? Moon : Sun} onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')} />
+            <IconBtn title="Lock Application" icon={Lock} onClick={logout} />
           </div>
         </header>
 

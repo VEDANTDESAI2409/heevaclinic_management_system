@@ -203,3 +203,44 @@ export async function deleteDoctor(id, userId) {
   await db.doctors.delete(id);
   await audit(userId, 'DOCTOR_DELETE', 'doctor', id, existing.name);
 }
+
+export async function deleteAppointment(id, userId) {
+  return db.transaction('rw', [db.appointments, db.activity_logs], async () => {
+    const a = await db.appointments.get(id);
+    if (!a) throw new Error('Appointment not found');
+    await db.appointments.delete(id);
+    await audit(userId, 'APPOINTMENT_DELETE', 'appointment', id, `${a.appointment_no || id}`);
+  });
+}
+
+export async function deleteConsultation(id, userId) {
+  return db.transaction('rw', [db.consultations, db.prescriptions, db.activity_logs], async () => {
+    const c = await db.consultations.get(id);
+    if (!c) throw new Error('Consultation not found');
+
+    const presCount = await db.prescriptions.where('consultation_id').equals(id).count();
+    if (presCount > 0) {
+      throw new Error('Cannot delete consultation with linked prescriptions. Please delete the linked prescriptions first.');
+    }
+
+    await db.consultations.delete(id);
+    await audit(userId, 'CONSULTATION_DELETE', 'consultation', id, `${c.consultation_no || id}`);
+  });
+}
+
+export async function deletePrescription(id, userId) {
+  return db.transaction('rw', [db.prescriptions, db.prescription_items, db.activity_logs], async () => {
+    const p = await db.prescriptions.get(id);
+    if (!p) throw new Error('Prescription not found');
+
+    // Delete associated prescription items
+    const items = await db.prescription_items.where('prescription_id').equals(id).toArray();
+    for (const item of items) {
+      await db.prescription_items.delete(item.id);
+    }
+
+    await db.prescriptions.delete(id);
+    await audit(userId, 'PRESCRIPTION_DELETE', 'prescription', id, `${p.prescription_no || id}`);
+  });
+}
+

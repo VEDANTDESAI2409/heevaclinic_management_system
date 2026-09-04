@@ -1,7 +1,8 @@
 /* HEEVA CLINIC — Service Worker
    App-shell caching for fast startup + offline availability.
-   Strategy: precache core shell, stale-while-revalidate for same-origin assets. */
-const VERSION = 'heeva-v2';
+   Strategy: precache core shell, stale-while-revalidate for same-origin static assets.
+   Dynamic clinic data (/api/*) is NEVER cached by the Service Worker. */
+const VERSION = 'heeva-v3';
 const CORE = ['./', './index.html', './manifest.webmanifest', './icons/icon.svg', './icons/icon-192.png', './icons/icon-512.png'];
 
 self.addEventListener('install', (e) => {
@@ -14,7 +15,20 @@ self.addEventListener('install', (e) => {
 
 self.addEventListener('activate', (e) => {
   e.waitUntil(
-    caches.keys().then((keys) => Promise.all(keys.filter((k) => k !== VERSION).map((k) => caches.delete(k)))).then(() => self.clients.claim())
+    caches.keys().then(async (keys) => {
+      // 1. Delete all older cache versions (e.g. heeva-v1, heeva-v2)
+      await Promise.all(keys.filter((k) => k !== VERSION).map((k) => caches.delete(k)));
+      // 2. Actively purge any legacy /api/* entries in current cache
+      try {
+        const currentCache = await caches.open(VERSION);
+        const cachedRequests = await currentCache.keys();
+        await Promise.all(
+          cachedRequests
+            .filter((req) => new URL(req.url).pathname.startsWith('/api'))
+            .map((req) => currentCache.delete(req))
+        );
+      } catch (_) {}
+    }).then(() => self.clients.claim())
   );
 });
 
@@ -23,6 +37,12 @@ self.addEventListener('fetch', (e) => {
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
   if (url.origin !== self.location.origin) return;
+
+  // CRITICAL: Dynamic clinic data API routes (/api/*) must ALWAYS bypass the
+  // Service Worker cache completely so Cloudflare D1 is the single source of truth.
+  if (url.pathname.startsWith('/api')) {
+    return;
+  }
 
   // Navigations: network first, fall back to cached shell (offline support)
   if (req.mode === 'navigate') {
@@ -38,7 +58,7 @@ self.addEventListener('fetch', (e) => {
     return;
   }
 
-  // Assets: stale-while-revalidate for fast loading
+  // Static Assets: stale-while-revalidate for fast loading
   e.respondWith(
     caches.match(req).then((cached) => {
       const network = fetch(req)

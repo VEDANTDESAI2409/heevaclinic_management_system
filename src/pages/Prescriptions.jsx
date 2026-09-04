@@ -5,10 +5,10 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import db from '../db';
 import { useApp } from '../context/AppContext';
 import {
-  Btn, Card, Modal, Field, Input, Select, Textarea, Badge, DataTable,
+  Btn, IconBtn, Confirm, Card, Modal, Field, Input, Select, Textarea, Badge, DataTable,
   PageHeader, EmptyState, UhidChip, SearchSelect,
 } from '../components/ui';
-import { createPrescription } from '../services/clinical';
+import { createPrescription, deletePrescription } from '../services/clinical';
 import { printPrescription } from '../print/printers';
 import { fmtDate, fmtDateTime } from '../utils';
 import { FileText, Printer, Plus, Trash2, CheckCircle2 } from 'lucide-react';
@@ -152,13 +152,15 @@ function NewPrescriptionModal({ open, onClose, prefillPatient, onDone }) {
 }
 
 export default function Prescriptions() {
-  const { settings } = useApp();
+  const { settings, user, pushToast } = useApp();
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   const [modal, setModal] = useState(false);
   const [pre, setPre] = useState(null);
   const [done, setDone] = useState(null);
   const [q, setQ] = useState('');
+  const [deleteTarget, setDeleteTarget] = useState(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const rows = useLiveQuery(async () => {
     const list = await db.prescriptions.toArray();
@@ -208,7 +210,27 @@ export default function Prescriptions() {
             ) },
             { key: 'doctor_name', label: 'Doctor', render: (x) => x.doctor_name || '—' },
             { key: 'diagnosis', label: 'Diagnosis', render: (x) => <span className="cell-ellip">{x.diagnosis || '—'}</span> },
-            { key: 'print', label: '', render: async (x) => null, align: 'right' },
+            {
+              key: 'actions', label: '', align: 'right',
+              render: (x) => (
+                <div className="row-actions" onClick={(e) => e.stopPropagation()}>
+                  <IconBtn
+                    title="Print Prescription"
+                    icon={Printer}
+                    onClick={async () => {
+                      const full = await withItems(x);
+                      printPrescription({ ...full, settings }, full.patient);
+                    }}
+                  />
+                  <IconBtn
+                    title="Delete Prescription"
+                    icon={Trash2}
+                    className="text-danger"
+                    onClick={() => setDeleteTarget(x)}
+                  />
+                </div>
+              ),
+            },
           ]}
           rows={rows}
           pageSize={12}
@@ -240,6 +262,29 @@ export default function Prescriptions() {
           </div>
         </Modal>
       )}
+
+      <Confirm
+        open={!!deleteTarget}
+        onClose={() => setDeleteTarget(null)}
+        danger
+        busy={isDeleting}
+        title="Delete Prescription?"
+        message={`Are you sure you want to delete prescription ${deleteTarget?.prescription_no} for ${deleteTarget?.patient?.name || 'patient'}? All associated prescribed items will also be removed.`}
+        confirmText="Delete Prescription"
+        onConfirm={async () => {
+          if (!deleteTarget) return;
+          setIsDeleting(true);
+          try {
+            await deletePrescription(deleteTarget.id, user?.id);
+            pushToast('success', `Prescription ${deleteTarget.prescription_no} deleted.`);
+            setDeleteTarget(null);
+          } catch (err) {
+            pushToast('error', err.message);
+          } finally {
+            setIsDeleting(false);
+          }
+        }}
+      />
     </div>
   );
 }

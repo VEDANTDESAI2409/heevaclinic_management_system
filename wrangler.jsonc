@@ -1,0 +1,21 @@
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "heeva-clinic-backend",
+	"main": "worker/index.js",
+	"compatibility_date": "2024-09-01",
+	"compatibility_flags": [
+		"nodejs_compat"
+	],
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "heeva-clinic-db",
+			"database_id": "5c87830c-3c6f-41c7-b902-f26032aaa585",
+			"migrations_dir": "migrations"
+		}
+	],
+	"assets": {
+		"directory": "./dist",
+		"binding": "ASSETS"
+	}
+}

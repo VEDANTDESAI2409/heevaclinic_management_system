@@ -2,7 +2,7 @@
 // Fast reactive cache for UI components (useLiveQuery hooks).
 // All persistent operations are automatically synced to the backend JSON storage.
 import Dexie from 'dexie';
-import { deleteRecord, pushRecord, syncFromBackend, syncFromSqlite } from './lib/remoteSync';
+import { deleteRecord, pushRecord, syncFromBackend, syncFromSqlite } from './lib/remoteSync.js';
 
 export const db = new Dexie('heeva_clinic');
 
