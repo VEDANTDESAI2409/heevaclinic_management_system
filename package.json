@@ -5,6 +5,7 @@
   "type": "module",
   "description": "HEEVA CLINIC MANAGEMENT SYSTEM - Complete clinic management PWA",
   "scripts": {
+    "start": "node server/server.js",
     "dev": "concurrently \"node --watch server/server.js\" \"vite\"",
     "server": "node --watch server/server.js",
     "build": "vite build",

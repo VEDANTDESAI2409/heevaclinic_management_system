@@ -5,12 +5,32 @@ import { generateId } from '../utils/idGenerator.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const DATA_DIR = path.resolve(__dirname, '../data');
+const defaultDataDir = path.resolve(__dirname, '../data');
+const DATA_DIR = process.env.DATA_DIR
+  ? path.resolve(process.env.DATA_DIR)
+  : defaultDataDir;
 
 // Ensure data directory exists
 if (!fs.existsSync(DATA_DIR)) {
   fs.mkdirSync(DATA_DIR, { recursive: true });
 }
+
+// If using a custom data directory (e.g. Render Persistent Disk mounted at /data)
+// and it is missing baseline files, bootstrap initial seed files from defaultDataDir
+if (path.resolve(DATA_DIR) !== path.resolve(defaultDataDir) && fs.existsSync(defaultDataDir)) {
+  try {
+    const seedFiles = fs.readdirSync(defaultDataDir).filter((f) => f.endsWith('.json'));
+    for (const file of seedFiles) {
+      const target = path.join(DATA_DIR, file);
+      if (!fs.existsSync(target)) {
+        fs.copyFileSync(path.join(defaultDataDir, file), target);
+      }
+    }
+  } catch (err) {
+    console.warn('[DataService] Notice: Could not sync initial seed data to custom DATA_DIR:', err.message);
+  }
+}
+
 
 // Table name aliases (logical -> physical/json file)
 const tableAliases = {
@@ -60,15 +80,51 @@ class DataService {
 
   async writeRaw(collection, data) {
     const actual = resolveCollection(collection);
+
+    // Serialize writes per collection to avoid concurrent file rename collisions
+    const previousPromise = this.writeLocks.get(actual) || Promise.resolve();
+    let releaseLock;
+    const currentPromise = new Promise((resolve) => {
+      releaseLock = resolve;
+    });
+    this.writeLocks.set(actual, currentPromise);
+
+    await previousPromise;
+
     const filePath = this.getFilePath(actual);
-    const tempPath = `${filePath}.tmp-${Date.now()}`;
+    const tempPath = `${filePath}.tmp-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     const serialized = JSON.stringify(data, null, 2);
 
-    // Atomic write via temp file
-    await fs.promises.writeFile(tempPath, serialized, 'utf8');
-    await fs.promises.rename(tempPath, filePath);
-    this.cache.set(actual, data);
+    try {
+      await fs.promises.writeFile(tempPath, serialized, 'utf8');
+
+      let attempts = 0;
+      while (true) {
+        try {
+          await fs.promises.rename(tempPath, filePath);
+          break;
+        } catch (renameErr) {
+          attempts++;
+          if (attempts >= 5) throw renameErr;
+          await new Promise((r) => setTimeout(r, 25 * attempts));
+        }
+      }
+      this.cache.set(actual, data);
+    } catch (err) {
+      try {
+        if (fs.existsSync(tempPath)) {
+          await fs.promises.unlink(tempPath);
+        }
+      } catch (_) {}
+      throw err;
+    } finally {
+      releaseLock();
+      if (this.writeLocks.get(actual) === currentPromise) {
+        this.writeLocks.delete(actual);
+      }
+    }
   }
+
 
   async getAll(collection) {
     const rows = await this.readRaw(collection);

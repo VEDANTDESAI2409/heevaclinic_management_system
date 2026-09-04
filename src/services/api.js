@@ -3,7 +3,8 @@ const getBaseUrl = () => {
     return '/api';
   }
   // Node / test runner fallback
-  return 'http://localhost:3001/api';
+  const port = (typeof process !== 'undefined' && process.env?.PORT) || 3001;
+  return `http://127.0.0.1:${port}/api`;
 };
 
 async function request(path, options = {}) {

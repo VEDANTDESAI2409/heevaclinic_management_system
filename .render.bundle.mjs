@@ -42,7 +42,8 @@ var init_api = __esm({
       if (typeof window !== "undefined" && window.location?.origin) {
         return "/api";
       }
-      return "http://localhost:3001/api";
+      const port = typeof process !== "undefined" && process.env?.PORT || 3001;
+      return `http://127.0.0.1:${port}/api`;
     };
     getHealth = () => request("/health");
     getRecords = (table) => request(`/${table}`);

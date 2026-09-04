@@ -3,6 +3,8 @@ dist
 *.log
 .DS_Store
 .smoke.bundle.mjs
+.render.bundle.mjs
+server/data/*.tmp-*
 .env
 .env.*
 !.env.example
