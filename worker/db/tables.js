@@ -37,7 +37,7 @@ export const allowedCollections = new Set([
 // Table schema column definitions to ensure safe D1 parameterized SQL insertion
 export const tableColumns = {
   clinic_settings: [
-    'id', 'clinic_name', 'tagline', 'doctor_name', 'doctor_qual', 'doctor_role',
+    'id', 'clinic_name', 'tagline', 'doctor_name', 'doctor_phone', 'doctor_qual', 'doctor_role',
     'address', 'phone', 'email', 'logo', 'receipt_footer', 'currency', 'bill_prefix',
     'bill_padding', 'default_payment', 'uhid_prefix', 'uhid_include_year',
     'uhid_padding', 'uhid_start', 'low_stock_default', 'expiry_30', 'expiry_60',
@@ -45,8 +45,8 @@ export const tableColumns = {
   ],
   counters: ['id', 'key', 'value', 'created_at', 'updated_at'],
   patients: [
-    'id', 'uhid', 'name', 'dob', 'approx_age', 'gender', 'mobile', 'alt_mobile',
-    'email', 'address', 'city', 'state', 'pin', 'ec_name', 'ec_number', 'ec_relation',
+    'id', 'uhid', 'name', 'age', 'gender', 'mobile', 'alt_mobile',
+    'email', 'address', 'pin', 'marital_status',
     'blood_group', 'allergies', 'conditions', 'current_meds', 'notes', 'active',
     'reg_date', 'created_by', 'created_at', 'updated_at'
   ],
@@ -77,8 +77,8 @@ export const tableColumns = {
     'frequency', 'duration', 'instruction', 'created_at', 'updated_at'
   ],
   medicines: [
-    'id', 'medicine_code', 'name', 'generic', 'brand', 'category', 'manufacturer',
-    'type', 'strength', 'unit', 'barcode', 'purchase_price', 'selling_price',
+    'id', 'medicine_code', 'name', 'generic', 'brand', 'category',
+    'type', 'strength', 'unit', 'purchase_price', 'selling_price',
     'min_stock', 'location', 'description', 'active', 'created_at', 'updated_at'
   ],
   medicine_categories: ['id', 'name', 'created_at', 'updated_at'],
@@ -100,7 +100,8 @@ export const tableColumns = {
   ],
   bills: [
     'id', 'bill_no', 'patient_id', 'uhid', 'patient_name', 'patient_mobile',
-    'patient_age', 'patient_gender', 'date', 'time', 'item_count', 'subtotal',
+    'patient_age', 'patient_gender', 'date', 'time', 'doctor_name', 'doctor_phone',
+    'item_count', 'subtotal',
     'discount', 'total', 'paid', 'status', 'payment_status', 'bill_type',
     'created_by', 'cancel_reason', 'cancelled_at', 'cancelled_by', 'created_at', 'updated_at'
   ],

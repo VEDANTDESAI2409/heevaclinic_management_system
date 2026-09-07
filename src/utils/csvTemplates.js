@@ -4,46 +4,39 @@ export const CSV_TEMPLATES = {
   patients: {
     title: 'Patients',
     filename: 'heeva-patients-template.csv',
-    description: 'Bulk register patients. Mandatory columns: name, dob (YYYY-MM-DD), gender (Male/Female/Other), mobile (10 digits). Permanent UHID is assigned automatically.',
+    description: 'Bulk register patients. Mandatory columns: name, age, gender (M/F/Other), mobile (10 digits). Dates must be in DD-MM-YYYY format.',
     headers: [
-      'name', 'dob', 'gender', 'mobile', 'alt_mobile', 'email',
-      'address', 'city', 'state', 'pin',
-      'blood_group', 'allergies', 'conditions', 'current_meds', 'notes',
-      'ec_name', 'ec_number', 'ec_relation'
+      'name', 'age', 'gender', 'marital_status', 'mobile', 'alt_mobile', 'email',
+      'address', 'pin',
+      'blood_group', 'allergies', 'conditions', 'current_meds', 'notes'
     ],
     sampleRows: [
       [
-        'Ramesh Sharma', '1988-05-14', 'Male', '9825012345', '9825098765', 'ramesh@example.com',
-        'Flat 402, Shivalik Residency, Pal Gam', 'Surat', 'Gujarat', '395009',
-        'B+', 'Penicillin', 'Hypertension', 'Amlodipine 5mg', 'Regular follow up',
-        'Sunita Sharma', '9825011122', 'Spouse'
+        'Ramesh Sharma', '36', 'M', 'Married', '9825012345', '9825098765', 'ramesh@example.com',
+        'Flat 402, Shivalik Residency, Pal Gam, Surat', '395009',
+        'B+', 'Penicillin', 'Hypertension', 'Amlodipine 5mg', 'Regular follow up'
       ],
       [
-        'Priya Patel', '1995-11-20', 'Female', '9724012345', '', 'priya.patel@example.com',
-        'B-12, Green City, Adajan', 'Surat', 'Gujarat', '395009',
-        'O+', 'None', 'None', '', 'New patient',
-        'Ketan Patel', '9724099887', 'Brother'
+        'Priya Patel', '28', 'F', 'Single', '9724012345', '', 'priya.patel@example.com',
+        'B-12, Green City, Adajan, Surat', '395009',
+        'O+', 'None', 'None', '', 'New patient'
       ]
     ],
     columns: [
       { key: 'name', label: 'Full Name', required: true },
-      { key: 'dob', label: 'Date of Birth (YYYY-MM-DD)', required: true },
-      { key: 'gender', label: 'Gender (Male/Female/Other)', required: true },
+      { key: 'age', label: 'Age (Years)', required: true },
+      { key: 'gender', label: 'Gender (M/F/Other)', required: true },
+      { key: 'marital_status', label: 'Marital Status (Single/Married/etc)', required: false },
       { key: 'mobile', label: 'Mobile (10 digits)', required: true },
       { key: 'alt_mobile', label: 'Alt Mobile', required: false },
       { key: 'email', label: 'Email Address', required: false },
       { key: 'address', label: 'Address', required: false },
-      { key: 'city', label: 'City', required: false },
-      { key: 'state', label: 'State', required: false },
       { key: 'pin', label: 'Pincode', required: false },
       { key: 'blood_group', label: 'Blood Group', required: false },
       { key: 'allergies', label: 'Allergies', required: false },
       { key: 'conditions', label: 'Known Conditions', required: false },
       { key: 'current_meds', label: 'Current Medications', required: false },
       { key: 'notes', label: 'Notes', required: false },
-      { key: 'ec_name', label: 'Emergency Contact Name', required: false },
-      { key: 'ec_number', label: 'Emergency Contact Number', required: false },
-      { key: 'ec_relation', label: 'Emergency Contact Relation', required: false },
     ]
   },
 
@@ -53,18 +46,18 @@ export const CSV_TEMPLATES = {
     description: 'Bulk catalog pharmaceutical products. Mandatory columns: name, selling_price. Medicine codes (MD-XXXX) are assigned automatically if omitted.',
     headers: [
       'name', 'generic', 'category', 'type', 'strength', 'unit',
-      'purchase_price', 'selling_price', 'min_stock', 'barcode',
+      'purchase_price', 'selling_price', 'min_stock',
       'location', 'description'
     ],
     sampleRows: [
       [
         'Paracetamol 650', 'Paracetamol', 'Analgesic', 'Tablet', '650 mg', 'strip',
-        '8.50', '15.00', '20', '8901234567890',
+        '8.50', '15.00', '20',
         'Shelf A-1', 'Anti-pyretic and pain reliever'
       ],
       [
         'Amoxicillin 500', 'Amoxicillin', 'Antibiotic', 'Capsule', '500 mg', 'strip',
-        '45.00', '72.00', '10', '8901234567891',
+        '45.00', '72.00', '10',
         'Shelf B-2', 'Broad spectrum antibiotic'
       ]
     ],
@@ -78,7 +71,6 @@ export const CSV_TEMPLATES = {
       { key: 'purchase_price', label: 'Purchase Price (₹)', required: false },
       { key: 'selling_price', label: 'Selling Price (₹)', required: true },
       { key: 'min_stock', label: 'Minimum Stock Level', required: false },
-      { key: 'barcode', label: 'Barcode', required: false },
       { key: 'location', label: 'Storage Location', required: false },
       { key: 'description', label: 'Description', required: false },
     ]

@@ -251,10 +251,12 @@ export const d1Client = {
       const newPatients = [];
       const skipped = [];
       const batchStmts = [];
-
       for (const item of items) {
-        if (!item.name || !item.dob || !item.gender || !item.mobile) {
-          skipped.push({ item, reason: 'Missing required field (name, dob, gender, or mobile)' });
+        const itemAge = item.age !== undefined && item.age !== null && item.age !== ''
+          ? Number(item.age)
+          : (item.dob ? Math.max(0, Math.floor((Date.now() - new Date(item.dob).getTime()) / (365.25 * 24 * 3600 * 1000))) : null);
+        if (!item.name || itemAge == null || isNaN(itemAge) || !item.gender || !item.mobile) {
+          skipped.push({ item, reason: 'Missing required field (name, age, gender, or mobile)' });
           continue;
         }
         counterVal++;
@@ -263,24 +265,19 @@ export const d1Client = {
           id: item.id || crypto.randomUUID(),
           uhid,
           name: String(item.name).trim(),
-          dob: item.dob,
-          approx_age: null,
+          age: itemAge,
           gender: item.gender,
           mobile: String(item.mobile),
           alt_mobile: item.alt_mobile ? String(item.alt_mobile) : '',
           email: item.email || '',
+          marital_status: item.marital_status || 'Single',
           address: item.address || '',
-          city: item.city || '',
-          state: item.state || 'Gujarat',
           pin: item.pin ? String(item.pin) : '',
           blood_group: item.blood_group || '',
           allergies: item.allergies || '',
           conditions: item.conditions || '',
           current_meds: item.current_meds || '',
           notes: item.notes || '',
-          ec_name: item.ec_name || '',
-          ec_number: item.ec_number ? String(item.ec_number) : '',
-          ec_relation: item.ec_relation || '',
           active: 1,
           reg_date: item.reg_date || today,
           created_by: userId,
@@ -373,11 +370,9 @@ export const d1Client = {
           generic: item.generic || '',
           brand: item.brand || name,
           category: catName,
-          manufacturer: item.manufacturer || '',
           type: item.type || 'Tablet',
           strength: item.strength || '',
           unit: item.unit || 'strip',
-          barcode: item.barcode || '',
           purchase_price: Number(item.purchase_price) || 0,
           selling_price: Number(item.selling_price) || 0,
           min_stock: Number(item.min_stock) || 0,

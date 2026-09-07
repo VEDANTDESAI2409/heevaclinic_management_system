@@ -52,6 +52,12 @@ db.version(4).stores({
   doctors: 'id, name, active',
 });
 
+// v5: replace [name+dob] index with [name+age], remove barcode index from medicines
+db.version(5).stores({
+  patients: 'id, &uhid, name, mobile, created_at, [name+age]',
+  medicines: 'id, &medicine_code, name, generic, category, active',
+});
+
 // Keep the existing Dexie API used by the UI while making backend JSON storage persistent.
 // The local tables remain a reactive cache for the existing useLiveQuery hooks.
 db.transaction = async (_mode, _tables, scope) => scope();

@@ -75,7 +75,7 @@ export default function SettingsPage() {
     const s = { ...DEFAULT_SETTINGS, ...(settings || {}) };
     setF({
       clinic_name: s.clinic_name || '', tagline: s.tagline || '',
-      doctor_name: s.doctor_name || '', doctor_qual: s.doctor_qual || '', doctor_role: s.doctor_role || '',
+      doctor_name: s.doctor_name || '', doctor_phone: s.doctor_phone || '', doctor_qual: s.doctor_qual || '', doctor_role: s.doctor_role || '',
       address: s.address || '', phone: s.phone || '', email: s.email || '',
       receipt_footer: s.receipt_footer || '', logo: s.logo || '',
       currency: s.currency || '₹', bill_prefix: s.bill_prefix || 'HC-BILL',
@@ -185,6 +185,7 @@ export default function SettingsPage() {
             <Field label="Clinic Name" className="fg-2"><Input value={f.clinic_name} onChange={set('clinic_name')} /></Field>
             <Field label="Tagline" className="fg-2"><Input value={f.tagline} onChange={set('tagline')} /></Field>
             <Field label="Doctor Name"><Input value={f.doctor_name} onChange={set('doctor_name')} /></Field>
+            <Field label="Doctor Phone"><Input value={f.doctor_phone} onChange={set('doctor_phone')} placeholder="e.g. 9913974000" /></Field>
             <Field label="Qualifications"><Input value={f.doctor_qual} onChange={set('doctor_qual')} /></Field>
             <Field label="Role"><Input value={f.doctor_role} onChange={set('doctor_role')} /></Field>
             <Field label="Phone"><Input value={f.phone} onChange={set('phone')} /></Field>
@@ -201,7 +202,7 @@ export default function SettingsPage() {
             </Field>
           </div>
           <div className="set-save">
-            <Btn variant="accent" disabled={busy} onClick={() => save(['clinic_name', 'tagline', 'doctor_name', 'doctor_qual', 'doctor_role', 'address', 'phone', 'email', 'receipt_footer', 'logo'])}>
+            <Btn variant="accent" disabled={busy} onClick={() => save(['clinic_name', 'tagline', 'doctor_name', 'doctor_phone', 'doctor_qual', 'doctor_role', 'address', 'phone', 'email', 'receipt_footer', 'logo'])}>
               {busy ? 'Saving…' : 'Save clinic profile'}
             </Btn>
           </div>

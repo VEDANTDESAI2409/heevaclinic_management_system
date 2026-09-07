@@ -25,9 +25,9 @@ export const DEFAULT_PERMISSIONS = { admin: SECTIONS.map((s) => s.key) };
 export const DEFAULT_SETTINGS = {
   clinic_name: 'HEEVA CLINIC',
   tagline: 'Trusted care, every time.',
-  doctor_name: '', doctor_qual: '', doctor_role: '',
+  doctor_name: 'Dr. Mit Nayak', doctor_phone: '9913974000', doctor_qual: 'M.B.B.S., M.D.', doctor_role: 'Consulting Physician',
   address: 'A/8, MONARCH, Pal Gam, Surat, Gujarat – 394510',
-  phone: '', email: '',
+  phone: '9913974000', email: '',
   logo: '/icons/heeva-logo.png',
   receipt_footer: 'Thank you for choosing Heeva Clinic.',
   currency: '₹',

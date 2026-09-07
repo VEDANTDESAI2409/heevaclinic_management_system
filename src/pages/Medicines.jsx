@@ -14,13 +14,13 @@ import {
   MEDICINE_TYPES, stockMap,
 } from '../services/inventory';
 import { importMedicinesCSV } from '../services/billing';
-import { fmtMoney, fmtQty, daysUntil, download, toCSV, dkey } from '../utils';
+import { fmtDate, fmtMoney, fmtQty, daysUntil, download, toCSV, dkey } from '../utils';
 import { Pill, Plus, Archive, Download, Upload, Pencil, Search, Trash2, FolderPlus, Tag } from 'lucide-react';
 import CsvImportModal from '../components/csv/CsvImportModal';
 
 const EMPTY = {
-  name: '', generic: '', category: 'Analgesic', manufacturer: '',
-  type: 'Tablet', strength: '', unit: 'strip', barcode: '',
+  name: '', generic: '', category: 'Analgesic',
+  type: 'Tablet', strength: '', unit: 'strip',
   purchase_price: '', selling_price: '', min_stock: '', location: '', description: '',
 };
 
@@ -34,8 +34,8 @@ function MedFormModal({ open, onClose, editing }) {
   useEffect(() => {
     if (open) {
       setF(editing ? {
-        name: editing.name, generic: editing.generic, category: editing.category, manufacturer: editing.manufacturer,
-        type: editing.type, strength: editing.strength, unit: editing.unit, barcode: editing.barcode,
+        name: editing.name, generic: editing.generic, category: editing.category,
+        type: editing.type, strength: editing.strength, unit: editing.unit,
         purchase_price: String(editing.purchase_price ?? ''), selling_price: String(editing.selling_price ?? ''),
         min_stock: String(editing.min_stock ?? ''), location: editing.location, description: editing.description,
       } : EMPTY);
@@ -93,8 +93,6 @@ function MedFormModal({ open, onClose, editing }) {
         </Field>
         <Field label="Strength"><Input value={f.strength} onChange={set('strength')} placeholder="e.g. 650 mg" /></Field>
         <Field label="Unit"><Input value={f.unit} onChange={set('unit')} placeholder="strip / bottle / vial" /></Field>
-        <Field label="Manufacturer" className="fg-2"><Input value={f.manufacturer} onChange={set('manufacturer')} /></Field>
-        <Field label="Barcode"><Input value={f.barcode} onChange={set('barcode')} /></Field>
         <Field label="Purchase Price (₹)"><Input type="number" min="0" step="0.01" value={f.purchase_price} onChange={set('purchase_price')} /></Field>
         <Field label="Selling Price (₹)" required><Input type="number" min="0" step="0.01" value={f.selling_price} onChange={set('selling_price')} /></Field>
         <Field label="Minimum Stock Level" hint={`Default: ${settings.low_stock_default}`}><Input type="number" min="0" value={f.min_stock} onChange={set('min_stock')} /></Field>
@@ -195,7 +193,6 @@ export default function Medicines() {
       list = list.filter((m) =>
         (m.name || '').toLowerCase().includes(s) ||
         (m.generic || '').toLowerCase().includes(s) ||
-        (m.barcode || '').includes(s) ||
         (m.medicine_code || '').toLowerCase().includes(s)
       );
     }
@@ -209,8 +206,8 @@ export default function Medicines() {
   const exportCSV = () => {
     const list = rows || [];
     download(`heeva-medicines-${dkey()}.csv`, toCSV(
-      ['Code', 'Name', 'Generic', 'Category', 'Type', 'Strength', 'Unit', 'Buy Price', 'Sell Price', 'Min Stock', 'Available', 'Barcode', 'Active'],
-      list.map((m) => [m.medicine_code, m.name, m.generic, m.category, m.type, m.strength, m.unit, m.purchase_price, m.selling_price, m.min_stock, m.available, m.barcode, m.active ? 'yes' : 'no'])
+      ['Code', 'Name', 'Generic', 'Category', 'Type', 'Strength', 'Unit', 'Buy Price', 'Sell Price', 'Min Stock', 'Available', 'Active'],
+      list.map((m) => [m.medicine_code, m.name, m.generic, m.category, m.type, m.strength, m.unit, m.purchase_price, m.selling_price, m.min_stock, m.available, m.active ? 'yes' : 'no'])
     ), 'text/csv');
   };
 
@@ -249,7 +246,7 @@ export default function Medicines() {
       {activeTab === 'medicines' && (
         <Card>
           <div className="toolbar">
-            <div className="toolbar-search grow"><Search size={15} /><input className="input" placeholder="Search name, generic, barcode or code…" value={q} onChange={(e) => setQ(e.target.value)} /></div>
+            <div className="toolbar-search grow"><Search size={15} /><input className="input" placeholder="Search name, generic or code…" value={q} onChange={(e) => setQ(e.target.value)} /></div>
             <Select value={catF} onChange={(e) => setCatF(e.target.value)} className="toolbar-select">
               <option value="">All categories</option>
               {(cats || []).map((c) => <option key={c.id} value={c.name}>{c.name}</option>)}
@@ -288,7 +285,7 @@ export default function Medicines() {
                   if (!m.active) return '—';
                   if (!m.next_expiry) return <Badge tone="red">No batches</Badge>;
                   const d = daysUntil(m.next_expiry);
-                  return <span>{m.next_expiry} {d <= 90 && <Badge tone={d < 0 ? 'red' : d <= 30 ? 'red' : 'amber'}>{d < 0 ? 'expired' : `${d}d`}</Badge>}</span>;
+                  return <span>{fmtDate(m.next_expiry)} {d <= 90 && <Badge tone={d < 0 ? 'red' : d <= 30 ? 'red' : 'amber'}>{d < 0 ? 'expired' : `${d}d`}</Badge>}</span>;
                 },
               },
               {

@@ -27,7 +27,7 @@ function billTypeLabel(items) {
  * payments: [{ amount, method, note? }]
  * Returns { bill, items, allocations } or throws (transaction rolls back).
  */
-export async function createBill({ patient_id, items, discount_mode = 'amt', discount_value = 0, payments = [], when = null }, userId) {
+export async function createBill({ patient_id, items, discount_mode = 'amt', discount_value = 0, payments = [], when = null, doctor_id = null, doctor_name = null, doctor_phone = null }, userId) {
   const settings = await getSettings();
   return db.transaction('rw', [db.bills, db.bill_items, db.payments, db.batches, db.inventory_txns, db.counters, db.activity_logs, db.patients, db.medicines, db.services], async () => {
     const patient = await db.patients.get(patient_id);
@@ -79,6 +79,8 @@ export async function createBill({ patient_id, items, discount_mode = 'amt', dis
       patient_gender: patient.gender || '',
       date: dkey(new Date(now)),
       time: now,
+      doctor_name: doctor_name || settings.doctor_name || 'Dr. Mit Nayak',
+      doctor_phone: doctor_phone || settings.doctor_phone || '9913974000',
       item_count: resolved.length,
       subtotal,
       discount,
@@ -143,6 +145,7 @@ export async function createBill({ patient_id, items, discount_mode = 'amt', dis
     return {
       bill: await db.bills.get(bill.id),
       items: await db.bill_items.where('bill_id').equals(bill.id).toArray(),
+      payments: await db.payments.where('bill_id').equals(bill.id).toArray(),
     };
   });
 }
@@ -298,7 +301,6 @@ export async function importMedicinesCSV(rows, userId) {
         type: r.type || 'Tablet',
         strength: r.strength || '',
         unit: r.unit || 'strip',
-        barcode: r.barcode || '',
         purchase_price: Number(r.purchase_price) || 0,
         selling_price: Number(r.selling_price) || 0,
         min_stock: Number(r.min_stock) || 0,

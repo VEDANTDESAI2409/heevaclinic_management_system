@@ -23,18 +23,51 @@ export function addDays(d, n) {
   return x;
 }
 
-export function fmtDate(s, opts = {}) {
-  if (!s) return '—';
+export function toDDMMYYYY(s) {
+  if (!s) return '';
+  const str = String(s).trim();
+  if (/^\d{2}-\d{2}-\d{4}$/.test(str)) return str;
+  if (/^\d{4}-\d{2}-\d{2}/.test(str)) {
+    const parts = str.slice(0, 10).split('-');
+    return `${parts[2]}-${parts[1]}-${parts[0]}`;
+  }
   const d = new Date(s);
-  if (isNaN(d)) return s;
-  return d.toLocaleDateString('en-GB', { day: '2-digit', month: opts.month || 'short', year: 'numeric', ...opts });
+  if (isNaN(d.getTime())) return str;
+  return `${p2(d.getDate())}-${p2(d.getMonth() + 1)}-${d.getFullYear()}`;
+}
+
+export function isValidDDMMYYYY(dateStr) {
+  if (typeof dateStr !== 'string') return false;
+  const match = dateStr.trim().match(/^(\d{2})-(\d{2})-(\d{4})$/);
+  if (!match) return false;
+  const day = parseInt(match[1], 10);
+  const month = parseInt(match[2], 10);
+  const year = parseInt(match[3], 10);
+  if (month < 1 || month > 12) return false;
+  if (year < 1900 || year > 2100) return false;
+  const daysInMonth = new Date(year, month, 0).getDate();
+  if (day < 1 || day > daysInMonth) return false;
+  return true;
+}
+
+export function parseDDMMYYYY(dateStr) {
+  if (!isValidDDMMYYYY(dateStr)) return null;
+  const [d, m, y] = dateStr.trim().split('-');
+  return `${y}-${m}-${d}`;
+}
+
+export function fmtDate(s) {
+  if (!s) return '—';
+  return toDDMMYYYY(s) || '—';
 }
 
 export function fmtDateTime(s) {
   if (!s) return '—';
   const d = new Date(s);
-  if (isNaN(d)) return s;
-  return `${d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}, ${d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}`;
+  if (isNaN(d.getTime())) return String(s);
+  const datePart = `${p2(d.getDate())}-${p2(d.getMonth() + 1)}-${d.getFullYear()}`;
+  const timePart = `${p2(d.getHours())}:${p2(d.getMinutes())}`;
+  return `${datePart} ${timePart}`;
 }
 
 export function fmtTime(s) {
@@ -55,9 +88,14 @@ export function ageFromDob(dob) {
 }
 
 export function ageLabel(p) {
-  const a = ageFromDob(p.dob);
-  if (a != null) return `${a} yrs`;
-  if (p.approx_age) return `~${p.approx_age} yrs`;
+  if (!p) return '—';
+  if (typeof p === 'number') return `${p} yrs`;
+  if (p.age != null && p.age !== '') return `${p.age} yrs`;
+  if (p.approx_age != null && p.approx_age !== '') return `${p.approx_age} yrs`;
+  if (p.dob) {
+    const a = ageFromDob(p.dob);
+    if (a != null) return `${a} yrs`;
+  }
   return '—';
 }
 

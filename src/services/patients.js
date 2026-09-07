@@ -11,11 +11,13 @@ export async function registerPatient(data, userId, { temp = false } = {}) {
   const settings = await getSettings();
   const name = String(data.name || '').trim();
   const mobile = digits(data.mobile);
+  const age = data.age != null && data.age !== '' ? Number(data.age) : (data.dob ? ageFromDob(data.dob) : null);
   if (!name || name.length < 3) throw new Error('Full name is required');
+  if (age == null || isNaN(age) || age < 0 || age > 125) throw new Error('Valid age (0–125) is required');
   if (!data.gender) throw new Error('Gender is required');
   if (mobile.length !== 10) throw new Error('Enter a valid 10-digit mobile number');
-  if (!data.dob) throw new Error('Date of birth is required');
-  if (data.dob > dkey(new Date())) throw new Error('Date of birth cannot be in the future');
+  const gender = data.gender === 'Male' ? 'M' : data.gender === 'Female' ? 'F' : data.gender;
+  const now = nowISO();
   return db.transaction('rw', [db.patients, db.counters, db.activity_logs], async () => {
     const uhid = await makeUHID(settings);
     if (await db.patients.where('uhid').equals(uhid).count()) throw new Error('UHID collision detected — please retry');
@@ -23,27 +25,22 @@ export async function registerPatient(data, userId, { temp = false } = {}) {
       id: uid(),
       uhid,
       name,
-      dob: data.dob || '',
-      approx_age: null,
-      gender: data.gender || '',
+      age,
+      gender,
+      marital_status: data.marital_status || 'Single',
       mobile,
       alt_mobile: digits(data.alt_mobile),
       email: data.email || '',
       address: data.address || '',
-      city: data.city || '',
-      state: data.state || 'Gujarat',
       pin: String(data.pin || ''),
-      ec_name: data.ec_name || '',
-      ec_number: digits(data.ec_number),
-      ec_relation: data.ec_relation || '',
       blood_group: data.blood_group || '',
       allergies: data.allergies || '',
       conditions: data.conditions || '',
       current_meds: data.current_meds || '',
       notes: data.notes || '',
       active: 1,
-      reg_date: dkey(new Date()),
-      created_at: nowISO(),
+      reg_date: dkey(new Date(now)),
+      created_at: now,
       created_by: userId || null,
     };
     await db.patients.add(p);
@@ -137,5 +134,5 @@ export async function patientVisits(patientId) {
 }
 
 export function ageOf(p) {
-  return ageFromDob(p.dob) ?? p.approx_age ?? null;
+  return p.age ?? p.approx_age ?? ageFromDob(p.dob) ?? null;
 }

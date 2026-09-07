@@ -35,7 +35,7 @@ ok(`data layer ready — ${pCount} patients, ${bCount} bills, ${batchCount} batc
 
 // ── 2. UHID uniqueness ─────────────────────────────────────────────────────
 const p1 = await patients.registerPatient(
-  { name: 'Smoke Test Patient', gender: 'Male', dob: '1990-01-01', mobile: '9000000001' },
+  { name: 'Smoke Test Patient', gender: 'M', age: 36, marital_status: 'Single', mobile: '9000000001' },
   user.id
 );
 ok(`new patient → UHID ${p1.uhid} (format ${/^HC-\d{4}-\d{6}$/.test(p1.uhid) ? 'correct' : 'WRONG'})`);

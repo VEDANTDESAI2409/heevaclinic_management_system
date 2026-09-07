@@ -14,11 +14,11 @@ import BillViewer from '../components/BillViewer';
 import { createBill, getBill, PAY_METHODS } from '../services/billing';
 import { stockMap } from '../services/inventory';
 import { syncAlerts } from '../services/notifications';
-import { printInvoiceA4 } from '../print/printers';
-import { fmtMoney, fmtQty, fmtDate, daysUntil } from '../utils';
+import { printInvoiceA4, downloadReceipt } from '../print/printers';
+import { fmtMoney, fmtQty, fmtDate, daysUntil, ageLabel } from '../utils';
 import {
   Pill, Stethoscope, Sparkles, Trash2, Minus, Plus, UserPlus, ReceiptText,
-  Printer, CheckCircle2, AlertTriangle, Search,
+  Printer, Download, CheckCircle2, AlertTriangle, Search,
 } from 'lucide-react';
 import { round2 as r2 } from '../services/core';
 
@@ -173,7 +173,7 @@ export default function Billing() {
     setBusy(true);
     setPayOpen(false);
     try {
-      const { bill, items } = await createBill({
+      const { bill, items, payments: createdPayments } = await createBill({
         patient_id: patient.id,
         items: cart,
         discount_mode: discMode,
@@ -182,7 +182,7 @@ export default function Billing() {
       }, user.id);
       pushToast('success', `Bill ${bill.bill_no} completed — inventory updated automatically`);
       await syncAlerts(user.id).catch(() => {});
-      setDone({ bill, items });
+      setDone({ bill, items, payments: createdPayments || payments });
       setCart([]);
       setDiscVal('');
       setPatient(null);
@@ -195,11 +195,9 @@ export default function Billing() {
     const list = [...(stock ? [...stock.values()] : [])].filter((e) => e.medicine.active);
     const s = medQ.trim().toLowerCase();
     if (s) {
-      const digits = s.replace(/\D/g, '');
       return list.filter((e) =>
         e.medicine.name.toLowerCase().includes(s) ||
-        (e.medicine.generic || '').toLowerCase().includes(s) ||
-        (digits && (e.medicine.barcode || '').includes(digits))
+        (e.medicine.generic || '').toLowerCase().includes(s)
       );
     }
     return list.slice(0, 60);
@@ -223,7 +221,8 @@ export default function Billing() {
               <Badge tone={done.bill.payment_status === 'PAID' ? 'green' : 'amber'}>{done.bill.payment_status}</Badge>
             </p>
             <div className="done-actions">
-              <Btn variant="primary" icon={Printer} onClick={() => printInvoiceA4(done.bill, done.items, [], settings)}>A4 Payment Receipt</Btn>
+              <Btn variant="primary" icon={Printer} onClick={() => printInvoiceA4(done.bill, done.items, done.payments || [], settings)}>A4 Payment Receipt</Btn>
+              <Btn variant="outline" icon={Download} onClick={() => downloadReceipt(done.bill, done.items, done.payments || [], settings)}>Download Receipt</Btn>
               <Btn variant="accent" icon={ReceiptText} onClick={() => setDone(null)}>New Bill</Btn>
             </div>
             <p className="done-note">Tip: full payment history is attached to the bill — reopen it anytime from the bills list.</p>
@@ -258,7 +257,7 @@ export default function Billing() {
               <div className="pos-patient-info">
                 <span className="ppi-name">{patient.name}</span>
                 <UhidChip uhid={patient.uhid} size="sm" />
-                <span>{patient.gender}{patient.dob ? ` · DOB ${fmtDate(patient.dob)}` : ''}{patient.blood_group ? ` · ${patient.blood_group}` : ''}</span>
+                <span>{patient.gender}{patient.age != null ? ` · Age ${patient.age} Y` : (patient.dob ? ` · Age ${ageLabel(patient)}` : '')}{patient.blood_group ? ` · ${patient.blood_group}` : ''}</span>
                 {patient.allergies && (
                   <span className="allergy-warn"><AlertTriangle size={13} /> {patient.allergies}</span>
                 )}
@@ -275,7 +274,7 @@ export default function Billing() {
 
             {tab === 'medicines' && (
               <div className="pos-medlist-wrap">
-                <div className="pos-medsearch"><Search size={14} /><Input value={medQ} onChange={(e) => setMedQ(e.target.value)} placeholder="Search medicine or scan barcode…" autoFocus /></div>
+                <div className="pos-medsearch"><Search size={14} /><Input value={medQ} onChange={(e) => setMedQ(e.target.value)} placeholder="Search medicine by name or generic…" autoFocus /></div>
                 <div className="pos-medlist">
                   {medsList.length === 0 && <div className="pos-none">No medicines match</div>}
                   {medsList.map(({ medicine: m, available, next_expiry }) => {

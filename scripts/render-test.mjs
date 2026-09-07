@@ -72,7 +72,7 @@ console.log('HEEVA CLINIC render test\n');
 // prepare data
 const user = { id: 'render-test-user' };
 ok(`data layer ready — ${await db.patients.count()} patients, ${await db.bills.count()} bills`);
-const patient = await patientService.registerPatient({ name: 'Render Test Patient', gender: 'Other', dob: '1990-01-01', mobile: '9000000002' }, user.id);
+const patient = await patientService.registerPatient({ name: 'Render Test Patient', gender: 'Other', age: 36, marital_status: 'Single', mobile: '9000000002' }, user.id);
 const medicine = await inventory.createMedicine({ name: 'Render Test Medicine', selling_price: 10 }, user.id);
 await inventory.createBatch({ medicine_id: medicine.id, batch_no: 'RENDER-001', quantity: 20, expiry: '2099-12-31' }, user.id);
 const service = await billing.createService({ name: 'Render Test Service', price: 25 }, user.id);

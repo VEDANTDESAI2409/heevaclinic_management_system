@@ -57,7 +57,7 @@ function GlobalSearch() {
       const [patients, bills, meds] = await Promise.all([
         db.patients.filter((p) => (p.name || '').toLowerCase().includes(s) || (p.uhid || '').toLowerCase().includes(s) || (p.mobile || '').includes(sDigits)).limit(5).toArray(),
         db.bills.filter((b) => (b.bill_no || '').toLowerCase().includes(s) || (b.patient_name || '').toLowerCase().includes(s)).limit(5).toArray(),
-        db.medicines.filter((m) => m.active && ((m.name || '').toLowerCase().includes(s) || (m.generic || '').toLowerCase().includes(s) || (m.barcode || '').includes(sDigits))).limit(5).toArray(),
+        db.medicines.filter((m) => m.active && ((m.name || '').toLowerCase().includes(s) || (m.generic || '').toLowerCase().includes(s) || (m.medicine_code || '').toLowerCase().includes(s))).limit(5).toArray(),
       ]);
       if (on) setRes({ patients, bills, meds });
     })();

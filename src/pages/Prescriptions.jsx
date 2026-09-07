@@ -120,8 +120,8 @@ function NewPrescriptionModal({ open, onClose, prefillPatient, onDone }) {
             onChange={setPickMed}
             options={meds || []}
             getLabel={(m) => `${m.name}${m.strength ? ' (' + m.strength + ')' : ''}`}
-            getSearch={(m) => `${m.name} ${m.generic} ${m.barcode}`}
-            placeholder="Search medicine by name, generic or barcode…"
+            getSearch={(m) => `${m.name} ${m.generic} ${m.medicine_code || ''}`}
+            placeholder="Search medicine by name or generic…"
           />
           <Btn variant="primary" icon={Plus} onClick={addMed} disabled={!pickMed}>Add</Btn>
         </div>

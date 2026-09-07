@@ -1,5 +1,5 @@
 // ─── HEEVA CLINIC — reports & analytics ────────────────────────────────────
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { useApp } from '../context/AppContext';
 import {
@@ -8,8 +8,8 @@ import {
 import { salesReport, patientReport, topMedicines, financialReport } from '../services/reports';
 import { lowStockList, expiryBuckets, stockMap } from '../services/inventory';
 import { printReport } from '../print/printers';
-import { fmtMoney, fmtDate, dkey, addDays, download, toCSV, daysUntil, monthLabel } from '../utils';
-import { BarChart3, Download, Printer, Users, TrendingUp, Pill, Wallet, UserPlus, RotateCcw } from 'lucide-react';
+import { fmtMoney, fmtDate, fmtDateTime, ageLabel, dkey, addDays, download, toCSV, daysUntil, monthLabel } from '../utils';
+import { BarChart3, Download, Printer, Users, TrendingUp, Pill, Wallet, UserPlus, RotateCcw, Search } from 'lucide-react';
 
 const PRESETS = [
   { label: 'Today', get: () => [dkey(new Date()), dkey(new Date())] },
@@ -77,11 +77,76 @@ function SalesTab({ from, to, setFrom, setTo, settings }) {
   );
 }
 
-function PatientsTab({ from, to, setFrom, setTo }) {
+function PatientsTab({ from, to, setFrom, setTo, settings }) {
   const data = useLiveQuery(() => patientReport(from, to), [from, to]);
+  const [q, setQ] = useState('');
+
+  const filteredNew = useMemo(() => {
+    if (!data?.new_patients) return [];
+    const query = q.trim().toLowerCase();
+    if (!query) return data.new_patients;
+    return data.new_patients.filter((p) =>
+      p.name?.toLowerCase().includes(query) ||
+      p.uhid?.toLowerCase().includes(query) ||
+      p.mobile?.includes(query)
+    );
+  }, [data?.new_patients, q]);
+
+  const filteredReturning = useMemo(() => {
+    if (!data?.returning) return [];
+    const query = q.trim().toLowerCase();
+    if (!query) return data.returning;
+    return data.returning.filter((r) =>
+      r.patient?.name?.toLowerCase().includes(query) ||
+      r.patient?.uhid?.toLowerCase().includes(query) ||
+      r.patient?.mobile?.includes(query)
+    );
+  }, [data?.returning, q]);
+
+  const exportPatients = () => {
+    const headers = ['UHID', 'Name', 'Age', 'Gender', 'Marital Status', 'Mobile', 'Address', 'Registered Date & Time'];
+    const rows = (data?.new_patients || []).map((p) => [
+      p.uhid,
+      p.name,
+      p.age ?? '',
+      p.gender ?? '',
+      p.marital_status ?? 'Single',
+      p.mobile ?? '',
+      p.address ?? '',
+      fmtDateTime(p.reg_date || p.created_at),
+    ]);
+    download(`heeva-patients-report-${from}-${to}.csv`, toCSV(headers, rows), 'text/csv');
+  };
+
+  const printPatients = () => {
+    printReport({
+      title: 'Patients Registration Report',
+      subtitle: `${fmtDate(from)} to ${fmtDate(to)} · ${data?.new_patients?.length || 0} New Patients, ${data?.returning?.length || 0} Returning`,
+      columns: [
+        { key: 'uhid', label: 'UHID' },
+        { key: 'name', label: 'Name' },
+        { key: 'age', label: 'Age', render: (p) => p.age != null ? `${p.age} Y` : ageLabel(p) },
+        { key: 'gender', label: 'Gender' },
+        { key: 'marital_status', label: 'Marital Status', render: (p) => p.marital_status || 'Single' },
+        { key: 'mobile', label: 'Mobile' },
+        { key: 'address', label: 'Address' },
+        { key: 'reg_date', label: 'Registered', render: (p) => fmtDateTime(p.reg_date || p.created_at) },
+      ],
+      rows: filteredNew,
+      settings,
+    });
+  };
+
   return (
     <div className="rep-stacks">
-      <Card title="Patient Report" sub={`New & returning patients between ${fmtDate(from)} and ${fmtDate(to)}`}>
+      <Card
+        title="Patient Report"
+        sub={`New & returning patients between ${fmtDate(from)} and ${fmtDate(to)}`}
+        actions={<>
+          <Btn size="sm" variant="ghost" icon={Download} onClick={exportPatients}>Export</Btn>
+          <Btn size="sm" variant="ghost" icon={Printer} onClick={printPatients}>Print</Btn>
+        </>}
+      >
         <RangeBar from={from} to={to} setFrom={setFrom} setTo={setTo} />
         {data && (
           <div className="rep-summary">
@@ -91,22 +156,34 @@ function PatientsTab({ from, to, setFrom, setTo }) {
             <span className="cat-chip"><RotateCcw size={13} /> Returning: <b>{data.returning.length}</b></span>
           </div>
         )}
-        <h4 className="sub-head">New patients in range</h4>
+
+        <div style={{ margin: '14px 0 8px 0', maxWidth: 360 }}>
+          <Input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Search report by UHID, name, mobile…"
+          />
+        </div>
+
+        <h4 className="sub-head">New patients in range ({filteredNew.length})</h4>
         <DataTable
           dense
           columns={[
             { key: 'uhid', label: 'UHID', render: (p) => <span className="cell-mono">{p.uhid}</span> },
             { key: 'name', label: 'Name', sortable: true },
+            { key: 'age', label: 'Age', render: (p) => p.age != null ? `${p.age} Y` : ageLabel(p) },
             { key: 'gender', label: 'Gender' },
+            { key: 'marital_status', label: 'Marital Status', render: (p) => p.marital_status || 'Single' },
             { key: 'mobile', label: 'Mobile' },
-            { key: 'reg_date', label: 'Registered', render: (p) => fmtDate(p.reg_date) },
-            { key: 'city', label: 'City' },
+            { key: 'reg_date', label: 'Registered', render: (p) => fmtDateTime(p.reg_date || p.created_at) },
+            { key: 'address', label: 'Address', render: (p) => p.address || '—' },
           ]}
-          rows={data?.new_patients}
+          rows={filteredNew}
           pageSize={10}
           empty={<EmptyState compact icon="👥" title="No new patients in range" />}
         />
-        <h4 className="sub-head">Returning patients (had earlier visits)</h4>
+
+        <h4 className="sub-head">Returning patients ({filteredReturning.length})</h4>
         <DataTable
           dense
           columns={[
@@ -115,7 +192,7 @@ function PatientsTab({ from, to, setFrom, setTo }) {
             { key: 'visits', label: 'Visits in range', align: 'right', sortable: true },
             { key: 'total_visits', label: 'All-time visits', align: 'right' },
           ]}
-          rows={data?.returning}
+          rows={filteredReturning}
           pageSize={10}
           empty={<EmptyState compact icon="↩" title="No returning patients in range" />}
         />
@@ -125,15 +202,103 @@ function PatientsTab({ from, to, setFrom, setTo }) {
 }
 
 function MedicinesTab({ from, to, setFrom, setTo, settings }) {
-  const top = useLiveQuery(() => topMedicines(from, to, 10), [from, to]);
+  const top = useLiveQuery(() => topMedicines(from, to, 15), [from, to]);
   const low = useLiveQuery(() => lowStockList(), []);
   const exp = useLiveQuery(() => expiryBuckets(), []);
   const stock = useLiveQuery(() => stockMap(), []);
   const money = (v) => fmtMoney(v, settings.currency);
 
+  const lowRows = low ? [...low.out, ...low.low] : [];
+
+  const expRows = exp ? [
+    ...exp.expired.map((b) => ({ ...b, state: 'expired', days: b.days })),
+    ...exp.d30.map((b) => ({ ...b, state: 'n30' })),
+    ...exp.d60.map((b) => ({ ...b, state: 'n60' })),
+    ...exp.d90.map((b) => ({ ...b, state: 'n90' })),
+  ] : [];
+
+  const exportTop = () => {
+    const headers = ['Medicine', 'Qty Sold', 'Revenue'];
+    const rows = (top || []).map((m) => [m.name, m.qty, m.revenue]);
+    download(`heeva-top-medicines-${from}-${to}.csv`, toCSV(headers, rows), 'text/csv');
+  };
+
+  const printTop = () => {
+    printReport({
+      title: 'Top Selling Medicines',
+      subtitle: `${fmtDate(from)} to ${fmtDate(to)}`,
+      columns: [
+        { key: 'name', label: 'Medicine' },
+        { key: 'qty', label: 'Qty Sold', align: 'right' },
+        { key: 'revenue', label: 'Revenue', align: 'right', render: (m) => money(m.revenue) },
+      ],
+      rows: top,
+      settings,
+    });
+  };
+
+  const exportLow = () => {
+    const headers = ['Medicine', 'Available', 'Minimum Level', 'Status'];
+    const rows = lowRows.map((r) => [r.medicine.name, r.available, r.min, r.available <= 0 ? 'OUT OF STOCK' : 'LOW STOCK']);
+    download(`heeva-low-stock.csv`, toCSV(headers, rows), 'text/csv');
+  };
+
+  const printLow = () => {
+    printReport({
+      title: 'Low & Out of Stock Medicines',
+      subtitle: `Inventory stock alerts`,
+      columns: [
+        { key: 'name', label: 'Medicine', render: (r) => r.medicine.name },
+        { key: 'available', label: 'Available', align: 'right' },
+        { key: 'min', label: 'Minimum Level', align: 'right' },
+        { key: 'st', label: 'Status', render: (r) => r.available <= 0 ? 'OUT OF STOCK' : 'LOW STOCK' },
+      ],
+      rows: lowRows,
+      settings,
+    });
+  };
+
+  const exportExp = () => {
+    const headers = ['Status', 'Days Remaining', 'Medicine', 'Batch #', 'Expiry Date', 'On Hand Qty', 'Value'];
+    const rows = expRows.map((b) => [
+      b.state === 'expired' ? 'EXPIRED' : `${b.days} days left`,
+      b.days,
+      b.med_name,
+      b.batch.batch_no,
+      fmtDate(b.batch.expiry_date),
+      b.on_hand,
+      b.on_hand * (b.batch.purchase_price || 0),
+    ]);
+    download(`heeva-medicine-expiry.csv`, toCSV(headers, rows), 'text/csv');
+  };
+
+  const printExp = () => {
+    printReport({
+      title: 'Medicine Expiry Report',
+      subtitle: `Expired and near-expiry batches with inventory values`,
+      columns: [
+        { key: 'state', label: 'Status', render: (b) => b.state === 'expired' ? 'EXPIRED' : `${b.days}d left` },
+        { key: 'med_name', label: 'Medicine' },
+        { key: 'batch', label: 'Batch #', render: (b) => b.batch.batch_no },
+        { key: 'expiry', label: 'Expiry', render: (b) => fmtDate(b.batch.expiry_date) },
+        { key: 'on_hand', label: 'On Hand', align: 'right' },
+        { key: 'value', label: 'Value', align: 'right', render: (b) => money(b.on_hand * (b.batch.purchase_price || 0)) },
+      ],
+      rows: expRows,
+      settings,
+    });
+  };
+
   return (
     <div className="rep-stacks">
-      <Card title="Top Selling Medicines" sub={`Quantity & revenue · ${fmtDate(from)} to ${fmtDate(to)}`}>
+      <Card
+        title="Top Selling Medicines"
+        sub={`Quantity & revenue · ${fmtDate(from)} to ${fmtDate(to)}`}
+        actions={<>
+          <Btn size="sm" variant="ghost" icon={Download} onClick={exportTop}>Export</Btn>
+          <Btn size="sm" variant="ghost" icon={Printer} onClick={printTop}>Print</Btn>
+        </>}
+      >
         <RangeBar from={from} to={to} setFrom={setFrom} setTo={setTo} />
         <DataTable
           dense
@@ -148,7 +313,14 @@ function MedicinesTab({ from, to, setFrom, setTo, settings }) {
         />
       </Card>
 
-      <Card title="Low & Out of Stock" sub={`Minimum level per medicine · default ${settings.low_stock_default}`}>
+      <Card
+        title="Low & Out of Stock"
+        sub={`Minimum level per medicine · default ${settings.low_stock_default}`}
+        actions={<>
+          <Btn size="sm" variant="ghost" icon={Download} onClick={exportLow}>Export</Btn>
+          <Btn size="sm" variant="ghost" icon={Printer} onClick={printLow}>Print</Btn>
+        </>}
+      >
         <DataTable
           dense
           columns={[
@@ -157,13 +329,20 @@ function MedicinesTab({ from, to, setFrom, setTo, settings }) {
             { key: 'min', label: 'Minimum', align: 'right' },
             { key: 'st', label: 'Status', render: (r) => r.available <= 0 ? <Badge tone="red">OUT</Badge> : <Badge tone="amber">LOW</Badge> },
           ]}
-          rows={low ? [...low.out, ...low.low] : null}
+          rows={lowRows}
           pageSize={10}
           empty={<EmptyState compact icon="✅" title="No low stock items" />}
         />
       </Card>
 
-      <Card title="Expiry Report" sub="Expired stock and near-expiry batches with on-hand value">
+      <Card
+        title="Expiry Report"
+        sub="Expired stock and near-expiry batches with on-hand value"
+        actions={<>
+          <Btn size="sm" variant="ghost" icon={Download} onClick={exportExp}>Export</Btn>
+          <Btn size="sm" variant="ghost" icon={Printer} onClick={printExp}>Print</Btn>
+        </>}
+      >
         <DataTable
           dense
           columns={[
@@ -173,16 +352,11 @@ function MedicinesTab({ from, to, setFrom, setTo, settings }) {
             },
             { key: 'med_name', label: 'Medicine', sortable: true },
             { key: 'batch', label: 'Batch #', render: (b) => b.batch.batch_no },
-            { key: 'expiry', label: 'Expiry', sortable: true },
+            { key: 'expiry', label: 'Expiry', sortable: true, render: (b) => fmtDate(b.batch.expiry_date) },
             { key: 'on_hand', label: 'On Hand', align: 'right' },
             { key: 'value', label: 'Value (buy)', align: 'right', render: (b) => money(b.on_hand * (b.batch.purchase_price || 0)) },
           ]}
-          rows={exp ? [
-            ...exp.expired.map((b) => ({ ...b, state: 'expired', days: b.days })),
-            ...exp.d30.map((b) => ({ ...b, state: 'n30' })),
-            ...exp.d60.map((b) => ({ ...b, state: 'n60' })),
-            ...exp.d90.map((b) => ({ ...b, state: 'n90' })),
-          ] : null}
+          rows={expRows}
           pageSize={12}
           empty={<EmptyState compact icon="✅" title="Nothing expired or near expiry" />}
         />
@@ -194,9 +368,71 @@ function MedicinesTab({ from, to, setFrom, setTo, settings }) {
 function FinancialTab({ from, to, setFrom, setTo, settings }) {
   const data = useLiveQuery(() => financialReport(from, to), [from, to]);
   const money = (v) => fmtMoney(v, settings.currency);
+
+  const exportFinancial = () => {
+    const summaryHeader = ['Report', 'From', 'To', 'Total Revenue', 'Total Expenses', 'Net Profit', 'Total Pending'];
+    const summaryRow = ['Financial Summary', fmtDate(from), fmtDate(to), data?.revenue || 0, data?.expenses || 0, data?.profit || 0, data?.pending_payments?.reduce((s, p) => s + p.due, 0) || 0];
+
+    const methodHeaders = ['Payment Method', 'Amount Collected'];
+    const methodRows = Object.entries(data?.revenue_by_method || {}).map(([m, a]) => [m, a]);
+
+    const catHeaders = ['Expense Category', 'Amount Spent'];
+    const catRows = Object.entries(data?.expenses_by_category || {}).map(([c, a]) => [c, a]);
+
+    const pendingHeaders = ['Bill #', 'Patient Name', 'UHID', 'Bill Date', 'Days Pending', 'Amount Due'];
+    const pendingRows = (data?.pending_payments || []).map((r) => [
+      r.bill.bill_no,
+      r.bill.patient_name,
+      r.bill.uhid,
+      fmtDate(r.bill.date),
+      Math.max(0, -r.days),
+      r.due,
+    ]);
+
+    const fullCSV = [
+      '# FINANCIAL SUMMARY',
+      toCSV(summaryHeader, [summaryRow]),
+      '',
+      '# REVENUE BY PAYMENT METHOD',
+      toCSV(methodHeaders, methodRows),
+      '',
+      '# EXPENSES BY CATEGORY',
+      toCSV(catHeaders, catRows),
+      '',
+      '# PENDING PAYMENTS',
+      toCSV(pendingHeaders, pendingRows),
+    ].join('\n');
+
+    download(`heeva-financial-${from}-${to}.csv`, fullCSV, 'text/csv');
+  };
+
+  const printFinancial = () => {
+    printReport({
+      title: 'Financial Report & Pending Receivables',
+      subtitle: `${fmtDate(from)} to ${fmtDate(to)} · Revenue: ${money(data?.revenue)} · Expenses: ${money(data?.expenses)} · Net Profit: ${money(data?.profit)}`,
+      columns: [
+        { key: 'bill_no', label: 'Bill #', render: (r) => r.bill.bill_no },
+        { key: 'patient', label: 'Patient', render: (r) => r.bill.patient_name },
+        { key: 'uhid', label: 'UHID', render: (r) => r.bill.uhid },
+        { key: 'date', label: 'Bill Date', render: (r) => fmtDate(r.bill.date) },
+        { key: 'days', label: 'Days Pending', align: 'right', render: (r) => Math.max(0, -r.days) },
+        { key: 'due', label: 'Amount Due', align: 'right', render: (r) => money(r.due) },
+      ],
+      rows: data?.pending_payments,
+      totals: { bill_no: 'TOTAL DUE', due: money(data?.pending_payments?.reduce((s, p) => s + p.due, 0)) },
+      settings,
+    });
+  };
+
   return (
     <div className="rep-stacks">
-      <Card title="Financial Summary">
+      <Card
+        title="Financial Summary"
+        actions={<>
+          <Btn size="sm" variant="ghost" icon={Download} onClick={exportFinancial}>Export</Btn>
+          <Btn size="sm" variant="ghost" icon={Printer} onClick={printFinancial}>Print</Btn>
+        </>}
+      >
         <RangeBar from={from} to={to} setFrom={setFrom} setTo={setTo} />
         {data && (
           <div className="rep-summary">
@@ -276,7 +512,7 @@ export default function Reports() {
         <button key={t.key} className={`tab ${tab === t.key ? 'tab-active' : ''}`} onClick={() => setTab(t.key)}>{t.label}</button>
       ))}</div>
       {tab === 'sales' && <SalesTab from={from} to={to} setFrom={setFrom} setTo={setTo} settings={settings} />}
-      {tab === 'patients' && <PatientsTab from={from} to={to} setFrom={setFrom} setTo={setTo} />}
+      {tab === 'patients' && <PatientsTab from={from} to={to} setFrom={setFrom} setTo={setTo} settings={settings} />}
       {tab === 'medicines' && <MedicinesTab from={from} to={to} setFrom={setFrom} setTo={setTo} settings={settings} />}
       {tab === 'financial' && <FinancialTab from={from} to={to} setFrom={setFrom} setTo={setTo} settings={settings} />}
     </div>

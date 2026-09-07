@@ -155,14 +155,14 @@ async function runTests() {
     headers: authHeaders,
     body: JSON.stringify({
       name: 'D1 Test Patient Updated',
-      city: 'Navsari',
+      address: 'Navsari Station Road',
     }),
   });
   test('PUT /api/patients/:id returns 200', () => assert.strictEqual(updatePatientRes.status, 200));
   const updatedPatient = await updatePatientRes.json();
-  test('Updated patient has new name and city', () => {
+  test('Updated patient has new name and address', () => {
     assert.strictEqual(updatedPatient.name, 'D1 Test Patient Updated');
-    assert.strictEqual(updatedPatient.city, 'Navsari');
+    assert.strictEqual(updatedPatient.address, 'Navsari Station Road');
   });
 
   // Delete patient

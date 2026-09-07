@@ -11,11 +11,11 @@ import {
 import { LineChart } from '../components/charts';
 import { updatePatient, addVitals, deletePatient } from '../services/patients';
 import { getBill } from '../services/billing';
-import { printInvoiceA4, printPatientCard } from '../print/printers';
+import { printInvoiceA4, printPatientCard, downloadReceipt } from '../print/printers';
 import { ageLabel, fmtDate, fmtDateTime, fmtTime, fmtMoney, fmtQty } from '../utils';
 import {
   Phone, MapPin, Mail, Droplets, Stethoscope, FileText, ReceiptText,
-  CreditCard, Activity, NotebookPen, Pencil, Printer, Plus, Trash2,
+  CreditCard, Activity, NotebookPen, Pencil, Printer, Download, Plus, Trash2,
 } from 'lucide-react';
 
 const VITAL_DEFS = [
@@ -109,6 +109,8 @@ function AddVitalsModal({ open, onClose, patient, user }) {
   );
 }
 
+const MARITAL_STATUSES = ['Single', 'Married', 'Divorced', 'Widowed', 'Other'];
+
 function EditPatientModal({ open, onClose, patient, user }) {
   const { pushToast } = useApp();
   const [f, setF] = useState({});
@@ -116,23 +118,48 @@ function EditPatientModal({ open, onClose, patient, user }) {
   const [err, setErr] = useState('');
   React.useEffect(() => {
     if (open && patient) setF({
-      name: patient.name, dob: patient.dob, gender: patient.gender, mobile: patient.mobile,
-      alt_mobile: patient.alt_mobile, email: patient.email, address: patient.address, city: patient.city,
-      state: patient.state, pin: patient.pin, ec_name: patient.ec_name, ec_number: patient.ec_number,
-      ec_relation: patient.ec_relation, blood_group: patient.blood_group, allergies: patient.allergies,
+      name: patient.name,
+      age: patient.age != null ? patient.age : (patient.approx_age ?? ''),
+      gender: patient.gender === 'Female' ? 'F' : patient.gender === 'Male' ? 'M' : patient.gender || 'Other',
+      marital_status: patient.marital_status || 'Single',
+      mobile: patient.mobile,
+      alt_mobile: patient.alt_mobile, email: patient.email, address: patient.address,
+      pin: patient.pin, blood_group: patient.blood_group, allergies: patient.allergies,
       conditions: patient.conditions, current_meds: patient.current_meds, notes: patient.notes,
     });
   }, [open, patient]);
   const set = (k) => (e) => setF((x) => ({ ...x, [k]: e.target.value }));
 
+  const handleKeyDown = (e) => {
+    if (e.key !== 'Enter') return;
+    const target = e.target;
+    if (!target || target.tagName !== 'INPUT' || target.type === 'submit' || target.type === 'button') return;
+    e.preventDefault();
+    const form = target.closest('.form-grid');
+    if (!form) return;
+    const focusables = Array.from(
+      form.querySelectorAll('input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled])')
+    );
+    const idx = focusables.indexOf(target);
+    if (idx >= 0 && idx < focusables.length - 1) {
+      focusables[idx + 1].focus();
+    }
+  };
+
   const save = async () => {
     setErr('');
-    if (!f.name || f.name.trim().length < 3) { setErr('Name is required'); return; }
-    if (!f.dob) { setErr('Date of birth is required'); return; }
-    if (f.dob > new Date().toISOString().slice(0, 10)) { setErr('Date of birth cannot be in the future'); return; }
+    if (!f.name || f.name.trim().length < 3) { setErr('Name is required (min 3 characters)'); return; }
+    const ageNum = Number(f.age);
+    if (f.age === '' || f.age == null || isNaN(ageNum) || ageNum < 0 || ageNum > 125) {
+      setErr('Valid age (0–125) is required');
+      return;
+    }
     setBusy(true);
     try {
-      await updatePatient(patient.id, f, user.id);
+      await updatePatient(patient.id, {
+        ...f,
+        age: ageNum,
+      }, user.id);
       pushToast('success', 'Patient updated');
       onClose();
     } catch (e) {
@@ -149,15 +176,26 @@ function EditPatientModal({ open, onClose, patient, user }) {
         <Btn onClick={save} disabled={busy}>{busy ? 'Saving…' : 'Save changes'}</Btn>
       </>}>
       {err && <div className="form-alert">{err}</div>}
-      <div className="form-grid">
+      <div className="form-grid" onKeyDown={handleKeyDown}>
         <Field label="Full Name" required className="fg-2"><Input value={f.name || ''} onChange={set('name')} /></Field>
-        <Field label="Date of Birth" required hint={f.dob ? `Age: ${ageLabel({ dob: f.dob })}` : 'Required for automatic age calculation'}><Input type="date" max={new Date().toISOString().slice(0, 10)} value={f.dob || ''} onChange={set('dob')} /></Field>
-        <Field label="Gender"><Select value={f.gender || ''} onChange={set('gender')}><option value="">—</option><option>Male</option><option>Female</option><option>Other</option></Select></Field>
+        <Field label="Age" required><Input type="number" min="0" max="125" value={f.age ?? ''} onChange={set('age')} /></Field>
+        <Field label="Gender">
+          <Select value={f.gender || 'M'} onChange={set('gender')}>
+            <option value="M">M</option>
+            <option value="F">F</option>
+            <option value="Other">Other</option>
+          </Select>
+        </Field>
+        <Field label="Marital Status">
+          <Select value={f.marital_status || 'Single'} onChange={set('marital_status')}>
+            {MARITAL_STATUSES.map((m) => <option key={m} value={m}>{m}</option>)}
+          </Select>
+        </Field>
         <Field label="Mobile"><Input value={f.mobile || ''} onChange={set('mobile')} /></Field>
         <Field label="Alternative Mobile"><Input value={f.alt_mobile || ''} onChange={set('alt_mobile')} /></Field>
+        <Field label="Email"><Input type="email" value={f.email || ''} onChange={set('email')} /></Field>
         <Field label="Address" className="fg-2"><Input value={f.address || ''} onChange={set('address')} /></Field>
-        <Field label="City"><Input value={f.city || ''} onChange={set('city')} /></Field>
-        <Field label="State"><Input value={f.state || ''} onChange={set('state')} /></Field>
+        <Field label="PIN Code"><Input value={f.pin || ''} onChange={set('pin')} /></Field>
         <Field label="Blood Group">
           <Select value={f.blood_group || ''} onChange={set('blood_group')}>
             {['', 'A+', 'A−', 'B+', 'B−', 'AB+', 'AB−', 'O+', 'O−'].map((b) => <option key={b} value={b}>{b || 'Unknown'}</option>)}
@@ -196,6 +234,8 @@ export default function PatientProfile() {
   const money = (v) => fmtMoney(v, settings.currency);
   const totalSpent = (bills || []).filter((b) => b.status === 'completed').reduce((s, b) => s + (b.paid || 0), 0);
   const p = patient;
+  const isNew = (!consults || consults.length === 0) && (!bills || bills.length === 0);
+  const patientStatus = p.patient_status || (isNew ? 'New' : 'Old');
 
   const viewBill = async (b) => {
     const full = await getBill(b.id);
@@ -206,20 +246,21 @@ export default function PatientProfile() {
     <div className="page">
       {/* header */}
       <div className="pt-head">
-        <Avatar name={p.name} size={64} tone={p.gender === 'Female' ? 'teal' : 'navy'} />
+        <Avatar name={p.name} size={64} tone={p.gender === 'F' || p.gender === 'Female' ? 'teal' : 'navy'} />
         <div className="pt-id">
           <div className="pt-name-row">
             <h1>{p.name}</h1>
+            <Badge tone={patientStatus === 'New' ? 'teal' : 'gray'}>{patientStatus} Patient</Badge>
             {p.needs_completion && <Badge tone="red">Profile incomplete — complete details</Badge>}
             {p.blood_group && <Badge tone="red">Blood group: {p.blood_group}</Badge>}
             {p.allergies && <Badge tone="amber">⚠ {p.allergies.split(',')[0]}</Badge>}
           </div>
           <div className="pt-meta">
             <UhidChip uhid={p.uhid} />
-            <span>{ageLabel(p)} · {p.gender || '—'}</span>
+            <span>{ageLabel(p)} · {p.gender || '—'}{p.marital_status ? ` · ${p.marital_status}` : ''}</span>
             {p.mobile && <span className="pt-meta-item"><Phone size={13} /> {p.mobile}</span>}
-            <span className="pt-meta-item"><MapPin size={13} /> {p.city || '—'}{p.pin ? ` ${p.pin}` : ''}</span>
-            <span className="pt-meta-item">Registered {fmtDate(p.reg_date)}</span>
+            {p.address && <span className="pt-meta-item"><MapPin size={13} /> {p.address}{p.pin ? ` ${p.pin}` : ''}</span>}
+            <span className="pt-meta-item">Registered {fmtDateTime(p.created_at || p.reg_date)}</span>
           </div>
         </div>
         <div className="pt-actions">
@@ -267,15 +308,18 @@ export default function PatientProfile() {
             <div className="kv"><span>Mobile</span><b>{p.mobile || '—'}</b></div>
             <div className="kv"><span>Alt. mobile</span><b>{p.alt_mobile || '—'}</b></div>
             <div className="kv"><span>Email</span><b>{p.email || '—'}</b></div>
-            <div className="kv"><span>Address</span><b>{p.address || '—'}{p.city ? `, ${p.city}` : ''} {p.pin}</b></div>
+            <div className="kv"><span>Marital status</span><b>{p.marital_status || 'Single'}</b></div>
+            <div className="kv"><span>Address</span><b>{p.address || '—'}{p.pin ? ` ${p.pin}` : ''}</b></div>
           </Card>
           <Card title="Medical Summary" className="ov-card">
+            <div className="kv"><span>Status</span><b><Badge tone={patientStatus === 'New' ? 'teal' : 'gray'}>{patientStatus}</Badge></b></div>
             <div className="kv"><span>Blood group</span><b>{p.blood_group || 'Unknown'}</b></div>
             <div className="kv"><span>Allergies</span><b>{p.allergies || 'None recorded'}</b></div>
             <div className="kv"><span>Conditions</span><b>{p.conditions || 'None recorded'}</b></div>
             <div className="kv"><span>Current meds</span><b>{p.current_meds || '—'}</b></div>
             <div className="kv"><span>Total visits</span><b>{consults?.length || 0}</b></div>
             <div className="kv"><span>Total paid to date</span><b>{money(totalSpent)}</b></div>
+            <div className="kv"><span>Registered</span><b>{fmtDateTime(p.created_at || p.reg_date)}</b></div>
           </Card>
           <Card title="Latest Vitals" className="ov-card">
             {!vitals?.length ? <EmptyState compact icon="❤️" title="No vitals yet" action={<Btn size="sm" variant="outline" onClick={() => setVitalsOpen(true)}>Record now</Btn>} /> : (
@@ -474,6 +518,7 @@ function BillViewer({ full, onClose, patient }) {
     <Modal open onClose={onClose} title={<span className="cell-mono">{bill.bill_no}</span>} sub={`${patient.name} · ${patient.uhid}`} width="lg"
       footer={<>
         <Btn variant="ghost" onClick={onClose}>Close</Btn>
+        <Btn variant="outline" icon={Download} onClick={() => downloadReceipt(bill, items, payments, settings)}>Download Receipt</Btn>
         <Btn variant="primary" icon={Printer} onClick={() => printInvoiceA4(bill, items, payments, settings)}>A4 Payment Receipt</Btn>
       </>}>
       <div className="bv-body">
@@ -488,7 +533,7 @@ function BillViewer({ full, onClose, patient }) {
           <tbody>
             {items.map((it) => (
               <tr key={it.id}>
-                <td>{it.name}{it.batch_no && <span className="cell-sub"> · batch {it.batch_no}</span>}</td>
+                <td>{it.name}</td>
                 <td><Badge tone={it.item_type === 'medicine' ? 'teal' : it.item_type === 'consultation' ? 'navy' : 'blue'}>{it.item_type}</Badge></td>
                 <td className="td-right">{fmtQty(it.qty)}</td>
                 <td className="td-right">{money(it.price)}</td>

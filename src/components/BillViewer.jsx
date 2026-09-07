@@ -2,11 +2,11 @@
 import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { Btn, Modal, Badge, PaymentBadge, Input, Select, Field } from './ui';
-import { printInvoiceA4 } from '../print/printers';
+import { printInvoiceA4, downloadReceipt } from '../print/printers';
 import { recordPayment, cancelBill } from '../services/billing';
 import { syncAlerts } from '../services/notifications';
 import { fmtDate, fmtDateTime, fmtMoney, fmtQty } from '../utils';
-import { Printer, CreditCard, XCircle } from 'lucide-react';
+import { Printer, Download, CreditCard, XCircle } from 'lucide-react';
 import { PAY_METHODS } from '../services/billing';
 import { Confirm } from './ui';
 
@@ -69,6 +69,7 @@ export default function BillViewer({ full, onClose, allowCancel = true, allowPay
             {allowCancel && open && can('billing') && (
               <Btn variant="danger" icon={XCircle} onClick={() => setCancelOpen(true)}>Cancel Bill</Btn>
             )}
+            <Btn variant="outline" icon={Download} onClick={() => downloadReceipt(bill, items, payments, settings)}>Download Receipt</Btn>
             <Btn variant="primary" icon={Printer} onClick={() => printInvoiceA4(bill, items, payments, settings)}>A4 Payment Receipt</Btn>
           </>
         }
@@ -87,7 +88,7 @@ export default function BillViewer({ full, onClose, allowCancel = true, allowPay
             <tbody>
               {items.map((it) => (
                 <tr key={it.id}>
-                  <td>{it.name}{it.batch_no && <span className="cell-sub"> · batch {it.batch_no}</span>}{it.returned > 0 && <Badge tone="amber"> {fmtQty(it.returned)} returned</Badge>}</td>
+                  <td>{it.name}{it.returned > 0 && <Badge tone="amber"> {fmtQty(it.returned)} returned</Badge>}</td>
                   <td><Badge tone={it.item_type === 'medicine' ? 'teal' : it.item_type === 'consultation' ? 'navy' : 'blue'}>{it.item_type}</Badge></td>
                   <td className="td-right">{fmtQty(it.qty)}</td>
                   <td className="td-right">{money(it.price)}</td>

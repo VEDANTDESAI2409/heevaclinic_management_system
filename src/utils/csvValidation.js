@@ -1,7 +1,7 @@
-import { validMobile, dkey } from '../utils.js';
+import { validMobile, dkey, isValidDDMMYYYY, parseDDMMYYYY } from '../utils.js';
 
 const BLOOD_GROUPS = new Set(['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-']);
-const GENDERS = new Set(['male', 'female', 'other']);
+const GENDERS = new Set(['m', 'f', 'other', 'male', 'female']);
 
 function isValidDate(dateStr) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return false;
@@ -45,23 +45,22 @@ export function validateCSVRows(type, rows, context = {}) {
           errors.push('Full name must be at least 3 characters');
         }
 
-        const dob = String(row.dob || '').trim();
-        if (!dob) {
-          errors.push('Date of birth is required');
-        } else if (!isValidDate(dob)) {
-          errors.push('Date of birth must be valid YYYY-MM-DD format');
-        } else if (dob > today) {
-          errors.push('Date of birth cannot be in the future');
+        const rawAge = String(row.age ?? '').trim();
+        const age = parseInt(rawAge, 10);
+        if (!rawAge) {
+          errors.push('Age is required');
+        } else if (isNaN(age) || age < 0 || age > 125) {
+          errors.push('Age must be a valid number between 0 and 125');
         }
 
         const rawGender = String(row.gender || '').trim().toLowerCase();
         let gender = '';
         if (!rawGender) {
-          errors.push('Gender is required');
+          errors.push('Gender is required (M, F, or Other)');
         } else if (!GENDERS.has(rawGender)) {
-          errors.push('Gender must be Male, Female, or Other');
+          errors.push('Gender must be M, F, or Other');
         } else {
-          gender = rawGender.charAt(0).toUpperCase() + rawGender.slice(1);
+          gender = rawGender === 'm' || rawGender === 'male' ? 'M' : rawGender === 'f' || rawGender === 'female' ? 'F' : 'Other';
         }
 
         const rawMobile = String(row.mobile || '').trim();
@@ -90,11 +89,13 @@ export function validateCSVRows(type, rows, context = {}) {
           errors.push('Blood group must be one of A+, A-, B+, B-, AB+, AB-, O+, O-');
         }
 
-        let ecNumber = '';
-        if (row.ec_number) {
-          ecNumber = cleanDigits(row.ec_number);
-          if (ecNumber.length !== 10) {
-            errors.push('Emergency contact number must be 10 digits');
+        let regDate = today;
+        if (row.reg_date) {
+          const rawDate = String(row.reg_date).trim();
+          if (!isValidDDMMYYYY(rawDate)) {
+            errors.push('Registration date must be valid DD-MM-YYYY format');
+          } else {
+            regDate = parseDDMMYYYY(rawDate);
           }
         }
 
@@ -112,23 +113,20 @@ export function validateCSVRows(type, rows, context = {}) {
           validRows.push({
             __rowNum: rowNum,
             name,
-            dob,
+            age,
             gender,
+            marital_status: String(row.marital_status || 'Single').trim(),
             mobile,
             alt_mobile: altMobile,
             email,
             address: String(row.address || '').trim(),
-            city: String(row.city || '').trim(),
-            state: String(row.state || 'Gujarat').trim(),
             pin: String(row.pin || '').trim(),
             blood_group: bloodGroup,
             allergies: String(row.allergies || '').trim(),
             conditions: String(row.conditions || '').trim(),
             current_meds: String(row.current_meds || '').trim(),
             notes: String(row.notes || '').trim(),
-            ec_name: String(row.ec_name || '').trim(),
-            ec_number: ecNumber,
-            ec_relation: String(row.ec_relation || '').trim(),
+            reg_date: regDate,
           });
         }
       }
@@ -199,7 +197,6 @@ export function validateCSVRows(type, rows, context = {}) {
             purchase_price: Math.round(purchasePrice * 100) / 100,
             selling_price: Math.round(sellingPrice * 100) / 100,
             min_stock: minStock,
-            barcode: String(row.barcode || '').trim(),
             location: String(row.location || '').trim(),
             description: String(row.description || '').trim(),
           });
@@ -330,18 +327,23 @@ export function validateCSVRows(type, rows, context = {}) {
           errors.push('Batch number is required');
         }
 
-        const expiry = String(row.expiry || '').trim();
+        let expiry = String(row.expiry || '').trim();
         if (!expiry) {
           errors.push('Expiry date is required');
+        } else if (isValidDDMMYYYY(expiry)) {
+          expiry = parseDDMMYYYY(expiry);
         } else if (!isValidDate(expiry)) {
-          errors.push('Expiry must be valid YYYY-MM-DD format');
+          errors.push('Expiry must be valid DD-MM-YYYY format');
         }
 
         let mfgDate = String(row.mfg_date || '').trim();
         if (mfgDate) {
-          if (!isValidDate(mfgDate)) {
-            errors.push('Mfg date must be valid YYYY-MM-DD format');
-          } else if (expiry && mfgDate > expiry) {
+          if (isValidDDMMYYYY(mfgDate)) {
+            mfgDate = parseDDMMYYYY(mfgDate);
+          } else if (!isValidDate(mfgDate)) {
+            errors.push('Mfg date must be valid DD-MM-YYYY format');
+          }
+          if (expiry && mfgDate > expiry) {
             errors.push('Mfg date cannot be after expiry date');
           }
         } else {

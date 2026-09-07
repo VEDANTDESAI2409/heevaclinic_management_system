@@ -87,7 +87,7 @@ export function AppProvider({ children }) {
     };
     window.addEventListener('heeva:unauthorized', onUnauthorized);
 
-    const on = () => setOnline(true);
+    const on = () => { setOnline(true); syncFromBackend(db).catch(() => {}); };
     const off = () => setOnline(false);
     window.addEventListener('online', on);
     window.addEventListener('offline', off);
@@ -109,8 +109,16 @@ export function AppProvider({ children }) {
     }
     window.addEventListener('focus', onFocusSync);
 
+    // Multi-laptop background sync: poll shared D1 database every 8s while active
+    const pollInterval = setInterval(() => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+        syncFromBackend(db).catch(() => {});
+      }
+    }, 8000);
+
     return () => {
       mounted = false;
+      clearInterval(pollInterval);
       window.removeEventListener('heeva:unauthorized', onUnauthorized);
       window.removeEventListener('online', on);
       window.removeEventListener('offline', off);

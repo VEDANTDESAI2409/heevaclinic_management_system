@@ -84,10 +84,15 @@ export async function syncFromBackend(db) {
           continue;
         }
         if (db[name] && Array.isArray(rows)) {
-          // Transactional wipe of local table and repopulate exclusively with fresh D1 records
-          await db[name].clear();
+          const keyField = name === 'counters' ? 'key' : 'id';
+          const newKeySet = new Set(rows.map((r) => r[keyField]));
+          const existingKeys = await db[name].toCollection().primaryKeys();
+          const toDelete = existingKeys.filter((k) => !newKeySet.has(k));
           if (rows.length > 0) {
             await db[name].bulkPut(rows);
+          }
+          if (toDelete.length > 0) {
+            await db[name].bulkDelete(toDelete);
           }
         }
       } catch (tableErr) {
