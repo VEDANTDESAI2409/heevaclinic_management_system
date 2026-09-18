@@ -71,31 +71,48 @@ export function validateCSVRows(type, rows, context = {}) {
           errors.push('Mobile must be a valid 10-digit number');
         }
 
-        let altMobile = '';
-        if (row.alt_mobile) {
-          altMobile = cleanDigits(row.alt_mobile);
-          if (!validMobile(altMobile) || altMobile.length !== 10) {
-            errors.push('Alt mobile must be a valid 10-digit number');
-          }
-        }
-
-        let email = String(row.email || '').trim();
-        if (email && !isValidEmail(email)) {
-          errors.push('Invalid email address format');
-        }
-
         let bloodGroup = String(row.blood_group || '').trim().toUpperCase();
         if (bloodGroup && !BLOOD_GROUPS.has(bloodGroup)) {
           errors.push('Blood group must be one of A+, A-, B+, B-, AB+, AB-, O+, O-');
         }
 
+        // Manual historical Date & Time support (DD-MM-YYYY HH:mm)
+        const rawDateTime = String(row.date_time || row.date_and_time || row.datetime || row.created_at || row.reg_date || '').trim();
+        let itemCreatedAt = new Date().toISOString();
         let regDate = today;
-        if (row.reg_date) {
-          const rawDate = String(row.reg_date).trim();
-          if (!isValidDDMMYYYY(rawDate)) {
-            errors.push('Registration date must be valid DD-MM-YYYY format');
+
+        if (rawDateTime) {
+          const dtMatch = rawDateTime.match(/^(\d{2})-(\d{2})-(\d{4})(?:[\sT](\d{1,2}):(\d{2})(?::(\d{2}))?)?$/);
+          if (!dtMatch) {
+            errors.push('Date & Time must use DD-MM-YYYY HH:mm format (e.g. 05-09-2026 10:45)');
           } else {
-            regDate = parseDDMMYYYY(rawDate);
+            const day = parseInt(dtMatch[1], 10);
+            const month = parseInt(dtMatch[2], 10);
+            const year = parseInt(dtMatch[3], 10);
+            const hour = dtMatch[4] !== undefined ? parseInt(dtMatch[4], 10) : 0;
+            const minute = dtMatch[5] !== undefined ? parseInt(dtMatch[5], 10) : 0;
+            const second = dtMatch[6] !== undefined ? parseInt(dtMatch[6], 10) : 0;
+
+            if (month < 1 || month > 12) {
+              errors.push('Invalid month in Date & Time (must be 01–12)');
+            } else if (year < 1900 || year > 2100) {
+              errors.push('Invalid year in Date & Time (1900–2100)');
+            } else {
+              const daysInMonth = new Date(year, month, 0).getDate();
+              if (day < 1 || day > daysInMonth) {
+                errors.push(`Invalid day in Date & Time for month ${month} (must be 01–${daysInMonth})`);
+              } else if (hour < 0 || hour > 23) {
+                errors.push('Invalid hour in Date & Time (must be 00–23)');
+              } else if (minute < 0 || minute > 59) {
+                errors.push('Invalid minute in Date & Time (must be 00–59)');
+              } else if (second < 0 || second > 59) {
+                errors.push('Invalid second in Date & Time (must be 00–59)');
+              } else {
+                const p2 = (n) => String(n).padStart(2, '0');
+                itemCreatedAt = `${year}-${p2(month)}-${p2(day)}T${p2(hour)}:${p2(minute)}:${p2(second)}.000Z`;
+                regDate = `${year}-${p2(month)}-${p2(day)}`;
+              }
+            }
           }
         }
 
@@ -117,8 +134,6 @@ export function validateCSVRows(type, rows, context = {}) {
             gender,
             marital_status: String(row.marital_status || 'Single').trim(),
             mobile,
-            alt_mobile: altMobile,
-            email,
             address: String(row.address || '').trim(),
             pin: String(row.pin || '').trim(),
             blood_group: bloodGroup,
@@ -127,6 +142,8 @@ export function validateCSVRows(type, rows, context = {}) {
             current_meds: String(row.current_meds || '').trim(),
             notes: String(row.notes || '').trim(),
             reg_date: regDate,
+            created_at: itemCreatedAt,
+            date_time: rawDateTime || undefined,
           });
         }
       }

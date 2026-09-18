@@ -27,6 +27,7 @@ __export(api_exports, {
   getAuthToken: () => getAuthToken,
   getHealth: () => getHealth,
   getMedicines: () => getMedicines,
+  getNextUhid: () => getNextUhid,
   getPatients: () => getPatients,
   getRecord: () => getRecord,
   getRecords: () => getRecords,
@@ -75,7 +76,7 @@ async function request(path, options = {}) {
   }
   return response.status === 204 ? null : response.json();
 }
-var TOKEN_KEY, getAuthToken, setAuthToken, clearAuthToken, getBaseUrl, authApi, adminApi, getHealth, getRecords, getRecord, createRecord, updateRecord, deleteRecord, bulkImportRecords, getPatients, createPatient, updatePatient, deletePatient, getMedicines, createMedicine2, updateMedicine, deleteMedicine, getAppointments, createAppointment, updateAppointment, deleteAppointment;
+var TOKEN_KEY, getAuthToken, setAuthToken, clearAuthToken, getBaseUrl, authApi, adminApi, getHealth, getRecords, getRecord, createRecord, updateRecord, deleteRecord, bulkImportRecords, getPatients, getNextUhid, createPatient, updatePatient, deletePatient, getMedicines, createMedicine2, updateMedicine, deleteMedicine, getAppointments, createAppointment, updateAppointment, deleteAppointment;
 var init_api = __esm({
   "src/services/api.js"() {
     TOKEN_KEY = "heeva_auth_token";
@@ -188,6 +189,7 @@ var init_api = __esm({
     deleteRecord = (table, id) => request(`/${table}/${encodeURIComponent(id)}`, { method: "DELETE" });
     bulkImportRecords = (table, records, userId = null) => request(`/${table}/import`, { method: "POST", body: JSON.stringify({ records, userId }) });
     getPatients = () => getRecords("patients");
+    getNextUhid = () => request("/patients/next-uhid");
     createPatient = (patient2) => createRecord("patients", patient2);
     updatePatient = (id, patch) => updateRecord("patients", id, patch);
     deletePatient = (id) => deleteRecord("patients", id);
@@ -493,6 +495,18 @@ function fmtDateTime(s) {
   const timePart = `${p2(d.getHours())}:${p2(d.getMinutes())}`;
   return `${datePart} ${timePart}`;
 }
+function fmtDateTime12h(s) {
+  if (!s) return "\u2014";
+  const d = new Date(s);
+  if (isNaN(d.getTime())) return String(s);
+  const datePart = `${p2(d.getDate())}-${p2(d.getMonth() + 1)}-${d.getFullYear()}`;
+  let hours = d.getHours();
+  const ampm = hours >= 12 ? "PM" : "AM";
+  hours = hours % 12;
+  hours = hours ? hours : 12;
+  const timePart = `${p2(hours)}:${p2(d.getMinutes())} ${ampm}`;
+  return `${datePart} ${timePart}`;
+}
 function fmtTime(s) {
   if (!s) return "\u2014";
   const d = new Date(s);
@@ -608,7 +622,15 @@ async function nextCounter(key, start = 1) {
 async function makeUHID(settings, year = (/* @__PURE__ */ new Date()).getFullYear()) {
   const s = settings || await getSettings();
   const key = s.uhid_include_year ? `UHID|${year}` : "UHID|ALL";
-  const n = await nextCounter(key, Number(s.uhid_start) || 1);
+  const patientCount = await db_default.patients.count();
+  const start = Number(s.uhid_start) || 1;
+  let n;
+  if (patientCount === 0) {
+    n = start;
+    await db_default.counters.put({ key, value: n });
+  } else {
+    n = await nextCounter(key, start);
+  }
   const pad = Number(s.uhid_padding) || 6;
   const prefix = (s.uhid_prefix || "HC").trim().toUpperCase();
   return `${prefix}${s.uhid_include_year ? `-${year}` : ""}-${String(n).padStart(pad, "0")}`;
@@ -1752,6 +1774,8 @@ function printInvoiceA4(bill2, items = [], payments = [], s = {}) {
   const payMethodDisplay = paidRows.length > 0 ? [...new Set(paidRows.map((p) => p.method))].join(", ") : bill2.payment_method || (bill2.payment_status === "PAID" ? "Cash" : "Pending");
   const docName = bill2.doctor_name || s.doctor_name || "Dr. Mit Nayak";
   const docPhone = bill2.doctor_phone || s.doctor_phone || "9913974000";
+  const ageStr = bill2.patient_age != null ? String(bill2.patient_age).includes("Y") ? bill2.patient_age : `${bill2.patient_age} Y` : "";
+  const ageSex = [ageStr, bill2.patient_gender].filter(Boolean).join(" / ") || "\u2014";
   printNode(
     /* @__PURE__ */ React3.createElement("div", { className: "print-job a4-letterhead-job" }, /* @__PURE__ */ React3.createElement("style", null, `
         @page { size: A4 portrait; margin: 0 !important; }
@@ -1759,195 +1783,226 @@ function printInvoiceA4(bill2, items = [], payments = [], s = {}) {
           width: 210mm;
           min-height: 297mm;
           box-sizing: border-box;
-          padding-top: 48mm;
-          padding-bottom: 35mm;
+          padding-top: 52mm;
+          padding-bottom: 38mm;
           padding-left: 20mm;
           padding-right: 20mm;
           font-family: Inter, system-ui, -apple-system, sans-serif;
           color: #1a202c;
-          font-size: 13.5px;
+          font-size: 13px;
           line-height: 1.45;
           background: #ffffff;
+          page-break-after: avoid !important;
+          page-break-inside: avoid !important;
+          break-inside: avoid !important;
         }
-        .lh-header {
-          display: flex;
-          justify-content: space-between;
-          align-items: flex-start;
-          border-bottom: 2px solid #2d3748;
-          padding-bottom: 12px;
-          margin-bottom: 16px;
+        .med-doc-patient {
+          border-top: 1.5px solid #2d3748;
+          border-bottom: 1.5px solid #2d3748;
+          padding: 8px 0;
+          margin-bottom: 10px;
+          font-size: 12.5px;
+          line-height: 1.5;
         }
-        .lh-title-block h1 {
-          margin: 0;
-          font-size: 20px;
-          font-weight: 800;
-          letter-spacing: 0.05em;
-          color: #1a202c;
-          text-transform: uppercase;
-        }
-        .lh-title-block .lh-subtitle {
-          font-size: 12px;
-          color: #718096;
-          margin-top: 2px;
-        }
-        .lh-meta-block {
-          text-align: right;
-          font-size: 13px;
-        }
-        .lh-docno {
-          font-family: Consolas, monospace;
-          font-size: 16px;
-          font-weight: 700;
-          color: #2b6cb0;
-        }
-        .lh-date {
-          color: #4a5568;
-          margin-top: 3px;
-        }
-        .lh-status-badge {
-          display: inline-block;
-          font-size: 11px;
-          font-weight: 700;
-          text-transform: uppercase;
-          padding: 2px 8px;
-          border-radius: 4px;
-          margin-top: 4px;
-        }
-        .lh-status-paid { background: #c6f6d5; color: #22543d; }
-        .lh-status-partial { background: #feebc8; color: #7b341e; }
-        .lh-status-pending { background: #edf2f7; color: #4a5568; }
-        .lh-status-cancelled { background: #fed7d7; color: #742a2a; }
-
-        .lh-patient-box {
+        .med-doc-grid {
           display: grid;
-          grid-template-columns: 1.4fr 1fr;
-          gap: 16px;
-          background: #f7fafc;
-          border: 1px solid #e2e8f0;
-          border-radius: 6px;
-          padding: 12px 16px;
-          margin-bottom: 20px;
+          grid-template-columns: 1.1fr 1fr 1.1fr;
+          row-gap: 5px;
+          column-gap: 16px;
         }
-        .lh-pat-col {
+        .med-doc-field {
           display: flex;
-          flex-direction: column;
-          gap: 4px;
+          align-items: baseline;
+          gap: 6px;
         }
-        .lh-label {
+        .med-doc-lbl {
           font-size: 10.5px;
           font-weight: 700;
-          color: #718096;
+          color: #4a5568;
           text-transform: uppercase;
-          letter-spacing: 0.05em;
+          letter-spacing: 0.04em;
+          white-space: nowrap;
         }
-        .lh-val-name {
-          font-size: 16px;
-          font-weight: 700;
+        .med-doc-val {
+          font-size: 13px;
+          font-weight: 600;
           color: #1a202c;
         }
-        .lh-info-row {
-          display: flex;
-          gap: 16px;
-          font-size: 13px;
-          color: #2d3748;
-          flex-wrap: wrap;
+
+        .med-doc-diag {
+          margin-bottom: 12px;
+          padding: 4px 0 6px 0;
+          border-bottom: 1px dashed #cbd5e0;
+          font-size: 12.5px;
+          line-height: 1.4;
+        }
+        .med-doc-diag-lbl {
+          font-weight: 800;
+          color: #1a202c;
+          text-transform: uppercase;
+          letter-spacing: 0.04em;
+          font-size: 11.5px;
+          margin-right: 6px;
+        }
+        .med-doc-diag-val {
+          font-weight: 700;
+          color: #1a202c;
+          text-transform: uppercase;
         }
 
-        .lh-table {
+        .med-doc-table {
           width: 100%;
           border-collapse: collapse;
-          margin-bottom: 20px;
-          font-size: 13.5px;
+          margin-bottom: 14px;
+          font-size: 12.5px;
         }
-        .lh-table th {
-          background: #2d3748;
-          color: #ffffff;
+        .med-doc-table th {
+          border-top: 1.5px solid #2d3748;
+          border-bottom: 1.5px solid #2d3748;
+          padding: 6px 8px;
           font-weight: 700;
+          font-size: 11px;
           text-transform: uppercase;
-          font-size: 11.5px;
           letter-spacing: 0.04em;
-          padding: 9px 10px;
+          color: #1a202c;
+          background: #f8fafc;
           text-align: left;
         }
-        .lh-table td {
-          padding: 9px 10px;
+        .med-doc-table td {
           border-bottom: 1px solid #e2e8f0;
+          padding: 6px 8px;
           color: #2d3748;
+          vertical-align: top;
         }
-        .lh-table .th-r, .lh-table .td-r { text-align: right; }
-        .lh-table .th-c, .lh-table .td-c { text-align: center; }
+        .med-doc-table .th-c, .med-doc-table .td-c { text-align: center; }
+        .med-doc-table .th-r, .med-doc-table .td-r { text-align: right; }
 
-        .lh-summary-row {
+        .med-name {
+          font-weight: 700;
+          color: #1a202c;
+          font-size: 13px;
+        }
+        .med-comp {
+          font-size: 11px;
+          color: #4a5568;
+          margin-top: 2px;
+        }
+        .med-note {
+          font-size: 11px;
+          color: #4a5568;
+          font-style: italic;
+          margin-top: 1px;
+        }
+
+        .med-doc-pay-row {
           display: flex;
           justify-content: space-between;
           align-items: flex-start;
-          gap: 24px;
-          margin-bottom: 24px;
+          gap: 20px;
+          margin-bottom: 12px;
+          padding-bottom: 10px;
+          border-bottom: 1px solid #e2e8f0;
+          font-size: 12.5px;
         }
-        .lh-payment-info {
+        .med-doc-pay-left {
           flex: 1;
-          background: #f7fafc;
-          border: 1px solid #e2e8f0;
-          border-radius: 6px;
-          padding: 12px 14px;
-          font-size: 13px;
         }
-        .lh-pay-method-pill {
-          display: inline-block;
+        .med-doc-pay-lbl {
+          font-size: 11px;
           font-weight: 700;
-          background: #ebf8ff;
-          color: #2b6cb0;
-          padding: 2px 8px;
-          border-radius: 4px;
-          font-size: 13px;
-          margin-left: 6px;
+          color: #4a5568;
+          text-transform: uppercase;
         }
-        .lh-totals-box {
-          width: 260px;
-          border: 1px solid #e2e8f0;
-          border-radius: 6px;
-          background: #ffffff;
-          overflow: hidden;
+        .med-doc-pay-txns {
+          margin-top: 6px;
+          font-size: 11.5px;
+          color: #4a5568;
         }
-        .lh-tot-row {
+        .med-doc-pay-right {
+          width: 230px;
+        }
+        .med-doc-tot-line {
           display: flex;
           justify-content: space-between;
-          padding: 7px 12px;
-          font-size: 13.5px;
-          border-bottom: 1px solid #f0f4f8;
+          padding: 2px 0;
+          font-size: 12px;
+          color: #4a5568;
         }
-        .lh-tot-row.grand {
-          background: #edf2f7;
+        .med-doc-tot-line.bold {
+          font-weight: 700;
+          font-size: 13.5px;
+          color: #1a202c;
           border-top: 1px solid #cbd5e0;
-          border-bottom: 1px solid #cbd5e0;
+          margin-top: 3px;
+          padding-top: 4px;
+        }
+        .med-doc-tot-line.due {
+          color: #c53030;
+          font-weight: 700;
+          font-size: 13px;
+        }
+
+        .med-doc-advice {
+          margin-bottom: 10px;
+          font-size: 12px;
+          line-height: 1.5;
+        }
+        .med-doc-sec-title {
           font-weight: 800;
-          font-size: 15.5px;
+          text-transform: uppercase;
+          font-size: 11px;
+          letter-spacing: 0.04em;
+          color: #1a202c;
+          margin-bottom: 2px;
+        }
+        .med-doc-sec-body {
+          white-space: pre-wrap;
+          color: #2d3748;
+        }
+
+        .med-doc-followup {
+          margin-bottom: 16px;
+          font-size: 12.5px;
           color: #1a202c;
         }
-        .lh-tot-row.paid { color: #22543d; font-weight: 600; }
-        .lh-tot-row.bal { color: #c53030; font-weight: 700; }
 
-        .lh-signature-area {
+        .med-doc-footer {
           display: flex;
           justify-content: space-between;
           align-items: flex-end;
-          margin-top: 36px;
-          padding-top: 10px;
+          margin-top: 24px;
+          padding-top: 8px;
         }
-        .lh-sign-box {
+        .med-doc-doc-info {
+          font-size: 12.5px;
+        }
+        .med-doc-doc-name {
+          font-weight: 700;
+          font-size: 14px;
+          color: #1a202c;
+        }
+        .med-doc-doc-phone {
+          font-size: 12px;
+          color: #4a5568;
+          margin-top: 2px;
+        }
+        .med-doc-sign-box {
           text-align: center;
           width: 200px;
         }
-        .lh-sign-line {
+        .med-doc-sign-line {
           border-top: 1px solid #718096;
-          margin-bottom: 6px;
+          margin-bottom: 5px;
         }
-        .lh-sign-text {
-          font-size: 12px;
-          color: #4a5568;
+        .med-doc-sign-lbl {
+          font-size: 11px;
           font-weight: 600;
+          color: #4a5568;
         }
-      `), /* @__PURE__ */ React3.createElement("div", { className: "letterhead-sheet" }, /* @__PURE__ */ React3.createElement("div", { className: "lh-header" }, /* @__PURE__ */ React3.createElement("div", { className: "lh-title-block" }, /* @__PURE__ */ React3.createElement("h1", null, "Payment Receipt"), /* @__PURE__ */ React3.createElement("div", { className: "lh-subtitle" }, "Official Clinic Billing Receipt")), /* @__PURE__ */ React3.createElement("div", { className: "lh-meta-block" }, /* @__PURE__ */ React3.createElement("div", { className: "lh-docno" }, bill2.bill_no), /* @__PURE__ */ React3.createElement("div", { className: "lh-date" }, fmtDateTime(bill2.time)), /* @__PURE__ */ React3.createElement("div", null, /* @__PURE__ */ React3.createElement("span", { className: `lh-status-badge lh-status-${(bill2.payment_status || "").toLowerCase()}` }, paymentStatus)), bill2.status === "CANCELLED" && /* @__PURE__ */ React3.createElement("div", { style: { color: "#c53030", fontWeight: 800, marginTop: 4 } }, "CANCELLED"))), /* @__PURE__ */ React3.createElement("div", { className: "lh-patient-box" }, /* @__PURE__ */ React3.createElement("div", { className: "lh-pat-col" }, /* @__PURE__ */ React3.createElement("span", { className: "lh-label" }, "Billed To"), /* @__PURE__ */ React3.createElement("span", { className: "lh-val-name" }, bill2.patient_name), /* @__PURE__ */ React3.createElement("div", { className: "lh-info-row" }, /* @__PURE__ */ React3.createElement("span", null, "UHID: ", /* @__PURE__ */ React3.createElement("b", null, bill2.uhid)), (bill2.patient_age != null || bill2.patient_gender) && /* @__PURE__ */ React3.createElement("span", null, "Age / Sex: ", /* @__PURE__ */ React3.createElement("b", null, [bill2.patient_age != null ? `${bill2.patient_age} Y` : "", bill2.patient_gender].filter(Boolean).join(" / "))), bill2.patient_mobile && /* @__PURE__ */ React3.createElement("span", null, "Mobile: ", /* @__PURE__ */ React3.createElement("b", null, bill2.patient_mobile)))), /* @__PURE__ */ React3.createElement("div", { className: "lh-pat-col" }, /* @__PURE__ */ React3.createElement("span", { className: "lh-label" }, "Consulting Clinician"), /* @__PURE__ */ React3.createElement("span", { style: { fontWeight: 700, fontSize: "15px", color: "#1a202c" } }, docName), /* @__PURE__ */ React3.createElement("div", { style: { fontSize: "12.5px", color: "#2d3748", marginTop: "2px" } }, "Phone: ", /* @__PURE__ */ React3.createElement("b", null, docPhone)))), /* @__PURE__ */ React3.createElement("table", { className: "lh-table" }, /* @__PURE__ */ React3.createElement("thead", null, /* @__PURE__ */ React3.createElement("tr", null, /* @__PURE__ */ React3.createElement("th", { style: { width: "8%" }, className: "th-c" }, "Sr."), /* @__PURE__ */ React3.createElement("th", { style: { width: "46%" } }, "Item Description"), /* @__PURE__ */ React3.createElement("th", { style: { width: "16%" } }, "Type"), /* @__PURE__ */ React3.createElement("th", { style: { width: "10%" }, className: "th-r" }, "Qty"), /* @__PURE__ */ React3.createElement("th", { style: { width: "10%" }, className: "th-r" }, "Rate"), /* @__PURE__ */ React3.createElement("th", { style: { width: "10%" }, className: "th-r" }, "Amount"))), /* @__PURE__ */ React3.createElement("tbody", null, items.map((it, idx) => /* @__PURE__ */ React3.createElement("tr", { key: it.id || idx }, /* @__PURE__ */ React3.createElement("td", { className: "td-c" }, idx + 1), /* @__PURE__ */ React3.createElement("td", null, /* @__PURE__ */ React3.createElement("b", { style: { color: "#1a202c" } }, it.name)), /* @__PURE__ */ React3.createElement("td", { style: { textTransform: "capitalize", color: "#4a5568" } }, it.item_type), /* @__PURE__ */ React3.createElement("td", { className: "td-r" }, fmtQty(it.qty)), /* @__PURE__ */ React3.createElement("td", { className: "td-r" }, money(it.price, s.currency)), /* @__PURE__ */ React3.createElement("td", { className: "td-r", style: { fontWeight: 600 } }, money(it.amount, s.currency)))))), /* @__PURE__ */ React3.createElement("div", { className: "lh-summary-row" }, /* @__PURE__ */ React3.createElement("div", { className: "lh-payment-info" }, /* @__PURE__ */ React3.createElement("div", { style: { marginBottom: 6 } }, /* @__PURE__ */ React3.createElement("span", { className: "lh-label" }, "Payment Method:"), /* @__PURE__ */ React3.createElement("span", { className: "lh-pay-method-pill" }, payMethodDisplay)), paidRows.length > 0 && /* @__PURE__ */ React3.createElement("div", { style: { marginTop: 8, fontSize: "12px", color: "#4a5568" } }, /* @__PURE__ */ React3.createElement("div", { style: { fontWeight: 600, marginBottom: 2 } }, "Payment Transactions:"), paidRows.map((p, i) => /* @__PURE__ */ React3.createElement("div", { key: p.id || i, style: { marginLeft: 6 } }, "\u2022 ", p.method, ": ", /* @__PURE__ */ React3.createElement("b", null, money(p.amount, s.currency)), " on ", fmtDate(p.at)))), bill2.cancel_reason && /* @__PURE__ */ React3.createElement("div", { style: { marginTop: 8, color: "#c53030", fontWeight: 600, fontSize: "12px" } }, "Cancellation Reason: ", bill2.cancel_reason), /* @__PURE__ */ React3.createElement("div", { style: { marginTop: 10, fontSize: "12px", color: "#718096", fontStyle: "italic" } }, "Thank you for choosing our clinic. Get well soon!")), /* @__PURE__ */ React3.createElement("div", { className: "lh-totals-box" }, /* @__PURE__ */ React3.createElement("div", { className: "lh-tot-row" }, /* @__PURE__ */ React3.createElement("span", null, "Subtotal"), /* @__PURE__ */ React3.createElement("b", null, money(bill2.subtotal, s.currency))), Number(bill2.discount) > 0 && /* @__PURE__ */ React3.createElement("div", { className: "lh-tot-row", style: { color: "#2b6cb0" } }, /* @__PURE__ */ React3.createElement("span", null, "Discount"), /* @__PURE__ */ React3.createElement("b", null, "\u2212 ", money(bill2.discount, s.currency))), /* @__PURE__ */ React3.createElement("div", { className: "lh-tot-row grand" }, /* @__PURE__ */ React3.createElement("span", null, "Total Amount"), /* @__PURE__ */ React3.createElement("span", null, money(bill2.total, s.currency))), /* @__PURE__ */ React3.createElement("div", { className: "lh-tot-row paid" }, /* @__PURE__ */ React3.createElement("span", null, "Paid Amount"), /* @__PURE__ */ React3.createElement("b", null, money(bill2.paid || 0, s.currency))), /* @__PURE__ */ React3.createElement("div", { className: "lh-tot-row bal" }, /* @__PURE__ */ React3.createElement("span", null, "Balance Due"), /* @__PURE__ */ React3.createElement("b", null, money(Math.max(0, bill2.total - (bill2.paid || 0)), s.currency))))), /* @__PURE__ */ React3.createElement("div", { className: "lh-signature-area" }, /* @__PURE__ */ React3.createElement("div", { style: { fontSize: "12px", color: "#718096" } }, "Receipt generated on ", fmtDateTime(bill2.time)), /* @__PURE__ */ React3.createElement("div", { className: "lh-sign-box" }, /* @__PURE__ */ React3.createElement("div", { className: "lh-sign-line" }), /* @__PURE__ */ React3.createElement("div", { className: "lh-sign-text" }, "Authorized Signatory")))))
+      `), /* @__PURE__ */ React3.createElement("div", { className: "letterhead-sheet" }, /* @__PURE__ */ React3.createElement("div", { className: "med-doc-patient" }, /* @__PURE__ */ React3.createElement("div", { className: "med-doc-grid" }, /* @__PURE__ */ React3.createElement("div", { className: "med-doc-field" }, /* @__PURE__ */ React3.createElement("span", { className: "med-doc-lbl" }, "Patient:"), /* @__PURE__ */ React3.createElement("span", { className: "med-doc-val" }, bill2.patient_name || "\u2014")), /* @__PURE__ */ React3.createElement("div", { className: "med-doc-field" }, /* @__PURE__ */ React3.createElement("span", { className: "med-doc-lbl" }, "UHID:"), /* @__PURE__ */ React3.createElement("span", { className: "med-doc-val" }, bill2.uhid || "\u2014")), /* @__PURE__ */ React3.createElement("div", { className: "med-doc-field" }, /* @__PURE__ */ React3.createElement("span", { className: "med-doc-lbl" }, "Bill No:"), /* @__PURE__ */ React3.createElement("span", { className: "med-doc-val", style: { fontFamily: "Consolas, monospace" } }, bill2.bill_no)), /* @__PURE__ */ React3.createElement("div", { className: "med-doc-field" }, /* @__PURE__ */ React3.createElement("span", { className: "med-doc-lbl" }, "Age / Sex:"), /* @__PURE__ */ React3.createElement("span", { className: "med-doc-val" }, ageSex)), /* @__PURE__ */ React3.createElement("div", { className: "med-doc-field" }, /* @__PURE__ */ React3.createElement("span", { className: "med-doc-lbl" }, "Mobile:"), /* @__PURE__ */ React3.createElement("span", { className: "med-doc-val" }, bill2.patient_mobile || "\u2014")), /* @__PURE__ */ React3.createElement("div", { className: "med-doc-field" }, /* @__PURE__ */ React3.createElement("span", { className: "med-doc-lbl" }, "Date & Time:"), /* @__PURE__ */ React3.createElement("span", { className: "med-doc-val" }, fmtDateTime12h(bill2.time))))), bill2.diagnosis && /* @__PURE__ */ React3.createElement("div", { className: "med-doc-diag" }, /* @__PURE__ */ React3.createElement("span", { className: "med-doc-diag-lbl" }, "DIAGNOSIS:"), /* @__PURE__ */ React3.createElement("span", { className: "med-doc-diag-val" }, bill2.diagnosis)), /* @__PURE__ */ React3.createElement("table", { className: "med-doc-table" }, /* @__PURE__ */ React3.createElement("thead", null, /* @__PURE__ */ React3.createElement("tr", null, /* @__PURE__ */ React3.createElement("th", { style: { width: "5%" }, className: "th-c" }, "#"), /* @__PURE__ */ React3.createElement("th", { style: { width: "34%" } }, "Medicine"), /* @__PURE__ */ React3.createElement("th", { style: { width: "14%" }, className: "th-c" }, "Dosage"), /* @__PURE__ */ React3.createElement("th", { style: { width: "25%" } }, "Timing - Frequency - Duration"), /* @__PURE__ */ React3.createElement("th", { style: { width: "8%" }, className: "th-c" }, "Qty"), /* @__PURE__ */ React3.createElement("th", { style: { width: "7%" }, className: "th-r" }, "Rate"), /* @__PURE__ */ React3.createElement("th", { style: { width: "7%" }, className: "th-r" }, "Amount"))), /* @__PURE__ */ React3.createElement("tbody", null, items.map((it, idx) => {
+      const timingFreqDur = [it.timing, it.frequency, it.duration].filter(Boolean).join(" - ");
+      return /* @__PURE__ */ React3.createElement("tr", { key: it.id || idx }, /* @__PURE__ */ React3.createElement("td", { className: "td-c" }, idx + 1), /* @__PURE__ */ React3.createElement("td", null, /* @__PURE__ */ React3.createElement("div", { className: "med-name" }, it.name), it.composition && /* @__PURE__ */ React3.createElement("div", { className: "med-comp" }, "Composition: ", it.composition), it.notes && /* @__PURE__ */ React3.createElement("div", { className: "med-note" }, "Note: ", it.notes)), /* @__PURE__ */ React3.createElement("td", { className: "td-c" }, it.dosage || "\u2014"), /* @__PURE__ */ React3.createElement("td", null, timingFreqDur || "\u2014"), /* @__PURE__ */ React3.createElement("td", { className: "td-c" }, fmtQty(it.qty), it.unit && it.unit !== "service" ? " " + it.unit : ""), /* @__PURE__ */ React3.createElement("td", { className: "td-r" }, money(it.price, s.currency)), /* @__PURE__ */ React3.createElement("td", { className: "td-r", style: { fontWeight: 600 } }, money(it.amount != null ? it.amount : it.qty * (it.price || 0), s.currency)));
+    }))), /* @__PURE__ */ React3.createElement("div", { className: "med-doc-pay-row" }, /* @__PURE__ */ React3.createElement("div", { className: "med-doc-pay-left" }, /* @__PURE__ */ React3.createElement("div", null, /* @__PURE__ */ React3.createElement("span", { className: "med-doc-pay-lbl" }, "Payment Method:"), " ", /* @__PURE__ */ React3.createElement("b", null, payMethodDisplay), /* @__PURE__ */ React3.createElement("span", { style: { marginLeft: "14px" } }, /* @__PURE__ */ React3.createElement("span", { className: "med-doc-pay-lbl" }, "Status:"), " ", /* @__PURE__ */ React3.createElement("b", { style: { color: bill2.payment_status === "PAID" ? "#22543d" : "#7b341e" } }, paymentStatus))), paidRows.length > 0 && /* @__PURE__ */ React3.createElement("div", { className: "med-doc-pay-txns" }, paidRows.map((p, i) => /* @__PURE__ */ React3.createElement("div", { key: p.id || i }, "\u2022 ", p.method, ": ", /* @__PURE__ */ React3.createElement("b", null, money(p.amount, s.currency)), " on ", fmtDate(p.at)))), bill2.cancel_reason && /* @__PURE__ */ React3.createElement("div", { style: { marginTop: "6px", color: "#c53030", fontWeight: 600, fontSize: "11.5px" } }, "Cancellation Reason: ", bill2.cancel_reason)), /* @__PURE__ */ React3.createElement("div", { className: "med-doc-pay-right" }, /* @__PURE__ */ React3.createElement("div", { className: "med-doc-tot-line" }, /* @__PURE__ */ React3.createElement("span", null, "Subtotal"), /* @__PURE__ */ React3.createElement("span", null, money(bill2.subtotal, s.currency))), Number(bill2.discount) > 0 && /* @__PURE__ */ React3.createElement("div", { className: "med-doc-tot-line", style: { color: "#2b6cb0" } }, /* @__PURE__ */ React3.createElement("span", null, "Discount"), /* @__PURE__ */ React3.createElement("span", null, "\u2212 ", money(bill2.discount, s.currency))), /* @__PURE__ */ React3.createElement("div", { className: "med-doc-tot-line bold" }, /* @__PURE__ */ React3.createElement("span", null, "Total Amount"), /* @__PURE__ */ React3.createElement("span", null, money(bill2.total, s.currency))), /* @__PURE__ */ React3.createElement("div", { className: "med-doc-tot-line" }, /* @__PURE__ */ React3.createElement("span", null, "Paid Amount"), /* @__PURE__ */ React3.createElement("span", null, money(bill2.paid || 0, s.currency))), Math.max(0, bill2.total - (bill2.paid || 0)) > 5e-3 && /* @__PURE__ */ React3.createElement("div", { className: "med-doc-tot-line due" }, /* @__PURE__ */ React3.createElement("span", null, "Balance Due"), /* @__PURE__ */ React3.createElement("span", null, money(Math.max(0, bill2.total - (bill2.paid || 0)), s.currency))))), bill2.advice && /* @__PURE__ */ React3.createElement("div", { className: "med-doc-advice" }, /* @__PURE__ */ React3.createElement("div", { className: "med-doc-sec-title" }, "Advice / Instructions:"), /* @__PURE__ */ React3.createElement("div", { className: "med-doc-sec-body" }, bill2.advice)), bill2.next_visit && /* @__PURE__ */ React3.createElement("div", { className: "med-doc-followup" }, /* @__PURE__ */ React3.createElement("span", { className: "med-doc-sec-title" }, "Next Visit / Follow-up:"), " ", /* @__PURE__ */ React3.createElement("b", null, toDDMMYYYY(bill2.next_visit) || bill2.next_visit)), /* @__PURE__ */ React3.createElement("div", { className: "med-doc-footer" }, /* @__PURE__ */ React3.createElement("div", { className: "med-doc-doc-info" }, /* @__PURE__ */ React3.createElement("div", { style: { fontSize: "10.5px", textTransform: "uppercase", color: "#718096", fontWeight: 700, letterSpacing: "0.04em" } }, "Consulting Doctor"), /* @__PURE__ */ React3.createElement("div", { className: "med-doc-doc-name" }, docName), /* @__PURE__ */ React3.createElement("div", { className: "med-doc-doc-phone" }, "Phone: ", /* @__PURE__ */ React3.createElement("b", null, docPhone))), /* @__PURE__ */ React3.createElement("div", { className: "med-doc-sign-box" }, /* @__PURE__ */ React3.createElement("div", { className: "med-doc-sign-line" }), /* @__PURE__ */ React3.createElement("div", { className: "med-doc-sign-lbl" }, "Authorized Signatory")))))
   );
 }
 function downloadReceipt(bill2, items = [], payments = [], s = {}) {
@@ -1958,24 +2013,35 @@ function downloadReceipt(bill2, items = [], payments = [], s = {}) {
   const docPhone = bill2.doctor_phone || s.doctor_phone || "9913974000";
   const sym = s.currency || "\u20B9";
   const fmtM = (v) => `${sym} ${Number(v || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-  const itemsRows = items.map((it, idx) => `
-    <tr>
-      <td style="text-align: center; padding: 9px 10px; border-bottom: 1px solid #e2e8f0;">${idx + 1}</td>
-      <td style="padding: 9px 10px; border-bottom: 1px solid #e2e8f0;"><b style="color: #1a202c;">${it.name || ""}</b></td>
-      <td style="padding: 9px 10px; border-bottom: 1px solid #e2e8f0; text-transform: capitalize; color: #4a5568;">${it.item_type || ""}</td>
-      <td style="text-align: right; padding: 9px 10px; border-bottom: 1px solid #e2e8f0;">${it.qty || 1}</td>
-      <td style="text-align: right; padding: 9px 10px; border-bottom: 1px solid #e2e8f0;">${fmtM(it.price)}</td>
-      <td style="text-align: right; padding: 9px 10px; border-bottom: 1px solid #e2e8f0; font-weight: 600;">${fmtM(it.amount)}</td>
-    </tr>
-  `).join("");
+  const ageStr = bill2.patient_age != null ? String(bill2.patient_age).includes("Y") ? bill2.patient_age : `${bill2.patient_age} Y` : "";
+  const ageSex = [ageStr, bill2.patient_gender].filter(Boolean).join(" / ") || "\u2014";
+  const itemsRows = items.map((it, idx) => {
+    const timingFreqDur = [it.timing, it.frequency, it.duration].filter(Boolean).join(" - ");
+    return `
+      <tr>
+        <td style="text-align: center; padding: 6px 8px; border-bottom: 1px solid #e2e8f0;">${idx + 1}</td>
+        <td style="padding: 6px 8px; border-bottom: 1px solid #e2e8f0;">
+          <div style="font-weight: 700; color: #1a202c; font-size: 13px;">${it.name || ""}</div>
+          ${it.composition ? `<div style="font-size: 11px; color: #4a5568; margin-top: 2px;">Composition: ${it.composition}</div>` : ""}
+          ${it.notes ? `<div style="font-size: 11px; color: #4a5568; font-style: italic; margin-top: 1px;">Note: ${it.notes}</div>` : ""}
+        </td>
+        <td style="text-align: center; padding: 6px 8px; border-bottom: 1px solid #e2e8f0;">${it.dosage || "\u2014"}</td>
+        <td style="padding: 6px 8px; border-bottom: 1px solid #e2e8f0;">${timingFreqDur || "\u2014"}</td>
+        <td style="text-align: center; padding: 6px 8px; border-bottom: 1px solid #e2e8f0;">${fmtQty(it.qty)}${it.unit && it.unit !== "service" ? " " + it.unit : ""}</td>
+        <td style="text-align: right; padding: 6px 8px; border-bottom: 1px solid #e2e8f0;">${fmtM(it.price)}</td>
+        <td style="text-align: right; padding: 6px 8px; border-bottom: 1px solid #e2e8f0; font-weight: 600;">${fmtM(it.amount != null ? it.amount : it.qty * (it.price || 0))}</td>
+      </tr>
+    `;
+  }).join("");
   const paymentsRows = paidRows.map((p) => `
-    <div style="margin-left: 6px;">\u2022 ${p.method}: <b>${fmtM(p.amount)}</b> on ${fmtDate(p.at)}</div>
+    <div>\u2022 ${p.method}: <b>${fmtM(p.amount)}</b> on ${fmtDate(p.at)}</div>
   `).join("");
+  const nextVisitDisplay = bill2.next_visit ? toDDMMYYYY(bill2.next_visit) || bill2.next_visit : "";
   const html = `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Payment Receipt - ${bill2.bill_no}</title>
+  <title>Medical Bill - ${bill2.bill_no}</title>
   <style>
     @page { size: A4 portrait; margin: 0; }
     body {
@@ -1987,7 +2053,7 @@ function downloadReceipt(bill2, items = [], payments = [], s = {}) {
     }
     .no-print {
       text-align: center;
-      padding: 16px;
+      padding: 14px;
       background: #ffffff;
       border-bottom: 1px solid #e2e8f0;
     }
@@ -1995,8 +2061,8 @@ function downloadReceipt(bill2, items = [], payments = [], s = {}) {
       background: #0b1f35;
       color: #ffffff;
       border: none;
-      padding: 10px 22px;
-      font-size: 14px;
+      padding: 9px 20px;
+      font-size: 13.5px;
       font-weight: 600;
       border-radius: 6px;
       cursor: pointer;
@@ -2010,135 +2076,189 @@ function downloadReceipt(bill2, items = [], payments = [], s = {}) {
       width: 210mm;
       min-height: 297mm;
       box-sizing: border-box;
-      padding-top: 48mm;
-      padding-bottom: 35mm;
+      padding-top: 52mm;
+      padding-bottom: 38mm;
       padding-left: 20mm;
       padding-right: 20mm;
       background: #ffffff;
       box-shadow: 0 4px 12px rgba(0,0,0,0.08);
-      font-size: 13.5px;
+      font-size: 13px;
       line-height: 1.45;
+      page-break-after: avoid !important;
+      page-break-inside: avoid !important;
+      break-inside: avoid !important;
     }
-    .lh-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: flex-start;
-      border-bottom: 2px solid #2d3748;
-      padding-bottom: 12px;
-      margin-bottom: 16px;
+    .med-doc-patient {
+      border-top: 1.5px solid #2d3748;
+      border-bottom: 1.5px solid #2d3748;
+      padding: 8px 0;
+      margin-bottom: 10px;
+      font-size: 12.5px;
+      line-height: 1.5;
     }
-    .lh-title-block h1 {
-      margin: 0;
-      font-size: 20px;
-      font-weight: 800;
-      letter-spacing: 0.05em;
-      color: #1a202c;
-      text-transform: uppercase;
-    }
-    .lh-meta-block {
-      text-align: right;
-    }
-    .lh-docno {
-      font-family: Consolas, monospace;
-      font-size: 16px;
-      font-weight: 700;
-      color: #2b6cb0;
-    }
-    .lh-patient-box {
+    .med-doc-grid {
       display: grid;
-      grid-template-columns: 1.4fr 1fr;
-      gap: 16px;
-      background: #f7fafc;
-      border: 1px solid #e2e8f0;
-      border-radius: 6px;
-      padding: 12px 16px;
-      margin-bottom: 20px;
+      grid-template-columns: 1.1fr 1fr 1.1fr;
+      row-gap: 5px;
+      column-gap: 16px;
     }
-    .lh-label {
+    .med-doc-field {
+      display: flex;
+      align-items: baseline;
+      gap: 6px;
+    }
+    .med-doc-lbl {
       font-size: 10.5px;
       font-weight: 700;
-      color: #718096;
+      color: #4a5568;
       text-transform: uppercase;
-      letter-spacing: 0.05em;
+      letter-spacing: 0.04em;
+      white-space: nowrap;
     }
-    .lh-val-name {
-      font-size: 16px;
-      font-weight: 700;
+    .med-doc-val {
+      font-size: 13px;
+      font-weight: 600;
       color: #1a202c;
     }
-    .lh-table {
+    .med-doc-diag {
+      margin-bottom: 12px;
+      padding: 4px 0 6px 0;
+      border-bottom: 1px dashed #cbd5e0;
+      font-size: 12.5px;
+      line-height: 1.4;
+    }
+    .med-doc-diag-lbl {
+      font-weight: 800;
+      color: #1a202c;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      font-size: 11.5px;
+      margin-right: 6px;
+    }
+    .med-doc-diag-val {
+      font-weight: 700;
+      color: #1a202c;
+      text-transform: uppercase;
+    }
+    .med-doc-table {
       width: 100%;
       border-collapse: collapse;
-      margin-bottom: 20px;
-      font-size: 13.5px;
+      margin-bottom: 14px;
+      font-size: 12.5px;
     }
-    .lh-table th {
-      background: #2d3748;
-      color: #ffffff;
+    .med-doc-table th {
+      border-top: 1.5px solid #2d3748;
+      border-bottom: 1.5px solid #2d3748;
+      padding: 6px 8px;
       font-weight: 700;
+      font-size: 11px;
       text-transform: uppercase;
-      font-size: 11.5px;
-      padding: 9px 10px;
+      letter-spacing: 0.04em;
+      color: #1a202c;
+      background: #f8fafc;
       text-align: left;
     }
-    .lh-summary-row {
+    .med-doc-table td {
+      border-bottom: 1px solid #e2e8f0;
+      padding: 6px 8px;
+      color: #2d3748;
+      vertical-align: top;
+    }
+    .med-doc-pay-row {
       display: flex;
       justify-content: space-between;
       align-items: flex-start;
-      gap: 24px;
-      margin-bottom: 24px;
+      gap: 20px;
+      margin-bottom: 12px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid #e2e8f0;
+      font-size: 12.5px;
     }
-    .lh-payment-info {
-      flex: 1;
-      background: #f7fafc;
-      border: 1px solid #e2e8f0;
-      border-radius: 6px;
-      padding: 12px 14px;
-      font-size: 13px;
-    }
-    .lh-pay-method-pill {
-      display: inline-block;
+    .med-doc-pay-left { flex: 1; }
+    .med-doc-pay-lbl {
+      font-size: 11px;
       font-weight: 700;
-      background: #ebf8ff;
-      color: #2b6cb0;
-      padding: 2px 8px;
-      border-radius: 4px;
-      font-size: 13px;
-      margin-left: 6px;
+      color: #4a5568;
+      text-transform: uppercase;
     }
-    .lh-totals-box {
-      width: 260px;
-      border: 1px solid #e2e8f0;
-      border-radius: 6px;
-      background: #ffffff;
+    .med-doc-pay-txns {
+      margin-top: 6px;
+      font-size: 11.5px;
+      color: #4a5568;
     }
-    .lh-tot-row {
+    .med-doc-pay-right { width: 230px; }
+    .med-doc-tot-line {
       display: flex;
       justify-content: space-between;
-      padding: 7px 12px;
+      padding: 2px 0;
+      font-size: 12px;
+      color: #4a5568;
+    }
+    .med-doc-tot-line.bold {
+      font-weight: 700;
       font-size: 13.5px;
-      border-bottom: 1px solid #f0f4f8;
-    }
-    .lh-tot-row.grand {
-      background: #edf2f7;
+      color: #1a202c;
       border-top: 1px solid #cbd5e0;
-      border-bottom: 1px solid #cbd5e0;
-      font-weight: 800;
-      font-size: 15.5px;
+      margin-top: 3px;
+      padding-top: 4px;
     }
-    .lh-signature-area {
+    .med-doc-tot-line.due {
+      color: #c53030;
+      font-weight: 700;
+      font-size: 13px;
+    }
+    .med-doc-advice {
+      margin-bottom: 10px;
+      font-size: 12px;
+      line-height: 1.5;
+    }
+    .med-doc-sec-title {
+      font-weight: 800;
+      text-transform: uppercase;
+      font-size: 11px;
+      letter-spacing: 0.04em;
+      color: #1a202c;
+      margin-bottom: 2px;
+    }
+    .med-doc-sec-body {
+      white-space: pre-wrap;
+      color: #2d3748;
+    }
+    .med-doc-followup {
+      margin-bottom: 16px;
+      font-size: 12.5px;
+      color: #1a202c;
+    }
+    .med-doc-footer {
       display: flex;
       justify-content: space-between;
       align-items: flex-end;
-      margin-top: 36px;
+      margin-top: 24px;
+      padding-top: 8px;
     }
-    .lh-sign-box {
+    .med-doc-doc-info { font-size: 12.5px; }
+    .med-doc-doc-name {
+      font-weight: 700;
+      font-size: 14px;
+      color: #1a202c;
+    }
+    .med-doc-doc-phone {
+      font-size: 12px;
+      color: #4a5568;
+      margin-top: 2px;
+    }
+    .med-doc-sign-box {
       text-align: center;
       width: 200px;
     }
-    .lh-sign-line {
+    .med-doc-sign-line {
       border-top: 1px solid #718096;
-      margin-bottom: 6px;
+      margin-bottom: 5px;
+    }
+    .med-doc-sign-lbl {
+      font-size: 11px;
+      font-weight: 600;
+      color: #4a5568;
     }
     @media print {
       body { background: #fff; }
@@ -2154,44 +2274,55 @@ function downloadReceipt(bill2, items = [], payments = [], s = {}) {
   </div>
   <div class="sheet-wrap">
     <div class="letterhead-sheet">
-      <div class="lh-header">
-        <div class="lh-title-block">
-          <h1>Payment Receipt</h1>
-          <div style="font-size: 12px; color: #718096; margin-top: 2px;">Official Clinic Billing Receipt</div>
-        </div>
-        <div class="lh-meta-block">
-          <div class="lh-docno">${bill2.bill_no}</div>
-          <div style="color: #4a5568; margin-top: 3px;">${fmtDateTime(bill2.time)}</div>
-          <div style="margin-top: 4px; font-weight: 700; color: #22543d;">${paymentStatus}</div>
-        </div>
-      </div>
-
-      <div class="lh-patient-box">
-        <div>
-          <div class="lh-label">Billed To</div>
-          <div class="lh-val-name">${bill2.patient_name || "Patient"}</div>
-          <div style="display: flex; gap: 14px; margin-top: 4px; font-size: 13px; color: #2d3748;">
-            <span>UHID: <b>${bill2.uhid || "\u2014"}</b></span>
-            ${bill2.patient_age != null || bill2.patient_gender ? `<span>Age / Sex: <b>${[bill2.patient_age != null ? `${bill2.patient_age} Y` : "", bill2.patient_gender].filter(Boolean).join(" / ")}</b></span>` : ""}
-            ${bill2.patient_mobile ? `<span>Mobile: <b>${bill2.patient_mobile}</b></span>` : ""}
+      <!-- 1. Patient Information Section -->
+      <div class="med-doc-patient">
+        <div class="med-doc-grid">
+          <div class="med-doc-field">
+            <span class="med-doc-lbl">Patient:</span>
+            <span class="med-doc-val">${bill2.patient_name || "\u2014"}</span>
+          </div>
+          <div class="med-doc-field">
+            <span class="med-doc-lbl">UHID:</span>
+            <span class="med-doc-val">${bill2.uhid || "\u2014"}</span>
+          </div>
+          <div class="med-doc-field">
+            <span class="med-doc-lbl">Bill No:</span>
+            <span class="med-doc-val" style="font-family: Consolas, monospace;">${bill2.bill_no}</span>
+          </div>
+          <div class="med-doc-field">
+            <span class="med-doc-lbl">Age / Sex:</span>
+            <span class="med-doc-val">${ageSex}</span>
+          </div>
+          <div class="med-doc-field">
+            <span class="med-doc-lbl">Mobile:</span>
+            <span class="med-doc-val">${bill2.patient_mobile || "\u2014"}</span>
+          </div>
+          <div class="med-doc-field">
+            <span class="med-doc-lbl">Date & Time:</span>
+            <span class="med-doc-val">${fmtDateTime12h(bill2.time)}</span>
           </div>
         </div>
-        <div>
-          <div class="lh-label">Consulting Clinician</div>
-          <div style="font-weight: 700; font-size: 15px; color: #1a202c;">${docName}</div>
-          <div style="font-size: 12.5px; color: #2d3748; margin-top: 2px;">Phone: <b>${docPhone}</b></div>
-        </div>
       </div>
 
-      <table class="lh-table">
+      <!-- 2. Diagnosis Section -->
+      ${bill2.diagnosis ? `
+        <div class="med-doc-diag">
+          <span class="med-doc-diag-lbl">DIAGNOSIS:</span>
+          <span class="med-doc-diag-val">${bill2.diagnosis}</span>
+        </div>
+      ` : ""}
+
+      <!-- 3. Medicine / Prescription Table -->
+      <table class="med-doc-table">
         <thead>
           <tr>
-            <th style="width: 8%; text-align: center;">Sr.</th>
-            <th style="width: 46%;">Item Description</th>
-            <th style="width: 16%;">Type</th>
-            <th style="width: 10%; text-align: right;">Qty</th>
-            <th style="width: 10%; text-align: right;">Rate</th>
-            <th style="width: 10%; text-align: right;">Amount</th>
+            <th style="width: 5%; text-align: center;">#</th>
+            <th style="width: 34%;">Medicine</th>
+            <th style="width: 14%; text-align: center;">Dosage</th>
+            <th style="width: 25%;">Timing - Frequency - Duration</th>
+            <th style="width: 8%; text-align: center;">Qty</th>
+            <th style="width: 7%; text-align: right;">Rate</th>
+            <th style="width: 7%; text-align: right;">Amount</th>
           </tr>
         </thead>
         <tbody>
@@ -2199,54 +2330,80 @@ function downloadReceipt(bill2, items = [], payments = [], s = {}) {
         </tbody>
       </table>
 
-      <div class="lh-summary-row">
-        <div class="lh-payment-info">
+      <!-- 4. Payment Information (Clean & Minimal) -->
+      <div class="med-doc-pay-row">
+        <div class="med-doc-pay-left">
           <div>
-            <span class="lh-label">Payment Method:</span>
-            <span class="lh-pay-method-pill">${payMethodDisplay}</span>
+            <span class="med-doc-pay-lbl">Payment Method:</span> <b>${payMethodDisplay}</b>
+            <span style="margin-left: 14px;">
+              <span class="med-doc-pay-lbl">Status:</span>
+              <b style="color: ${bill2.payment_status === "PAID" ? "#22543d" : "#7b341e"};">${paymentStatus}</b>
+            </span>
           </div>
           ${paidRows.length > 0 ? `
-            <div style="margin-top: 8px; font-size: 12px; color: #4a5568;">
-              <div style="font-weight: 600; margin-bottom: 2px;">Payment Transactions:</div>
+            <div class="med-doc-pay-txns">
               ${paymentsRows}
             </div>
           ` : ""}
-          <div style="margin-top: 10px; font-size: 12px; color: #718096; font-style: italic;">
-            Thank you for choosing our clinic. Get well soon!
-          </div>
-        </div>
-
-        <div class="lh-totals-box">
-          <div class="lh-tot-row">
-            <span>Subtotal</span>
-            <b>${fmtM(bill2.subtotal)}</b>
-          </div>
-          ${Number(bill2.discount) > 0 ? `
-            <div class="lh-tot-row" style="color: #2b6cb0;">
-              <span>Discount</span>
-              <b>\u2212 ${fmtM(bill2.discount)}</b>
+          ${bill2.cancel_reason ? `
+            <div style="margin-top: 6px; color: #c53030; font-weight: 600; font-size: 11.5px;">
+              Cancellation Reason: ${bill2.cancel_reason}
             </div>
           ` : ""}
-          <div class="lh-tot-row grand">
+        </div>
+        <div class="med-doc-pay-right">
+          <div class="med-doc-tot-line">
+            <span>Subtotal</span>
+            <span>${fmtM(bill2.subtotal)}</span>
+          </div>
+          ${Number(bill2.discount) > 0 ? `
+            <div class="med-doc-tot-line" style="color: #2b6cb0;">
+              <span>Discount</span>
+              <span>\u2212 ${fmtM(bill2.discount)}</span>
+            </div>
+          ` : ""}
+          <div class="med-doc-tot-line bold">
             <span>Total Amount</span>
             <span>${fmtM(bill2.total)}</span>
           </div>
-          <div class="lh-tot-row" style="color: #22543d; font-weight: 600;">
+          <div class="med-doc-tot-line">
             <span>Paid Amount</span>
-            <b>${fmtM(bill2.paid || 0)}</b>
+            <span>${fmtM(bill2.paid || 0)}</span>
           </div>
-          <div class="lh-tot-row" style="color: #c53030; font-weight: 700;">
-            <span>Balance Due</span>
-            <b>${fmtM(Math.max(0, bill2.total - (bill2.paid || 0)))}</b>
-          </div>
+          ${Math.max(0, bill2.total - (bill2.paid || 0)) > 5e-3 ? `
+            <div class="med-doc-tot-line due">
+              <span>Balance Due</span>
+              <span>${fmtM(Math.max(0, bill2.total - (bill2.paid || 0)))}</span>
+            </div>
+          ` : ""}
         </div>
       </div>
 
-      <div class="lh-signature-area">
-        <div style="font-size: 12px; color: #718096;">Receipt generated on ${fmtDateTime(bill2.time)}</div>
-        <div class="lh-sign-box">
-          <div class="lh-sign-line"></div>
-          <div style="font-size: 12px; color: #4a5568; font-weight: 600;">Authorized Signatory</div>
+      <!-- 5. Advice / Instructions Section -->
+      ${bill2.advice ? `
+        <div class="med-doc-advice">
+          <div class="med-doc-sec-title">Advice / Instructions:</div>
+          <div class="med-doc-sec-body">${bill2.advice}</div>
+        </div>
+      ` : ""}
+
+      <!-- 6. Next Visit / Follow-up -->
+      ${bill2.next_visit ? `
+        <div class="med-doc-followup">
+          <span class="med-doc-sec-title">Next Visit / Follow-up:</span> <b>${nextVisitDisplay}</b>
+        </div>
+      ` : ""}
+
+      <!-- 7. Consulting Doctor & Signature Section -->
+      <div class="med-doc-footer">
+        <div class="med-doc-doc-info">
+          <div style="font-size: 10.5px; text-transform: uppercase; color: #718096; font-weight: 700; letter-spacing: 0.04em;">Consulting Doctor</div>
+          <div class="med-doc-doc-name">${docName}</div>
+          <div class="med-doc-doc-phone">Phone: <b>${docPhone}</b></div>
+        </div>
+        <div class="med-doc-sign-box">
+          <div class="med-doc-sign-line"></div>
+          <div class="med-doc-sign-lbl">Authorized Signatory</div>
         </div>
       </div>
     </div>
@@ -2257,7 +2414,7 @@ function downloadReceipt(bill2, items = [], payments = [], s = {}) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = `receipt-${bill2.bill_no || "bill"}.html`;
+  a.download = `bill-${bill2.bill_no || "receipt"}.html`;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
@@ -2854,30 +3011,57 @@ async function registerPatient(data, userId, { temp = false } = {}) {
   if (mobile.length !== 10) throw new Error("Enter a valid 10-digit mobile number");
   const gender = data.gender === "Male" ? "M" : data.gender === "Female" ? "F" : data.gender;
   const now = nowISO();
+  const createdAt = data.created_at || now;
+  const regDate = data.reg_date || dkey(new Date(createdAt));
+  const patientPayload = {
+    id: data.id || uid(),
+    name,
+    age,
+    gender,
+    marital_status: data.marital_status || "Single",
+    mobile,
+    address: data.address || "",
+    pin: String(data.pin || ""),
+    blood_group: data.blood_group || "",
+    allergies: data.allergies || "",
+    conditions: data.conditions || "",
+    current_meds: data.current_meds || "",
+    notes: data.notes || "",
+    active: 1,
+    reg_date: regDate,
+    created_at: createdAt,
+    created_by: userId || null
+  };
+  if (isBrowserRuntime()) {
+    try {
+      const serverPatient = await createPatient(patientPayload);
+      if (serverPatient && serverPatient.uhid) {
+        const prevHydrating = db_default.__hydrating;
+        db_default.__hydrating = true;
+        try {
+          await db_default.patients.put(serverPatient);
+          const year = (/* @__PURE__ */ new Date()).getFullYear();
+          const key = settings.uhid_include_year ? `UHID|${year}` : "UHID|ALL";
+          const match = serverPatient.uhid.match(/-(\d+)$/);
+          if (match) {
+            await db_default.counters.put({ key, value: Number(match[1]) });
+          }
+        } finally {
+          db_default.__hydrating = prevHydrating;
+        }
+        await audit(userId, "PATIENT_CREATE", "patient", serverPatient.id, `${serverPatient.name} \xB7 ${serverPatient.uhid}`);
+        return serverPatient;
+      }
+    } catch (err) {
+      console.warn("[registerPatient] Server allocation failed or offline, falling back to local transaction:", err.message);
+    }
+  }
   return db_default.transaction("rw", [db_default.patients, db_default.counters, db_default.activity_logs], async () => {
     const uhid = await makeUHID(settings);
     if (await db_default.patients.where("uhid").equals(uhid).count()) throw new Error("UHID collision detected \u2014 please retry");
     const p = {
-      id: uid(),
-      uhid,
-      name,
-      age,
-      gender,
-      marital_status: data.marital_status || "Single",
-      mobile,
-      alt_mobile: digits(data.alt_mobile),
-      email: data.email || "",
-      address: data.address || "",
-      pin: String(data.pin || ""),
-      blood_group: data.blood_group || "",
-      allergies: data.allergies || "",
-      conditions: data.conditions || "",
-      current_meds: data.current_meds || "",
-      notes: data.notes || "",
-      active: 1,
-      reg_date: dkey(new Date(now)),
-      created_at: now,
-      created_by: userId || null
+      ...patientPayload,
+      uhid
     };
     await db_default.patients.add(p);
     await audit(userId, "PATIENT_CREATE", "patient", p.id, `${p.name} \xB7 ${p.uhid}`);
@@ -2917,7 +3101,7 @@ async function reactivatePatient(id, userId) {
   });
 }
 async function deletePatient2(id, userId) {
-  return db_default.transaction("rw", [db_default.patients, db_default.consultations, db_default.bills, db_default.prescriptions, db_default.appointments, db_default.patient_vitals, db_default.activity_logs], async () => {
+  return db_default.transaction("rw", [db_default.patients, db_default.counters, db_default.consultations, db_default.bills, db_default.prescriptions, db_default.appointments, db_default.patient_vitals, db_default.activity_logs], async () => {
     const p = await db_default.patients.get(id);
     if (!p) throw new Error("Patient not found");
     const [cCount, bCount, prCount, aCount, vCount] = await Promise.all([
@@ -2932,6 +3116,13 @@ async function deletePatient2(id, userId) {
     }
     await db_default.patients.delete(id);
     await audit(userId, "PATIENT_DELETE", "patient", id, `${p.name} \xB7 ${p.uhid}`);
+    const remaining = await db_default.patients.count();
+    if (remaining === 0) {
+      const uhidCounters = await db_default.counters.filter((c) => String(c.key).startsWith("UHID|")).toArray();
+      for (const c of uhidCounters) {
+        await db_default.counters.put({ ...c, value: 0 });
+      }
+    }
   });
 }
 async function addVitals(patientId, v, userId) {
@@ -2968,6 +3159,8 @@ var init_patients = __esm({
     init_db();
     init_utils();
     init_core();
+    init_api();
+    init_remoteSync();
     digits = (s) => String(s || "").replace(/\D/g, "");
     VITAL_FIELDS = ["temp", "sbp", "dbp", "pulse", "spo2", "rr", "weight", "height", "sugar"];
   }
@@ -3051,9 +3244,13 @@ function parseCSV(text) {
     return { headers: [], rows: [], rawRows: [], errors: ["No data rows found in CSV file"] };
   }
   const rawHeaders = nonEmptyRows[0];
-  const headers = rawHeaders.map(
-    (h2) => h2.toLowerCase().trim().replace(/[\s\-\/]+/g, "_").replace(/[^a-z0-9_]/g, "")
-  );
+  const headers = rawHeaders.map((h2) => {
+    const s = h2.toLowerCase().trim();
+    if (s === "date & time" || s === "date &time" || s === "date&time" || s === "date and time" || s === "date_time") {
+      return "date_time";
+    }
+    return s.replace(/&/g, "and").replace(/[\s\-\/]+/g, "_").replace(/[^a-z0-9_]/g, "").replace(/_+/g, "_").replace(/^_|_$/g, "");
+  });
   const rows = [];
   for (let r = 1; r < nonEmptyRows.length; r++) {
     const rawRow = nonEmptyRows[r];
@@ -3095,15 +3292,14 @@ var init_csvTemplates = __esm({
       patients: {
         title: "Patients",
         filename: "heeva-patients-template.csv",
-        description: "Bulk register patients. Mandatory columns: name, age, gender (M/F/Other), mobile (10 digits). Dates must be in DD-MM-YYYY format.",
+        description: "Bulk register patients. Mandatory columns: name, age, gender (M/F/Other), mobile (10 digits). Historical Date & Time is optional in DD-MM-YYYY HH:mm format.",
         headers: [
           "name",
+          "date_time",
           "age",
           "gender",
           "marital_status",
           "mobile",
-          "alt_mobile",
-          "email",
           "address",
           "pin",
           "blood_group",
@@ -3115,12 +3311,11 @@ var init_csvTemplates = __esm({
         sampleRows: [
           [
             "Ramesh Sharma",
+            "05-09-2026 10:45",
             "36",
             "M",
             "Married",
             "9825012345",
-            "9825098765",
-            "ramesh@example.com",
             "Flat 402, Shivalik Residency, Pal Gam, Surat",
             "395009",
             "B+",
@@ -3131,12 +3326,11 @@ var init_csvTemplates = __esm({
           ],
           [
             "Priya Patel",
+            "06-09-2026 14:20",
             "28",
             "F",
             "Single",
             "9724012345",
-            "",
-            "priya.patel@example.com",
             "B-12, Green City, Adajan, Surat",
             "395009",
             "O+",
@@ -3148,12 +3342,11 @@ var init_csvTemplates = __esm({
         ],
         columns: [
           { key: "name", label: "Full Name", required: true },
+          { key: "date_time", label: "Date & Time (DD-MM-YYYY HH:mm)", required: false },
           { key: "age", label: "Age (Years)", required: true },
           { key: "gender", label: "Gender (M/F/Other)", required: true },
           { key: "marital_status", label: "Marital Status (Single/Married/etc)", required: false },
           { key: "mobile", label: "Mobile (10 digits)", required: true },
-          { key: "alt_mobile", label: "Alt Mobile", required: false },
-          { key: "email", label: "Email Address", required: false },
           { key: "address", label: "Address", required: false },
           { key: "pin", label: "Pincode", required: false },
           { key: "blood_group", label: "Blood Group", required: false },
@@ -3330,28 +3523,44 @@ function validateCSVRows(type, rows, context = {}) {
         } else if (!validMobile(mobile) || mobile.length !== 10) {
           errors2.push("Mobile must be a valid 10-digit number");
         }
-        let altMobile = "";
-        if (row.alt_mobile) {
-          altMobile = cleanDigits(row.alt_mobile);
-          if (!validMobile(altMobile) || altMobile.length !== 10) {
-            errors2.push("Alt mobile must be a valid 10-digit number");
-          }
-        }
-        let email = String(row.email || "").trim();
-        if (email && !isValidEmail(email)) {
-          errors2.push("Invalid email address format");
-        }
         let bloodGroup = String(row.blood_group || "").trim().toUpperCase();
         if (bloodGroup && !BLOOD_GROUPS.has(bloodGroup)) {
           errors2.push("Blood group must be one of A+, A-, B+, B-, AB+, AB-, O+, O-");
         }
+        const rawDateTime = String(row.date_time || row.date_and_time || row.datetime || row.created_at || row.reg_date || "").trim();
+        let itemCreatedAt = (/* @__PURE__ */ new Date()).toISOString();
         let regDate = today;
-        if (row.reg_date) {
-          const rawDate = String(row.reg_date).trim();
-          if (!isValidDDMMYYYY(rawDate)) {
-            errors2.push("Registration date must be valid DD-MM-YYYY format");
+        if (rawDateTime) {
+          const dtMatch = rawDateTime.match(/^(\d{2})-(\d{2})-(\d{4})(?:[\sT](\d{1,2}):(\d{2})(?::(\d{2}))?)?$/);
+          if (!dtMatch) {
+            errors2.push("Date & Time must use DD-MM-YYYY HH:mm format (e.g. 05-09-2026 10:45)");
           } else {
-            regDate = parseDDMMYYYY(rawDate);
+            const day = parseInt(dtMatch[1], 10);
+            const month = parseInt(dtMatch[2], 10);
+            const year = parseInt(dtMatch[3], 10);
+            const hour = dtMatch[4] !== void 0 ? parseInt(dtMatch[4], 10) : 0;
+            const minute = dtMatch[5] !== void 0 ? parseInt(dtMatch[5], 10) : 0;
+            const second = dtMatch[6] !== void 0 ? parseInt(dtMatch[6], 10) : 0;
+            if (month < 1 || month > 12) {
+              errors2.push("Invalid month in Date & Time (must be 01\u201312)");
+            } else if (year < 1900 || year > 2100) {
+              errors2.push("Invalid year in Date & Time (1900\u20132100)");
+            } else {
+              const daysInMonth = new Date(year, month, 0).getDate();
+              if (day < 1 || day > daysInMonth) {
+                errors2.push(`Invalid day in Date & Time for month ${month} (must be 01\u2013${daysInMonth})`);
+              } else if (hour < 0 || hour > 23) {
+                errors2.push("Invalid hour in Date & Time (must be 00\u201323)");
+              } else if (minute < 0 || minute > 59) {
+                errors2.push("Invalid minute in Date & Time (must be 00\u201359)");
+              } else if (second < 0 || second > 59) {
+                errors2.push("Invalid second in Date & Time (must be 00\u201359)");
+              } else {
+                const p22 = (n) => String(n).padStart(2, "0");
+                itemCreatedAt = `${year}-${p22(month)}-${p22(day)}T${p22(hour)}:${p22(minute)}:${p22(second)}.000Z`;
+                regDate = `${year}-${p22(month)}-${p22(day)}`;
+              }
+            }
           }
         }
         const dedupKey = `${name.toLowerCase()}||${mobile}`;
@@ -3370,8 +3579,6 @@ function validateCSVRows(type, rows, context = {}) {
             gender,
             marital_status: String(row.marital_status || "Single").trim(),
             mobile,
-            alt_mobile: altMobile,
-            email,
             address: String(row.address || "").trim(),
             pin: String(row.pin || "").trim(),
             blood_group: bloodGroup,
@@ -3379,7 +3586,9 @@ function validateCSVRows(type, rows, context = {}) {
             conditions: String(row.conditions || "").trim(),
             current_meds: String(row.current_meds || "").trim(),
             notes: String(row.notes || "").trim(),
-            reg_date: regDate
+            reg_date: regDate,
+            created_at: itemCreatedAt,
+            date_time: rawDateTime || void 0
           });
         }
       }
@@ -4023,15 +4232,8 @@ function emptyForm() {
     gender: "M",
     marital_status: "Single",
     mobile: "",
-    alt_mobile: "",
-    email: "",
-    address: "",
-    pin: "",
     blood_group: "",
-    allergies: "",
-    conditions: "",
-    current_meds: "",
-    notes: ""
+    address: ""
   };
 }
 function RegisterModal({ open, onClose, prefill = {} }) {
@@ -4040,21 +4242,35 @@ function RegisterModal({ open, onClose, prefill = {} }) {
   const [f, setF] = useState6({ ...emptyForm(), ...prefill });
   const [errs, setErrs] = useState6({});
   const [busy, setBusy] = useState6(false);
+  const [serverPreview, setServerPreview] = useState6(null);
   useEffect6(() => {
     if (open) {
       setF({ ...emptyForm(), ...prefill });
       setErrs({});
+      setServerPreview(null);
+      getNextUhid().then((res) => {
+        if (res && res.nextUhid) {
+          setServerPreview(res.nextUhid);
+        }
+      }).catch(() => {
+      });
     }
   }, [open]);
   const uhidPreview = useLiveQuery3(async () => {
     if (!open) return null;
     const s = await getSettings();
     const year = (/* @__PURE__ */ new Date()).getFullYear();
+    const pad = Number(s.uhid_padding) || 6;
+    const prefix = (s.uhid_prefix || "HC").trim().toUpperCase();
+    const count = await db_default.patients.count();
+    if (count === 0) {
+      const n2 = Number(s.uhid_start) || 1;
+      return `${prefix}${s.uhid_include_year ? `-${year}` : ""}-${String(n2).padStart(pad, "0")}`;
+    }
     const key = s.uhid_include_year ? `UHID|${year}` : "UHID|ALL";
     const row = await db_default.counters.get(key);
     const n = row ? row.value + 1 : Number(s.uhid_start) || 1;
-    const pad = 3;
-    return `${(s.uhid_prefix || "HC").toUpperCase()}${s.uhid_include_year ? `-${year}` : ""}-${String(n).padStart(pad, "0")}`;
+    return `${prefix}${s.uhid_include_year ? `-${year}` : ""}-${String(n).padStart(pad, "0")}`;
   }, [open]);
   const set = (k) => (e) => setF((x) => ({ ...x, [k]: e.target.value }));
   const handleKeyDown = (e) => {
@@ -4084,7 +4300,6 @@ function RegisterModal({ open, onClose, prefill = {} }) {
     if (!f.gender) e.gender = "Select gender (M, F, Other)";
     if (!f.mobile || !f.mobile.trim()) e.mobile = "Mobile number is required";
     else if (!validMobile(f.mobile)) e.mobile = "Enter a valid 10-digit mobile number";
-    if (f.alt_mobile && !validMobile(f.alt_mobile)) e.alt_mobile = "Invalid alternative mobile number";
     setErrs(e);
     return Object.keys(e).length === 0;
   };
@@ -4107,12 +4322,12 @@ function RegisterModal({ open, onClose, prefill = {} }) {
     {
       open,
       onClose,
-      width: "lg",
+      width: "md",
       title: "Register New Patient",
-      sub: /* @__PURE__ */ React9.createElement("span", { className: "uhid-preview" }, "UHID will be assigned: ", /* @__PURE__ */ React9.createElement(UhidChip, { uhid: uhidPreview || "\u2026", size: "sm" }), " \u2014 permanent, unique, never changes"),
+      sub: /* @__PURE__ */ React9.createElement("span", { className: "uhid-preview" }, "UHID will be assigned: ", /* @__PURE__ */ React9.createElement(UhidChip, { uhid: serverPreview || uhidPreview || "\u2026", size: "sm" }), " \u2014 permanent, unique, never changes"),
       footer: /* @__PURE__ */ React9.createElement(React9.Fragment, null, /* @__PURE__ */ React9.createElement(Btn, { variant: "ghost", onClick: onClose }, "Cancel"), /* @__PURE__ */ React9.createElement(Btn, { variant: "accent", onClick: save, disabled: busy }, busy ? "Registering\u2026" : "Register patient"))
     },
-    /* @__PURE__ */ React9.createElement("div", { className: "form-grid", onKeyDown: handleKeyDown }, /* @__PURE__ */ React9.createElement(Field, { label: "Full Name", required: true, error: errs.name, className: "fg-2" }, /* @__PURE__ */ React9.createElement(Input, { value: f.name, onChange: set("name"), placeholder: "Enter full name", autoFocus: true })), /* @__PURE__ */ React9.createElement(Field, { label: "Age", required: true, error: errs.age }, /* @__PURE__ */ React9.createElement(Input, { type: "number", min: "0", max: "125", value: f.age, onChange: set("age"), placeholder: "Age in years" })), /* @__PURE__ */ React9.createElement(Field, { label: "Gender", required: true, error: errs.gender }, /* @__PURE__ */ React9.createElement(Select, { value: f.gender, onChange: set("gender") }, /* @__PURE__ */ React9.createElement("option", { value: "M" }, "M"), /* @__PURE__ */ React9.createElement("option", { value: "F" }, "F"), /* @__PURE__ */ React9.createElement("option", { value: "Other" }, "Other"))), /* @__PURE__ */ React9.createElement(Field, { label: "Marital Status" }, /* @__PURE__ */ React9.createElement(Select, { value: f.marital_status, onChange: set("marital_status") }, MARITAL_STATUSES.map((m) => /* @__PURE__ */ React9.createElement("option", { key: m, value: m }, m)))), /* @__PURE__ */ React9.createElement(Field, { label: "Mobile Number", required: true, error: errs.mobile }, /* @__PURE__ */ React9.createElement(Input, { value: f.mobile, onChange: set("mobile"), placeholder: "10-digit mobile", inputMode: "numeric" })), /* @__PURE__ */ React9.createElement(Field, { label: "Alternative Mobile", error: errs.alt_mobile }, /* @__PURE__ */ React9.createElement(Input, { value: f.alt_mobile, onChange: set("alt_mobile"), inputMode: "numeric", placeholder: "Optional" })), /* @__PURE__ */ React9.createElement(Field, { label: "Email Address" }, /* @__PURE__ */ React9.createElement(Input, { type: "email", value: f.email, onChange: set("email"), placeholder: "Optional email" })), /* @__PURE__ */ React9.createElement(Field, { label: "Blood Group" }, /* @__PURE__ */ React9.createElement(Select, { value: f.blood_group, onChange: set("blood_group") }, BLOOD_GROUPS2.map((b) => /* @__PURE__ */ React9.createElement("option", { key: b, value: b }, b || "Unknown")))), /* @__PURE__ */ React9.createElement("div", { className: "fg-sep" }, /* @__PURE__ */ React9.createElement("strong", null, "Address Information")), /* @__PURE__ */ React9.createElement(Field, { label: "Address", className: "fg-2" }, /* @__PURE__ */ React9.createElement(Input, { value: f.address, onChange: set("address"), placeholder: "Full address" })), /* @__PURE__ */ React9.createElement(Field, { label: "PIN Code", error: errs.pin }, /* @__PURE__ */ React9.createElement(Input, { value: f.pin, onChange: set("pin"), inputMode: "numeric", placeholder: "Optional PIN" })), /* @__PURE__ */ React9.createElement("div", { className: "fg-sep" }, /* @__PURE__ */ React9.createElement("strong", null, "Medical Information (Optional)")), /* @__PURE__ */ React9.createElement(Field, { label: "Allergies", className: "fg-2", hint: "e.g. Penicillin, sulphur drugs" }, /* @__PURE__ */ React9.createElement(Textarea, { rows: 2, value: f.allergies, onChange: set("allergies") })), /* @__PURE__ */ React9.createElement(Field, { label: "Important Medical Conditions", className: "fg-2", hint: "e.g. Diabetes, Hypertension, Asthma" }, /* @__PURE__ */ React9.createElement(Textarea, { rows: 2, value: f.conditions, onChange: set("conditions") })), /* @__PURE__ */ React9.createElement(Field, { label: "Current Medications", className: "fg-2" }, /* @__PURE__ */ React9.createElement(Textarea, { rows: 2, value: f.current_meds, onChange: set("current_meds") })), /* @__PURE__ */ React9.createElement(Field, { label: "Notes", className: "fg-2" }, /* @__PURE__ */ React9.createElement(Textarea, { rows: 2, value: f.notes, onChange: set("notes") })))
+    /* @__PURE__ */ React9.createElement("div", { className: "form-grid", onKeyDown: handleKeyDown }, /* @__PURE__ */ React9.createElement(Field, { label: "Full Name", required: true, error: errs.name, className: "fg-2" }, /* @__PURE__ */ React9.createElement(Input, { value: f.name, onChange: set("name"), placeholder: "Enter full name", autoFocus: true })), /* @__PURE__ */ React9.createElement(Field, { label: "Age", required: true, error: errs.age }, /* @__PURE__ */ React9.createElement(Input, { type: "number", min: "0", max: "125", value: f.age, onChange: set("age"), placeholder: "Age in years" })), /* @__PURE__ */ React9.createElement(Field, { label: "Gender", required: true, error: errs.gender }, /* @__PURE__ */ React9.createElement(Select, { value: f.gender, onChange: set("gender") }, /* @__PURE__ */ React9.createElement("option", { value: "M" }, "M"), /* @__PURE__ */ React9.createElement("option", { value: "F" }, "F"), /* @__PURE__ */ React9.createElement("option", { value: "Other" }, "Other"))), /* @__PURE__ */ React9.createElement(Field, { label: "Marital Status" }, /* @__PURE__ */ React9.createElement(Select, { value: f.marital_status, onChange: set("marital_status") }, MARITAL_STATUSES.map((m) => /* @__PURE__ */ React9.createElement("option", { key: m, value: m }, m)))), /* @__PURE__ */ React9.createElement(Field, { label: "Mobile Number", required: true, error: errs.mobile }, /* @__PURE__ */ React9.createElement(Input, { value: f.mobile, onChange: set("mobile"), placeholder: "10-digit mobile", inputMode: "numeric" })), /* @__PURE__ */ React9.createElement(Field, { label: "Blood Group" }, /* @__PURE__ */ React9.createElement(Select, { value: f.blood_group, onChange: set("blood_group") }, BLOOD_GROUPS2.map((b) => /* @__PURE__ */ React9.createElement("option", { key: b, value: b }, b || "Unknown")))), /* @__PURE__ */ React9.createElement(Field, { label: "Address", className: "fg-2" }, /* @__PURE__ */ React9.createElement(Input, { value: f.address, onChange: set("address"), placeholder: "Full address" })))
   );
 }
 function Patients() {
@@ -4160,21 +4375,43 @@ function Patients() {
     return list.sort((a, b) => (b.created_at || b.reg_date || "").localeCompare(a.created_at || a.reg_date || ""));
   }, [q, gender]);
   const exportCSV = () => {
+    const headers = [
+      "UHID",
+      "Registered Date & Time",
+      "Full Name",
+      "Age",
+      "Gender",
+      "Marital Status",
+      "Mobile Number",
+      "Blood Group",
+      "Address",
+      "PIN Code",
+      "Allergies",
+      "Important Medical Conditions",
+      "Current Medications",
+      "Notes",
+      "Patient Status"
+    ];
     const rows = (patients || []).map((p) => [
-      p.uhid,
-      p.name,
-      p.status || "New",
+      p.uhid || "\u2014",
+      fmtDateTime(p.created_at || p.reg_date),
+      p.name || "\u2014",
       p.age != null ? p.age : ageLabel(p),
       p.gender || "\u2014",
       p.marital_status || "Single",
       p.mobile || "\u2014",
+      p.blood_group || "\u2014",
       p.address || "\u2014",
-      fmtDateTime(p.created_at || p.reg_date),
-      p.blood_group || "\u2014"
+      p.pin || "\u2014",
+      p.allergies || "None",
+      p.conditions || "None",
+      p.current_meds || "None",
+      p.notes || "\u2014",
+      p.status || "New"
     ]);
     download(
-      `heeva-patients-${dkey()}.csv`,
-      toCSV(["UHID", "Name", "Status", "Age", "Gender", "Marital Status", "Mobile", "Address", "Registered Date & Time", "Blood Group"], rows),
+      `heeva-patients-all-${dkey()}.csv`,
+      toCSV(headers, rows),
       "text/csv"
     );
   };
@@ -4273,6 +4510,7 @@ var init_Patients = __esm({
     init_ui();
     init_patients();
     init_core();
+    init_api();
     init_utils();
     init_CsvImportModal();
     BLOOD_GROUPS2 = ["", "A+", "A\u2212", "B+", "B\u2212", "AB+", "AB\u2212", "O+", "O\u2212"];
@@ -4305,7 +4543,7 @@ function billTypeLabel(items) {
   }
   return "COMBINED";
 }
-async function createBill({ patient_id, items, discount_mode = "amt", discount_value = 0, payments = [], when = null, doctor_id = null, doctor_name = null, doctor_phone = null }, userId) {
+async function createBill({ patient_id, items, discount_mode = "amt", discount_value = 0, payments = [], when = null, doctor_id = null, doctor_name = null, doctor_phone = null, diagnosis = null, advice = null, next_visit = null }, userId) {
   const settings = await getSettings();
   return db_default.transaction("rw", [db_default.bills, db_default.bill_items, db_default.payments, db_default.batches, db_default.inventory_txns, db_default.counters, db_default.activity_logs, db_default.patients, db_default.medicines, db_default.services], async () => {
     const patient2 = await db_default.patients.get(patient_id);
@@ -4321,7 +4559,21 @@ async function createBill({ patient_id, items, discount_mode = "amt", discount_v
         const alloc = await allocateFEFO(med.id, qty, settings);
         const price = it.price != null && it.price !== "" ? Number(it.price) : med.selling_price;
         for (const a of alloc) {
-          resolved.push({ item_type: "medicine", ref_id: med.id, name: med.name, qty: a.qty, price, batch_id: a.batch_id, batch_no: a.batch_no });
+          resolved.push({
+            item_type: "medicine",
+            ref_id: med.id,
+            name: med.name,
+            qty: a.qty,
+            price,
+            batch_id: a.batch_id,
+            batch_no: a.batch_no,
+            dosage: it.dosage || null,
+            timing: it.timing || null,
+            frequency: it.frequency || null,
+            duration: it.duration || null,
+            composition: it.composition || null,
+            notes: it.notes || null
+          });
         }
       } else if (it.item_type === "service" || it.item_type === "consultation") {
         const svc = await db_default.services.get(it.ref_id);
@@ -4331,7 +4583,13 @@ async function createBill({ patient_id, items, discount_mode = "amt", discount_v
           ref_id: svc.id,
           name: svc.name,
           qty,
-          price: it.price != null && it.price !== "" ? Number(it.price) : svc.price
+          price: it.price != null && it.price !== "" ? Number(it.price) : svc.price,
+          dosage: it.dosage || null,
+          timing: it.timing || null,
+          frequency: it.frequency || null,
+          duration: it.duration || null,
+          composition: it.composition || null,
+          notes: it.notes || null
         });
       } else throw new Error("Invalid item type");
     }
@@ -4355,6 +4613,9 @@ async function createBill({ patient_id, items, discount_mode = "amt", discount_v
       time: now,
       doctor_name: doctor_name || settings.doctor_name || "Dr. Mit Nayak",
       doctor_phone: doctor_phone || settings.doctor_phone || "9913974000",
+      diagnosis: diagnosis ? diagnosis.trim() : null,
+      advice: advice ? advice.trim() : null,
+      next_visit: next_visit ? next_visit.trim() : null,
       item_count: resolved.length,
       subtotal,
       discount,
@@ -4382,6 +4643,12 @@ async function createBill({ patient_id, items, discount_mode = "amt", discount_v
         amount,
         batch_id: it.batch_id || null,
         batch_no: it.batch_no || null,
+        dosage: it.dosage || null,
+        timing: it.timing || null,
+        frequency: it.frequency || null,
+        duration: it.duration || null,
+        composition: it.composition || null,
+        notes: it.notes || null,
         returned: 0
       });
     }
@@ -4734,8 +5001,6 @@ function EditPatientModal({ open, onClose, patient: patient2, user: user3 }) {
       gender: patient2.gender === "Female" ? "F" : patient2.gender === "Male" ? "M" : patient2.gender || "Other",
       marital_status: patient2.marital_status || "Single",
       mobile: patient2.mobile,
-      alt_mobile: patient2.alt_mobile,
-      email: patient2.email,
       address: patient2.address,
       pin: patient2.pin,
       blood_group: patient2.blood_group,
@@ -4797,7 +5062,7 @@ function EditPatientModal({ open, onClose, patient: patient2, user: user3 }) {
       footer: /* @__PURE__ */ React10.createElement(React10.Fragment, null, /* @__PURE__ */ React10.createElement(Btn, { variant: "ghost", onClick: onClose }, "Cancel"), /* @__PURE__ */ React10.createElement(Btn, { onClick: save, disabled: busy }, busy ? "Saving\u2026" : "Save changes"))
     },
     err && /* @__PURE__ */ React10.createElement("div", { className: "form-alert" }, err),
-    /* @__PURE__ */ React10.createElement("div", { className: "form-grid", onKeyDown: handleKeyDown }, /* @__PURE__ */ React10.createElement(Field, { label: "Full Name", required: true, className: "fg-2" }, /* @__PURE__ */ React10.createElement(Input, { value: f.name || "", onChange: set("name") })), /* @__PURE__ */ React10.createElement(Field, { label: "Age", required: true }, /* @__PURE__ */ React10.createElement(Input, { type: "number", min: "0", max: "125", value: f.age ?? "", onChange: set("age") })), /* @__PURE__ */ React10.createElement(Field, { label: "Gender" }, /* @__PURE__ */ React10.createElement(Select, { value: f.gender || "M", onChange: set("gender") }, /* @__PURE__ */ React10.createElement("option", { value: "M" }, "M"), /* @__PURE__ */ React10.createElement("option", { value: "F" }, "F"), /* @__PURE__ */ React10.createElement("option", { value: "Other" }, "Other"))), /* @__PURE__ */ React10.createElement(Field, { label: "Marital Status" }, /* @__PURE__ */ React10.createElement(Select, { value: f.marital_status || "Single", onChange: set("marital_status") }, MARITAL_STATUSES2.map((m) => /* @__PURE__ */ React10.createElement("option", { key: m, value: m }, m)))), /* @__PURE__ */ React10.createElement(Field, { label: "Mobile" }, /* @__PURE__ */ React10.createElement(Input, { value: f.mobile || "", onChange: set("mobile") })), /* @__PURE__ */ React10.createElement(Field, { label: "Alternative Mobile" }, /* @__PURE__ */ React10.createElement(Input, { value: f.alt_mobile || "", onChange: set("alt_mobile") })), /* @__PURE__ */ React10.createElement(Field, { label: "Email" }, /* @__PURE__ */ React10.createElement(Input, { type: "email", value: f.email || "", onChange: set("email") })), /* @__PURE__ */ React10.createElement(Field, { label: "Address", className: "fg-2" }, /* @__PURE__ */ React10.createElement(Input, { value: f.address || "", onChange: set("address") })), /* @__PURE__ */ React10.createElement(Field, { label: "PIN Code" }, /* @__PURE__ */ React10.createElement(Input, { value: f.pin || "", onChange: set("pin") })), /* @__PURE__ */ React10.createElement(Field, { label: "Blood Group" }, /* @__PURE__ */ React10.createElement(Select, { value: f.blood_group || "", onChange: set("blood_group") }, ["", "A+", "A\u2212", "B+", "B\u2212", "AB+", "AB\u2212", "O+", "O\u2212"].map((b) => /* @__PURE__ */ React10.createElement("option", { key: b, value: b }, b || "Unknown")))), /* @__PURE__ */ React10.createElement(Field, { label: "Allergies", className: "fg-2" }, /* @__PURE__ */ React10.createElement(Textarea, { rows: 2, value: f.allergies || "", onChange: set("allergies") })), /* @__PURE__ */ React10.createElement(Field, { label: "Conditions", className: "fg-2" }, /* @__PURE__ */ React10.createElement(Textarea, { rows: 2, value: f.conditions || "", onChange: set("conditions") })), /* @__PURE__ */ React10.createElement(Field, { label: "Current Medications", className: "fg-2" }, /* @__PURE__ */ React10.createElement(Textarea, { rows: 2, value: f.current_meds || "", onChange: set("current_meds") })), /* @__PURE__ */ React10.createElement(Field, { label: "Notes", className: "fg-2" }, /* @__PURE__ */ React10.createElement(Textarea, { rows: 2, value: f.notes || "", onChange: set("notes") })))
+    /* @__PURE__ */ React10.createElement("div", { className: "form-grid", onKeyDown: handleKeyDown }, /* @__PURE__ */ React10.createElement(Field, { label: "Full Name", required: true, className: "fg-2" }, /* @__PURE__ */ React10.createElement(Input, { value: f.name || "", onChange: set("name") })), /* @__PURE__ */ React10.createElement(Field, { label: "Age", required: true }, /* @__PURE__ */ React10.createElement(Input, { type: "number", min: "0", max: "125", value: f.age ?? "", onChange: set("age") })), /* @__PURE__ */ React10.createElement(Field, { label: "Gender" }, /* @__PURE__ */ React10.createElement(Select, { value: f.gender || "M", onChange: set("gender") }, /* @__PURE__ */ React10.createElement("option", { value: "M" }, "M"), /* @__PURE__ */ React10.createElement("option", { value: "F" }, "F"), /* @__PURE__ */ React10.createElement("option", { value: "Other" }, "Other"))), /* @__PURE__ */ React10.createElement(Field, { label: "Marital Status" }, /* @__PURE__ */ React10.createElement(Select, { value: f.marital_status || "Single", onChange: set("marital_status") }, MARITAL_STATUSES2.map((m) => /* @__PURE__ */ React10.createElement("option", { key: m, value: m }, m)))), /* @__PURE__ */ React10.createElement(Field, { label: "Mobile" }, /* @__PURE__ */ React10.createElement(Input, { value: f.mobile || "", onChange: set("mobile") })), /* @__PURE__ */ React10.createElement(Field, { label: "Address", className: "fg-2" }, /* @__PURE__ */ React10.createElement(Input, { value: f.address || "", onChange: set("address") })), /* @__PURE__ */ React10.createElement(Field, { label: "PIN Code" }, /* @__PURE__ */ React10.createElement(Input, { value: f.pin || "", onChange: set("pin") })), /* @__PURE__ */ React10.createElement(Field, { label: "Blood Group" }, /* @__PURE__ */ React10.createElement(Select, { value: f.blood_group || "", onChange: set("blood_group") }, ["", "A+", "A\u2212", "B+", "B\u2212", "AB+", "AB\u2212", "O+", "O\u2212"].map((b) => /* @__PURE__ */ React10.createElement("option", { key: b, value: b }, b || "Unknown")))), /* @__PURE__ */ React10.createElement(Field, { label: "Allergies", className: "fg-2" }, /* @__PURE__ */ React10.createElement(Textarea, { rows: 2, value: f.allergies || "", onChange: set("allergies") })), /* @__PURE__ */ React10.createElement(Field, { label: "Conditions", className: "fg-2" }, /* @__PURE__ */ React10.createElement(Textarea, { rows: 2, value: f.conditions || "", onChange: set("conditions") })), /* @__PURE__ */ React10.createElement(Field, { label: "Current Medications", className: "fg-2" }, /* @__PURE__ */ React10.createElement(Textarea, { rows: 2, value: f.current_meds || "", onChange: set("current_meds") })), /* @__PURE__ */ React10.createElement(Field, { label: "Notes", className: "fg-2" }, /* @__PURE__ */ React10.createElement(Textarea, { rows: 2, value: f.notes || "", onChange: set("notes") })))
   );
 }
 function PatientProfile() {
@@ -4844,7 +5109,7 @@ function PatientProfile() {
         { key: "notes", label: "Medical Notes" }
       ]
     }
-  ), tab === "overview" && /* @__PURE__ */ React10.createElement("div", { className: "ov-grid" }, /* @__PURE__ */ React10.createElement(Card, { title: "Contact", className: "ov-card" }, /* @__PURE__ */ React10.createElement("div", { className: "kv" }, /* @__PURE__ */ React10.createElement("span", null, "Mobile"), /* @__PURE__ */ React10.createElement("b", null, p.mobile || "\u2014")), /* @__PURE__ */ React10.createElement("div", { className: "kv" }, /* @__PURE__ */ React10.createElement("span", null, "Alt. mobile"), /* @__PURE__ */ React10.createElement("b", null, p.alt_mobile || "\u2014")), /* @__PURE__ */ React10.createElement("div", { className: "kv" }, /* @__PURE__ */ React10.createElement("span", null, "Email"), /* @__PURE__ */ React10.createElement("b", null, p.email || "\u2014")), /* @__PURE__ */ React10.createElement("div", { className: "kv" }, /* @__PURE__ */ React10.createElement("span", null, "Marital status"), /* @__PURE__ */ React10.createElement("b", null, p.marital_status || "Single")), /* @__PURE__ */ React10.createElement("div", { className: "kv" }, /* @__PURE__ */ React10.createElement("span", null, "Address"), /* @__PURE__ */ React10.createElement("b", null, p.address || "\u2014", p.pin ? ` ${p.pin}` : ""))), /* @__PURE__ */ React10.createElement(Card, { title: "Medical Summary", className: "ov-card" }, /* @__PURE__ */ React10.createElement("div", { className: "kv" }, /* @__PURE__ */ React10.createElement("span", null, "Status"), /* @__PURE__ */ React10.createElement("b", null, /* @__PURE__ */ React10.createElement(Badge, { tone: patientStatus === "New" ? "teal" : "gray" }, patientStatus))), /* @__PURE__ */ React10.createElement("div", { className: "kv" }, /* @__PURE__ */ React10.createElement("span", null, "Blood group"), /* @__PURE__ */ React10.createElement("b", null, p.blood_group || "Unknown")), /* @__PURE__ */ React10.createElement("div", { className: "kv" }, /* @__PURE__ */ React10.createElement("span", null, "Allergies"), /* @__PURE__ */ React10.createElement("b", null, p.allergies || "None recorded")), /* @__PURE__ */ React10.createElement("div", { className: "kv" }, /* @__PURE__ */ React10.createElement("span", null, "Conditions"), /* @__PURE__ */ React10.createElement("b", null, p.conditions || "None recorded")), /* @__PURE__ */ React10.createElement("div", { className: "kv" }, /* @__PURE__ */ React10.createElement("span", null, "Current meds"), /* @__PURE__ */ React10.createElement("b", null, p.current_meds || "\u2014")), /* @__PURE__ */ React10.createElement("div", { className: "kv" }, /* @__PURE__ */ React10.createElement("span", null, "Total visits"), /* @__PURE__ */ React10.createElement("b", null, consults?.length || 0)), /* @__PURE__ */ React10.createElement("div", { className: "kv" }, /* @__PURE__ */ React10.createElement("span", null, "Total paid to date"), /* @__PURE__ */ React10.createElement("b", null, money2(totalSpent))), /* @__PURE__ */ React10.createElement("div", { className: "kv" }, /* @__PURE__ */ React10.createElement("span", null, "Registered"), /* @__PURE__ */ React10.createElement("b", null, fmtDateTime(p.created_at || p.reg_date)))), /* @__PURE__ */ React10.createElement(Card, { title: "Latest Vitals", className: "ov-card" }, !vitals?.length ? /* @__PURE__ */ React10.createElement(EmptyState, { compact: true, icon: "\u2764\uFE0F", title: "No vitals yet", action: /* @__PURE__ */ React10.createElement(Btn, { size: "sm", variant: "outline", onClick: () => setVitalsOpen(true) }, "Record now") }) : /* @__PURE__ */ React10.createElement("div", { className: "vitals-chips" }, vitals.slice(0, 1).map((v) => /* @__PURE__ */ React10.createElement(React10.Fragment, { key: v.id }, v.temp != null && /* @__PURE__ */ React10.createElement("div", { className: "vchip" }, /* @__PURE__ */ React10.createElement("span", null, "Temp"), /* @__PURE__ */ React10.createElement("b", null, v.temp, "\xB0F")), v.sbp != null && /* @__PURE__ */ React10.createElement("div", { className: "vchip" }, /* @__PURE__ */ React10.createElement("span", null, "BP"), /* @__PURE__ */ React10.createElement("b", null, v.sbp, "/", v.dbp)), v.pulse != null && /* @__PURE__ */ React10.createElement("div", { className: "vchip" }, /* @__PURE__ */ React10.createElement("span", null, "Pulse"), /* @__PURE__ */ React10.createElement("b", null, v.pulse, " bpm")), v.spo2 != null && /* @__PURE__ */ React10.createElement("div", { className: "vchip" }, /* @__PURE__ */ React10.createElement("span", null, "SpO\u2082"), /* @__PURE__ */ React10.createElement("b", null, v.spo2, "%")), v.weight != null && /* @__PURE__ */ React10.createElement("div", { className: "vchip" }, /* @__PURE__ */ React10.createElement("span", null, "Weight"), /* @__PURE__ */ React10.createElement("b", null, v.weight, " kg")), v.sugar != null && /* @__PURE__ */ React10.createElement("div", { className: "vchip" }, /* @__PURE__ */ React10.createElement("span", null, "Sugar"), /* @__PURE__ */ React10.createElement("b", null, v.sugar)), /* @__PURE__ */ React10.createElement("div", { className: "vchip when" }, fmtDateTime(v.recorded_at)))))), vitals && vitals.length >= 2 && /* @__PURE__ */ React10.createElement(Card, { title: "Weight Trend", sub: "All recorded weights" }, /* @__PURE__ */ React10.createElement(LineChart, { height: 160, data: [...vitals].reverse().filter((v) => v.weight != null).slice(-12).map((v, i, a) => ({ label: fmtDate(v.recorded_at).slice(0, 6), value: v.weight })), color: "var(--navy-700)", unit: "" }))), tab === "visits" && /* @__PURE__ */ React10.createElement(Card, null, /* @__PURE__ */ React10.createElement(
+  ), tab === "overview" && /* @__PURE__ */ React10.createElement("div", { className: "ov-grid" }, /* @__PURE__ */ React10.createElement(Card, { title: "Contact", className: "ov-card" }, /* @__PURE__ */ React10.createElement("div", { className: "kv" }, /* @__PURE__ */ React10.createElement("span", null, "Mobile"), /* @__PURE__ */ React10.createElement("b", null, p.mobile || "\u2014")), /* @__PURE__ */ React10.createElement("div", { className: "kv" }, /* @__PURE__ */ React10.createElement("span", null, "Marital status"), /* @__PURE__ */ React10.createElement("b", null, p.marital_status || "Single")), /* @__PURE__ */ React10.createElement("div", { className: "kv" }, /* @__PURE__ */ React10.createElement("span", null, "Address"), /* @__PURE__ */ React10.createElement("b", null, p.address || "\u2014", p.pin ? ` ${p.pin}` : ""))), /* @__PURE__ */ React10.createElement(Card, { title: "Medical Summary", className: "ov-card" }, /* @__PURE__ */ React10.createElement("div", { className: "kv" }, /* @__PURE__ */ React10.createElement("span", null, "Status"), /* @__PURE__ */ React10.createElement("b", null, /* @__PURE__ */ React10.createElement(Badge, { tone: patientStatus === "New" ? "teal" : "gray" }, patientStatus))), /* @__PURE__ */ React10.createElement("div", { className: "kv" }, /* @__PURE__ */ React10.createElement("span", null, "Blood group"), /* @__PURE__ */ React10.createElement("b", null, p.blood_group || "Unknown")), /* @__PURE__ */ React10.createElement("div", { className: "kv" }, /* @__PURE__ */ React10.createElement("span", null, "Allergies"), /* @__PURE__ */ React10.createElement("b", null, p.allergies || "None recorded")), /* @__PURE__ */ React10.createElement("div", { className: "kv" }, /* @__PURE__ */ React10.createElement("span", null, "Conditions"), /* @__PURE__ */ React10.createElement("b", null, p.conditions || "None recorded")), /* @__PURE__ */ React10.createElement("div", { className: "kv" }, /* @__PURE__ */ React10.createElement("span", null, "Current meds"), /* @__PURE__ */ React10.createElement("b", null, p.current_meds || "\u2014")), /* @__PURE__ */ React10.createElement("div", { className: "kv" }, /* @__PURE__ */ React10.createElement("span", null, "Total visits"), /* @__PURE__ */ React10.createElement("b", null, consults?.length || 0)), /* @__PURE__ */ React10.createElement("div", { className: "kv" }, /* @__PURE__ */ React10.createElement("span", null, "Total paid to date"), /* @__PURE__ */ React10.createElement("b", null, money2(totalSpent))), /* @__PURE__ */ React10.createElement("div", { className: "kv" }, /* @__PURE__ */ React10.createElement("span", null, "Registered"), /* @__PURE__ */ React10.createElement("b", null, fmtDateTime(p.created_at || p.reg_date)))), /* @__PURE__ */ React10.createElement(Card, { title: "Latest Vitals", className: "ov-card" }, !vitals?.length ? /* @__PURE__ */ React10.createElement(EmptyState, { compact: true, icon: "\u2764\uFE0F", title: "No vitals yet", action: /* @__PURE__ */ React10.createElement(Btn, { size: "sm", variant: "outline", onClick: () => setVitalsOpen(true) }, "Record now") }) : /* @__PURE__ */ React10.createElement("div", { className: "vitals-chips" }, vitals.slice(0, 1).map((v) => /* @__PURE__ */ React10.createElement(React10.Fragment, { key: v.id }, v.temp != null && /* @__PURE__ */ React10.createElement("div", { className: "vchip" }, /* @__PURE__ */ React10.createElement("span", null, "Temp"), /* @__PURE__ */ React10.createElement("b", null, v.temp, "\xB0F")), v.sbp != null && /* @__PURE__ */ React10.createElement("div", { className: "vchip" }, /* @__PURE__ */ React10.createElement("span", null, "BP"), /* @__PURE__ */ React10.createElement("b", null, v.sbp, "/", v.dbp)), v.pulse != null && /* @__PURE__ */ React10.createElement("div", { className: "vchip" }, /* @__PURE__ */ React10.createElement("span", null, "Pulse"), /* @__PURE__ */ React10.createElement("b", null, v.pulse, " bpm")), v.spo2 != null && /* @__PURE__ */ React10.createElement("div", { className: "vchip" }, /* @__PURE__ */ React10.createElement("span", null, "SpO\u2082"), /* @__PURE__ */ React10.createElement("b", null, v.spo2, "%")), v.weight != null && /* @__PURE__ */ React10.createElement("div", { className: "vchip" }, /* @__PURE__ */ React10.createElement("span", null, "Weight"), /* @__PURE__ */ React10.createElement("b", null, v.weight, " kg")), v.sugar != null && /* @__PURE__ */ React10.createElement("div", { className: "vchip" }, /* @__PURE__ */ React10.createElement("span", null, "Sugar"), /* @__PURE__ */ React10.createElement("b", null, v.sugar)), /* @__PURE__ */ React10.createElement("div", { className: "vchip when" }, fmtDateTime(v.recorded_at)))))), vitals && vitals.length >= 2 && /* @__PURE__ */ React10.createElement(Card, { title: "Weight Trend", sub: "All recorded weights" }, /* @__PURE__ */ React10.createElement(LineChart, { height: 160, data: [...vitals].reverse().filter((v) => v.weight != null).slice(-12).map((v, i, a) => ({ label: fmtDate(v.recorded_at).slice(0, 6), value: v.weight })), color: "var(--navy-700)", unit: "" }))), tab === "visits" && /* @__PURE__ */ React10.createElement(Card, null, /* @__PURE__ */ React10.createElement(
     DataTable,
     {
       columns: [
@@ -5948,7 +6213,10 @@ function BillViewer2({ full, onClose, allowCancel = true, allowPayment = true })
         setPayOpen(true);
       } }, "Record Payment"), allowCancel && open && can("billing") && /* @__PURE__ */ React14.createElement(Btn, { variant: "danger", icon: XCircle3, onClick: () => setCancelOpen(true) }, "Cancel Bill"), /* @__PURE__ */ React14.createElement(Btn, { variant: "outline", icon: Download5, onClick: () => downloadReceipt(bill2, items, payments, settings) }, "Download Receipt"), /* @__PURE__ */ React14.createElement(Btn, { variant: "primary", icon: Printer3, onClick: () => printInvoiceA4(bill2, items, payments, settings) }, "A4 Payment Receipt"))
     },
-    /* @__PURE__ */ React14.createElement("div", { className: "bv-body" }, /* @__PURE__ */ React14.createElement("div", { className: "bv-meta" }, /* @__PURE__ */ React14.createElement(PaymentBadge, { status: bill2.status === "CANCELLED" ? "CANCELLED" : bill2.payment_status }), /* @__PURE__ */ React14.createElement(Badge, { tone: "navy" }, bill2.bill_type), /* @__PURE__ */ React14.createElement("span", null, fmtDateTime(bill2.time)), bill2.cancel_reason && /* @__PURE__ */ React14.createElement(Badge, { tone: "red" }, "Cancelled: ", bill2.cancel_reason)), /* @__PURE__ */ React14.createElement("table", { className: "table bv-table" }, /* @__PURE__ */ React14.createElement("thead", null, /* @__PURE__ */ React14.createElement("tr", null, /* @__PURE__ */ React14.createElement("th", null, "Item"), /* @__PURE__ */ React14.createElement("th", null, "Category"), /* @__PURE__ */ React14.createElement("th", { className: "th-right" }, "Qty"), /* @__PURE__ */ React14.createElement("th", { className: "th-right" }, "Price"), /* @__PURE__ */ React14.createElement("th", { className: "th-right" }, "Amount"))), /* @__PURE__ */ React14.createElement("tbody", null, items.map((it) => /* @__PURE__ */ React14.createElement("tr", { key: it.id }, /* @__PURE__ */ React14.createElement("td", null, it.name, it.returned > 0 && /* @__PURE__ */ React14.createElement(Badge, { tone: "amber" }, " ", fmtQty(it.returned), " returned")), /* @__PURE__ */ React14.createElement("td", null, /* @__PURE__ */ React14.createElement(Badge, { tone: it.item_type === "medicine" ? "teal" : it.item_type === "consultation" ? "navy" : "blue" }, it.item_type)), /* @__PURE__ */ React14.createElement("td", { className: "td-right" }, fmtQty(it.qty)), /* @__PURE__ */ React14.createElement("td", { className: "td-right" }, money2(it.price)), /* @__PURE__ */ React14.createElement("td", { className: "td-right" }, money2(it.amount)))))), /* @__PURE__ */ React14.createElement("div", { className: "bv-totals" }, /* @__PURE__ */ React14.createElement("div", { className: "kv" }, /* @__PURE__ */ React14.createElement("span", null, "Subtotal"), /* @__PURE__ */ React14.createElement("b", null, money2(bill2.subtotal))), /* @__PURE__ */ React14.createElement("div", { className: "kv" }, /* @__PURE__ */ React14.createElement("span", null, "Discount"), /* @__PURE__ */ React14.createElement("b", null, "\u2212 ", money2(bill2.discount))), /* @__PURE__ */ React14.createElement("div", { className: "kv kv-total" }, /* @__PURE__ */ React14.createElement("span", null, "Total Amount"), /* @__PURE__ */ React14.createElement("b", null, money2(bill2.total))), /* @__PURE__ */ React14.createElement("div", { className: "kv" }, /* @__PURE__ */ React14.createElement("span", null, "Paid"), /* @__PURE__ */ React14.createElement("b", null, money2(bill2.paid))), /* @__PURE__ */ React14.createElement("div", { className: "kv" }, /* @__PURE__ */ React14.createElement("span", null, "Balance"), /* @__PURE__ */ React14.createElement("b", null, money2(balance)))), payments.length > 0 && /* @__PURE__ */ React14.createElement("div", { className: "bv-pay" }, payments.map((x) => /* @__PURE__ */ React14.createElement("span", { key: x.id, className: "bpay-item" }, /* @__PURE__ */ React14.createElement(Badge, { tone: x.kind === "refund" ? "red" : "green" }, x.kind === "refund" ? "Refund" : x.method), " ", money2(x.amount), " \xB7 ", fmtDate(x.at)))))
+    /* @__PURE__ */ React14.createElement("div", { className: "bv-body" }, /* @__PURE__ */ React14.createElement("div", { className: "bv-meta" }, /* @__PURE__ */ React14.createElement(PaymentBadge, { status: bill2.status === "CANCELLED" ? "CANCELLED" : bill2.payment_status }), /* @__PURE__ */ React14.createElement(Badge, { tone: "navy" }, bill2.bill_type), /* @__PURE__ */ React14.createElement("span", null, fmtDateTime(bill2.time)), bill2.cancel_reason && /* @__PURE__ */ React14.createElement(Badge, { tone: "red" }, "Cancelled: ", bill2.cancel_reason)), bill2.diagnosis && /* @__PURE__ */ React14.createElement("div", { style: { marginTop: "10px", padding: "8px 12px", background: "var(--surface-2)", borderRadius: "6px", fontSize: "13px" } }, /* @__PURE__ */ React14.createElement("b", { style: { textTransform: "uppercase", letterSpacing: "0.04em", fontSize: "11px", color: "var(--text-2)" } }, "Diagnosis: "), /* @__PURE__ */ React14.createElement("span", { style: { fontWeight: 600, textTransform: "uppercase" } }, bill2.diagnosis)), /* @__PURE__ */ React14.createElement("table", { className: "table bv-table", style: { marginTop: "10px" } }, /* @__PURE__ */ React14.createElement("thead", null, /* @__PURE__ */ React14.createElement("tr", null, /* @__PURE__ */ React14.createElement("th", null, "Item"), /* @__PURE__ */ React14.createElement("th", null, "Dosage / Instructions"), /* @__PURE__ */ React14.createElement("th", { className: "th-right" }, "Qty"), /* @__PURE__ */ React14.createElement("th", { className: "th-right" }, "Price"), /* @__PURE__ */ React14.createElement("th", { className: "th-right" }, "Amount"))), /* @__PURE__ */ React14.createElement("tbody", null, items.map((it) => {
+      const timingFreqDur = [it.timing, it.frequency, it.duration].filter(Boolean).join(" - ");
+      return /* @__PURE__ */ React14.createElement("tr", { key: it.id }, /* @__PURE__ */ React14.createElement("td", null, /* @__PURE__ */ React14.createElement("div", null, /* @__PURE__ */ React14.createElement("b", null, it.name), it.returned > 0 && /* @__PURE__ */ React14.createElement(Badge, { tone: "amber" }, " ", fmtQty(it.returned), " returned")), it.composition && /* @__PURE__ */ React14.createElement("div", { style: { fontSize: "11.5px", color: "var(--text-2)" } }, "Composition: ", it.composition), it.notes && /* @__PURE__ */ React14.createElement("div", { style: { fontSize: "11.5px", color: "var(--text-3)", fontStyle: "italic" } }, "Note: ", it.notes)), /* @__PURE__ */ React14.createElement("td", null, it.dosage ? /* @__PURE__ */ React14.createElement("div", null, /* @__PURE__ */ React14.createElement("b", null, it.dosage)) : null, timingFreqDur && /* @__PURE__ */ React14.createElement("div", { style: { fontSize: "12px", color: "var(--teal-700)" } }, timingFreqDur), !it.dosage && !timingFreqDur && /* @__PURE__ */ React14.createElement("span", { style: { color: "var(--text-3)" } }, "\u2014")), /* @__PURE__ */ React14.createElement("td", { className: "td-right" }, fmtQty(it.qty), it.unit && it.unit !== "service" ? " " + it.unit : ""), /* @__PURE__ */ React14.createElement("td", { className: "td-right" }, money2(it.price)), /* @__PURE__ */ React14.createElement("td", { className: "td-right" }, money2(it.amount)));
+    }))), (bill2.advice || bill2.next_visit) && /* @__PURE__ */ React14.createElement("div", { style: { margin: "12px 0", padding: "10px 12px", background: "var(--surface-2)", borderRadius: "6px", fontSize: "12.5px" } }, bill2.advice && /* @__PURE__ */ React14.createElement("div", { style: { marginBottom: bill2.next_visit ? "6px" : "0" } }, /* @__PURE__ */ React14.createElement("b", { style: { textTransform: "uppercase", fontSize: "11px", color: "var(--text-2)", display: "block" } }, "Advice / Instructions:"), /* @__PURE__ */ React14.createElement("div", { style: { whiteSpace: "pre-wrap", marginTop: "2px" } }, bill2.advice)), bill2.next_visit && /* @__PURE__ */ React14.createElement("div", null, /* @__PURE__ */ React14.createElement("b", { style: { textTransform: "uppercase", fontSize: "11px", color: "var(--text-2)" } }, "Next Visit / Follow-up: "), /* @__PURE__ */ React14.createElement("b", null, toDDMMYYYY(bill2.next_visit) || bill2.next_visit))), /* @__PURE__ */ React14.createElement("div", { className: "bv-totals" }, /* @__PURE__ */ React14.createElement("div", { className: "kv" }, /* @__PURE__ */ React14.createElement("span", null, "Subtotal"), /* @__PURE__ */ React14.createElement("b", null, money2(bill2.subtotal))), /* @__PURE__ */ React14.createElement("div", { className: "kv" }, /* @__PURE__ */ React14.createElement("span", null, "Discount"), /* @__PURE__ */ React14.createElement("b", null, "\u2212 ", money2(bill2.discount))), /* @__PURE__ */ React14.createElement("div", { className: "kv kv-total" }, /* @__PURE__ */ React14.createElement("span", null, "Total Amount"), /* @__PURE__ */ React14.createElement("b", null, money2(bill2.total))), /* @__PURE__ */ React14.createElement("div", { className: "kv" }, /* @__PURE__ */ React14.createElement("span", null, "Paid"), /* @__PURE__ */ React14.createElement("b", null, money2(bill2.paid))), /* @__PURE__ */ React14.createElement("div", { className: "kv" }, /* @__PURE__ */ React14.createElement("span", null, "Balance"), /* @__PURE__ */ React14.createElement("b", null, money2(balance)))), payments.length > 0 && /* @__PURE__ */ React14.createElement("div", { className: "bv-pay" }, payments.map((x) => /* @__PURE__ */ React14.createElement("span", { key: x.id, className: "bpay-item" }, /* @__PURE__ */ React14.createElement(Badge, { tone: x.kind === "refund" ? "red" : "green" }, x.kind === "refund" ? "Refund" : x.method), " ", money2(x.amount), " \xB7 ", fmtDate(x.at)))))
   ), /* @__PURE__ */ React14.createElement(
     Modal,
     {
@@ -6060,6 +6328,9 @@ function Billing() {
   const [params, setParams] = useSearchParams4();
   const patients = useLiveQuery8(async () => (await db_default.patients.toArray()).sort((a, b) => a.name.localeCompare(b.name)), []);
   const [patient2, setPatient] = useState12(null);
+  const [diagnosis, setDiagnosis] = useState12("");
+  const [advice, setAdvice] = useState12("");
+  const [nextVisit, setNextVisit] = useState12("");
   const stock = useLiveQuery8(() => stockMap(), []);
   const services = useLiveQuery8(() => db_default.services.where("active").equals(1).toArray(), []);
   const [tab, setTab] = useState12("medicines");
@@ -6083,7 +6354,20 @@ function Billing() {
     setCart((x) => {
       const found = x.find((i) => i.item_type === "medicine" && i.ref_id === m.id);
       if (found) return x.map((i) => i === found ? { ...i, qty: i.qty + 1 } : i);
-      return [...x, { item_type: "medicine", ref_id: m.id, name: m.name, qty: 1, price: m.selling_price, unit: m.unit }];
+      return [...x, {
+        item_type: "medicine",
+        ref_id: m.id,
+        name: m.name,
+        qty: 1,
+        price: m.selling_price,
+        unit: m.unit,
+        dosage: "",
+        timing: "",
+        frequency: "",
+        duration: "",
+        composition: m.generic || "",
+        notes: ""
+      }];
     });
   };
   const addService = (s, type) => {
@@ -6109,6 +6393,7 @@ function Billing() {
     }));
   };
   const setPrice = (idx, price) => setCart((x) => x.map((it, i) => i === idx ? { ...it, price } : it));
+  const setInstruction = (idx, field, value) => setCart((x) => x.map((it, i) => i === idx ? { ...it, [field]: value } : it));
   const removeItem = (idx) => setCart((x) => x.filter((_, i) => i !== idx));
   const subtotal = round2(cart.reduce((s, i) => s + i.qty * (Number(i.price) || 0), 0));
   const disc = discMode === "pct" ? round2(subtotal * (Math.min(Number(discVal) || 0, 100) / 100)) : Math.min(Number(discVal) || 0, subtotal);
@@ -6131,6 +6416,22 @@ function Billing() {
       setParams({}, { replace: true });
     }
   }, [params, patients, services]);
+  useEffect10(() => {
+    if (patient2?.id) {
+      db_default.consultations.where("patient_id").equals(patient2.id).reverse().sortBy("time").then((list) => {
+        if (list && list[0]) {
+          setDiagnosis((cur) => cur || list[0].diagnosis || "");
+          setAdvice((cur) => cur || list[0].advice || "");
+          setNextVisit((cur) => cur || list[0].follow_up || "");
+        }
+      }).catch(() => {
+      });
+    } else {
+      setDiagnosis("");
+      setAdvice("");
+      setNextVisit("");
+    }
+  }, [patient2?.id]);
   const complete = async (payments) => {
     if (!patient2) throw new Error("Select a patient first");
     if (!cart.length) throw new Error("Bill has no items");
@@ -6142,7 +6443,10 @@ function Billing() {
         items: cart,
         discount_mode: discMode,
         discount_value: Number(discVal) || 0,
-        payments
+        payments,
+        diagnosis,
+        advice,
+        next_visit: nextVisit
       }, user3.id);
       pushToast("success", `Bill ${bill2.bill_no} completed \u2014 inventory updated automatically`);
       await syncAlerts(user3.id).catch(() => {
@@ -6151,6 +6455,9 @@ function Billing() {
       setCart([]);
       setDiscVal("");
       setPatient(null);
+      setDiagnosis("");
+      setAdvice("");
+      setNextVisit("");
     } finally {
       setBusy(false);
     }
@@ -6180,11 +6487,121 @@ function Billing() {
       getSearch: (p) => `${p.name} ${p.uhid} ${p.mobile}`,
       placeholder: "Search by UHID, name or mobile\u2026"
     }
-  ), /* @__PURE__ */ React15.createElement(Btn, { variant: "ghost", size: "sm", icon: UserPlus4, onClick: () => navigate("/patients?new=1") }, "New")), patient2 && /* @__PURE__ */ React15.createElement("div", { className: "pos-patient-info" }, /* @__PURE__ */ React15.createElement("span", { className: "ppi-name" }, patient2.name), /* @__PURE__ */ React15.createElement(UhidChip, { uhid: patient2.uhid, size: "sm" }), /* @__PURE__ */ React15.createElement("span", null, patient2.gender, patient2.age != null ? ` \xB7 Age ${patient2.age} Y` : patient2.dob ? ` \xB7 Age ${ageLabel(patient2)}` : "", patient2.blood_group ? ` \xB7 ${patient2.blood_group}` : ""), patient2.allergies && /* @__PURE__ */ React15.createElement("span", { className: "allergy-warn" }, /* @__PURE__ */ React15.createElement(AlertTriangle4, { size: 13 }), " ", patient2.allergies))), /* @__PURE__ */ React15.createElement(Card, { pad: true, className: "pos-catalog" }, /* @__PURE__ */ React15.createElement("div", { className: "pos-tabs" }, /* @__PURE__ */ React15.createElement("button", { className: `pos-tab ${tab === "medicines" ? "pos-tab-on" : ""}`, onClick: () => setTab("medicines") }, /* @__PURE__ */ React15.createElement(Pill3, { size: 15 }), " Medicines"), /* @__PURE__ */ React15.createElement("button", { className: `pos-tab ${tab === "consultation" ? "pos-tab-on" : ""}`, onClick: () => setTab("consultation") }, /* @__PURE__ */ React15.createElement(Stethoscope5, { size: 15 }), " Consultation"), /* @__PURE__ */ React15.createElement("button", { className: `pos-tab ${tab === "services" ? "pos-tab-on" : ""}`, onClick: () => setTab("services") }, /* @__PURE__ */ React15.createElement(Sparkles, { size: 15 }), " Services")), tab === "medicines" && /* @__PURE__ */ React15.createElement("div", { className: "pos-medlist-wrap" }, /* @__PURE__ */ React15.createElement("div", { className: "pos-medsearch" }, /* @__PURE__ */ React15.createElement(Search5, { size: 14 }), /* @__PURE__ */ React15.createElement(Input, { value: medQ, onChange: (e) => setMedQ(e.target.value), placeholder: "Search medicine by name or generic\u2026", autoFocus: true })), /* @__PURE__ */ React15.createElement("div", { className: "pos-medlist" }, medsList.length === 0 && /* @__PURE__ */ React15.createElement("div", { className: "pos-none" }, "No medicines match"), medsList.map(({ medicine: m, available, next_expiry }) => {
+  ), /* @__PURE__ */ React15.createElement(Btn, { variant: "ghost", size: "sm", icon: UserPlus4, onClick: () => navigate("/patients?new=1") }, "New")), patient2 && /* @__PURE__ */ React15.createElement("div", { className: "pos-patient-info" }, /* @__PURE__ */ React15.createElement("span", { className: "ppi-name" }, patient2.name), /* @__PURE__ */ React15.createElement(UhidChip, { uhid: patient2.uhid, size: "sm" }), /* @__PURE__ */ React15.createElement("span", null, patient2.gender, patient2.age != null ? ` \xB7 Age ${patient2.age} Y` : patient2.dob ? ` \xB7 Age ${ageLabel(patient2)}` : "", patient2.blood_group ? ` \xB7 ${patient2.blood_group}` : ""), patient2.allergies && /* @__PURE__ */ React15.createElement("span", { className: "allergy-warn" }, /* @__PURE__ */ React15.createElement(AlertTriangle4, { size: 13 }), " ", patient2.allergies))), /* @__PURE__ */ React15.createElement(Card, { title: "Clinical Details", sub: "Diagnosis, advice & follow-up", pad: true, className: "pos-clinical-card" }, /* @__PURE__ */ React15.createElement(Field, { label: "Diagnosis" }, /* @__PURE__ */ React15.createElement(
+    Input,
+    {
+      value: diagnosis,
+      onChange: (e) => setDiagnosis(e.target.value),
+      placeholder: "e.g. CERVICAL RADICULOPATHY, ADHESIVE CAPSULITIS LEFT"
+    }
+  )), /* @__PURE__ */ React15.createElement("div", { style: { marginTop: "8px" } }, /* @__PURE__ */ React15.createElement(Field, { label: "Next Visit / Follow-up" }, /* @__PURE__ */ React15.createElement(
+    Input,
+    {
+      type: "date",
+      value: nextVisit,
+      onChange: (e) => setNextVisit(e.target.value)
+    }
+  ))), /* @__PURE__ */ React15.createElement(Field, { label: "Advice / Instructions", style: { marginTop: "8px" } }, /* @__PURE__ */ React15.createElement(
+    Textarea,
+    {
+      rows: 2,
+      value: advice,
+      onChange: (e) => setAdvice(e.target.value),
+      placeholder: "Patient instructions, ice packs, exercise, diet (English / Gujarati)\u2026"
+    }
+  ))), /* @__PURE__ */ React15.createElement(Card, { pad: true, className: "pos-catalog" }, /* @__PURE__ */ React15.createElement("div", { className: "pos-tabs" }, /* @__PURE__ */ React15.createElement("button", { className: `pos-tab ${tab === "medicines" ? "pos-tab-on" : ""}`, onClick: () => setTab("medicines") }, /* @__PURE__ */ React15.createElement(Pill3, { size: 15 }), " Medicines"), /* @__PURE__ */ React15.createElement("button", { className: `pos-tab ${tab === "consultation" ? "pos-tab-on" : ""}`, onClick: () => setTab("consultation") }, /* @__PURE__ */ React15.createElement(Stethoscope5, { size: 15 }), " Consultation"), /* @__PURE__ */ React15.createElement("button", { className: `pos-tab ${tab === "services" ? "pos-tab-on" : ""}`, onClick: () => setTab("services") }, /* @__PURE__ */ React15.createElement(Sparkles, { size: 15 }), " Services")), tab === "medicines" && /* @__PURE__ */ React15.createElement("div", { className: "pos-medlist-wrap" }, /* @__PURE__ */ React15.createElement("div", { className: "pos-medsearch" }, /* @__PURE__ */ React15.createElement(Search5, { size: 14 }), /* @__PURE__ */ React15.createElement(Input, { value: medQ, onChange: (e) => setMedQ(e.target.value), placeholder: "Search medicine by name or generic\u2026", autoFocus: true })), /* @__PURE__ */ React15.createElement("div", { className: "pos-medlist" }, medsList.length === 0 && /* @__PURE__ */ React15.createElement("div", { className: "pos-none" }, "No medicines match"), medsList.map(({ medicine: m, available, next_expiry }) => {
     const left = available - cartQty(m.id);
     const exp = next_expiry ? daysUntil(next_expiry) : null;
     return /* @__PURE__ */ React15.createElement("button", { key: m.id, className: "pos-med", onClick: () => addMedicine(m), disabled: left <= 0 }, /* @__PURE__ */ React15.createElement("span", { className: "pos-med-name" }, m.name, m.strength && /* @__PURE__ */ React15.createElement("span", { className: "cell-sub" }, " ", m.strength)), /* @__PURE__ */ React15.createElement("span", { className: "pos-med-right" }, /* @__PURE__ */ React15.createElement(Badge, { tone: left <= 0 ? "red" : left <= (m.min_stock || 0) ? "amber" : "green" }, left <= 0 ? "OUT" : `${left} ${m.unit}`), exp != null && exp <= 90 && /* @__PURE__ */ React15.createElement(Badge, { tone: exp <= 30 ? "red" : "amber" }, "exp ", exp, "d"), /* @__PURE__ */ React15.createElement("b", null, money2(m.selling_price))));
-  }))), tab === "consultation" && /* @__PURE__ */ React15.createElement("div", { className: "pos-svc-list" }, consultationSvcs.map((s) => /* @__PURE__ */ React15.createElement("button", { key: s.id, className: "pos-svc", onClick: () => addService(s, "consultation") }, /* @__PURE__ */ React15.createElement("span", null, s.name), /* @__PURE__ */ React15.createElement("span", { className: "pos-svc-price" }, money2(s.price))))), tab === "services" && /* @__PURE__ */ React15.createElement("div", { className: "pos-svc-list" }, serviceSvcs.map((s) => /* @__PURE__ */ React15.createElement("button", { key: s.id, className: "pos-svc", onClick: () => addService(s, "service") }, /* @__PURE__ */ React15.createElement("span", null, s.name), /* @__PURE__ */ React15.createElement("span", { className: "pos-svc-price" }, money2(s.price))))))), /* @__PURE__ */ React15.createElement("div", { className: "pos-right" }, /* @__PURE__ */ React15.createElement(Card, { title: "2 \xB7 Bill Items", sub: cart.length ? `${cart.length} line(s)` : "Add consultation, services or medicines", pad: true, className: "pos-cart-card" }, cart.length === 0 ? /* @__PURE__ */ React15.createElement(EmptyState, { compact: true, title: "Bill is empty", message: "Select a patient on the left and add items." }) : /* @__PURE__ */ React15.createElement("div", { className: "cart-lines" }, cart.map((it, i) => /* @__PURE__ */ React15.createElement("div", { className: `cart-line cl-${it.item_type}`, key: `${it.item_type}-${it.ref_id}` }, /* @__PURE__ */ React15.createElement("div", { className: "cl-top" }, /* @__PURE__ */ React15.createElement(Badge, { tone: it.item_type === "medicine" ? "teal" : it.item_type === "consultation" ? "navy" : "blue" }, it.item_type === "consultation" ? "CONSULT" : it.item_type === "service" ? "SERVICE" : "MED"), /* @__PURE__ */ React15.createElement("span", { className: "cl-name" }, it.name), /* @__PURE__ */ React15.createElement("button", { className: "cl-rm", title: "Remove", onClick: () => removeItem(i) }, /* @__PURE__ */ React15.createElement(Trash26, { size: 13 }))), /* @__PURE__ */ React15.createElement("div", { className: "cl-bottom" }, /* @__PURE__ */ React15.createElement("span", { className: "cl-qty" }, /* @__PURE__ */ React15.createElement("button", { onClick: () => setQty(i, it.qty - 1) }, /* @__PURE__ */ React15.createElement(Minus, { size: 12 })), /* @__PURE__ */ React15.createElement("b", null, fmtQty(it.qty)), /* @__PURE__ */ React15.createElement("button", { onClick: () => setQty(i, it.qty + 1) }, /* @__PURE__ */ React15.createElement(Plus5, { size: 12 }))), /* @__PURE__ */ React15.createElement("span", { className: "cl-price" }, "\xD7 ", /* @__PURE__ */ React15.createElement(Input, { className: "cl-price-input", type: "number", min: "0", step: "0.01", value: it.price, onChange: (e) => setPrice(i, e.target.value) })), /* @__PURE__ */ React15.createElement("b", { className: "cl-amt" }, money2(it.qty * (Number(it.price) || 0))))))), /* @__PURE__ */ React15.createElement("div", { className: "cart-totals" }, /* @__PURE__ */ React15.createElement("div", { className: "kv" }, /* @__PURE__ */ React15.createElement("span", null, "Subtotal"), /* @__PURE__ */ React15.createElement("b", null, money2(subtotal))), /* @__PURE__ */ React15.createElement("div", { className: "cart-disc" }, /* @__PURE__ */ React15.createElement("span", { className: "kv-label" }, "Discount"), /* @__PURE__ */ React15.createElement(Seg, { size: "sm", value: discMode, onChange: setDiscMode, options: [{ value: "amt", label: "\u20B9" }, { value: "pct", label: "%" }] }), /* @__PURE__ */ React15.createElement(Input, { className: "cart-disc-input", type: "number", min: "0", value: discVal, onChange: (e) => setDiscVal(e.target.value), placeholder: "0" }), /* @__PURE__ */ React15.createElement("b", null, "\u2212 ", money2(disc))), /* @__PURE__ */ React15.createElement("div", { className: "kv kv-total" }, /* @__PURE__ */ React15.createElement("span", null, "TOTAL AMOUNT"), /* @__PURE__ */ React15.createElement("b", null, money2(total)))), /* @__PURE__ */ React15.createElement("div", { className: "cart-actions" }, /* @__PURE__ */ React15.createElement(
+  }))), tab === "consultation" && /* @__PURE__ */ React15.createElement("div", { className: "pos-svc-list" }, consultationSvcs.map((s) => /* @__PURE__ */ React15.createElement("button", { key: s.id, className: "pos-svc", onClick: () => addService(s, "consultation") }, /* @__PURE__ */ React15.createElement("span", null, s.name), /* @__PURE__ */ React15.createElement("span", { className: "pos-svc-price" }, money2(s.price))))), tab === "services" && /* @__PURE__ */ React15.createElement("div", { className: "pos-svc-list" }, serviceSvcs.map((s) => /* @__PURE__ */ React15.createElement("button", { key: s.id, className: "pos-svc", onClick: () => addService(s, "service") }, /* @__PURE__ */ React15.createElement("span", null, s.name), /* @__PURE__ */ React15.createElement("span", { className: "pos-svc-price" }, money2(s.price))))))), /* @__PURE__ */ React15.createElement("div", { className: "pos-right" }, /* @__PURE__ */ React15.createElement(Card, { title: "2 \xB7 Bill Items", sub: cart.length ? `${cart.length} line(s)` : "Add consultation, services or medicines", pad: true, className: "pos-cart-card" }, cart.length === 0 ? /* @__PURE__ */ React15.createElement(EmptyState, { compact: true, title: "Bill is empty", message: "Select a patient on the left and add items." }) : /* @__PURE__ */ React15.createElement("div", { className: "cart-lines" }, cart.map((it, i) => /* @__PURE__ */ React15.createElement("div", { className: `cart-line cl-${it.item_type}`, key: `${it.item_type}-${it.ref_id}` }, /* @__PURE__ */ React15.createElement("div", { className: "cl-top" }, /* @__PURE__ */ React15.createElement(Badge, { tone: it.item_type === "medicine" ? "teal" : it.item_type === "consultation" ? "navy" : "blue" }, it.item_type === "consultation" ? "CONSULT" : it.item_type === "service" ? "SERVICE" : "MED"), /* @__PURE__ */ React15.createElement("span", { className: "cl-name" }, it.name), /* @__PURE__ */ React15.createElement("button", { className: "cl-rm", title: "Remove", onClick: () => removeItem(i) }, /* @__PURE__ */ React15.createElement(Trash26, { size: 13 }))), /* @__PURE__ */ React15.createElement("div", { className: "cl-bottom" }, /* @__PURE__ */ React15.createElement("span", { className: "cl-qty" }, /* @__PURE__ */ React15.createElement("button", { onClick: () => setQty(i, it.qty - 1) }, /* @__PURE__ */ React15.createElement(Minus, { size: 12 })), /* @__PURE__ */ React15.createElement("b", null, fmtQty(it.qty)), /* @__PURE__ */ React15.createElement("button", { onClick: () => setQty(i, it.qty + 1) }, /* @__PURE__ */ React15.createElement(Plus5, { size: 12 }))), /* @__PURE__ */ React15.createElement("span", { className: "cl-price" }, "\xD7 ", /* @__PURE__ */ React15.createElement(Input, { className: "cl-price-input", type: "number", min: "0", step: "0.01", value: it.price, onChange: (e) => setPrice(i, e.target.value) })), /* @__PURE__ */ React15.createElement("b", { className: "cl-amt" }, money2(it.qty * (Number(it.price) || 0)))), it.item_type === "medicine" && /* @__PURE__ */ React15.createElement("div", { className: "cl-instructions" }, /* @__PURE__ */ React15.createElement("div", { className: "cl-inst-grid" }, /* @__PURE__ */ React15.createElement("div", { className: "cl-inst-col" }, /* @__PURE__ */ React15.createElement("span", { className: "cl-inst-lbl" }, "Dosage"), /* @__PURE__ */ React15.createElement(
+    "input",
+    {
+      className: "input input-xs cl-inst-input",
+      placeholder: "e.g. 1-0-1",
+      value: it.dosage || "",
+      onChange: (e) => setInstruction(i, "dosage", e.target.value),
+      list: `dosage-presets-${i}`
+    }
+  ), /* @__PURE__ */ React15.createElement("datalist", { id: `dosage-presets-${i}` }, /* @__PURE__ */ React15.createElement("option", { value: "1-0-1" }), /* @__PURE__ */ React15.createElement("option", { value: "1-0-0" }), /* @__PURE__ */ React15.createElement("option", { value: "0-0-1" }), /* @__PURE__ */ React15.createElement("option", { value: "1-1-1" })), /* @__PURE__ */ React15.createElement("div", { className: "cl-chip-row" }, ["1-0-1", "1-0-0", "0-0-1", "1-1-1"].map((d) => /* @__PURE__ */ React15.createElement(
+    "button",
+    {
+      key: d,
+      type: "button",
+      className: `cl-chip ${it.dosage === d ? "active" : ""}`,
+      onClick: () => setInstruction(i, "dosage", it.dosage === d ? "" : d)
+    },
+    d
+  )))), /* @__PURE__ */ React15.createElement("div", { className: "cl-inst-col" }, /* @__PURE__ */ React15.createElement("span", { className: "cl-inst-lbl" }, "Timing"), /* @__PURE__ */ React15.createElement(
+    "input",
+    {
+      className: "input input-xs cl-inst-input",
+      placeholder: "e.g. After Food",
+      value: it.timing || "",
+      onChange: (e) => setInstruction(i, "timing", e.target.value),
+      list: `timing-presets-${i}`
+    }
+  ), /* @__PURE__ */ React15.createElement("datalist", { id: `timing-presets-${i}` }, /* @__PURE__ */ React15.createElement("option", { value: "After Food" }), /* @__PURE__ */ React15.createElement("option", { value: "Before Food" }), /* @__PURE__ */ React15.createElement("option", { value: "With Food" }), /* @__PURE__ */ React15.createElement("option", { value: "At Bedtime" })), /* @__PURE__ */ React15.createElement("div", { className: "cl-chip-row" }, ["After Food", "Before Food", "At Bedtime"].map((t) => /* @__PURE__ */ React15.createElement(
+    "button",
+    {
+      key: t,
+      type: "button",
+      className: `cl-chip ${it.timing === t ? "active" : ""}`,
+      onClick: () => setInstruction(i, "timing", it.timing === t ? "" : t)
+    },
+    t
+  )))), /* @__PURE__ */ React15.createElement("div", { className: "cl-inst-col" }, /* @__PURE__ */ React15.createElement("span", { className: "cl-inst-lbl" }, "Frequency"), /* @__PURE__ */ React15.createElement(
+    "input",
+    {
+      className: "input input-xs cl-inst-input",
+      placeholder: "e.g. Twice Daily",
+      value: it.frequency || "",
+      onChange: (e) => setInstruction(i, "frequency", e.target.value),
+      list: `freq-presets-${i}`
+    }
+  ), /* @__PURE__ */ React15.createElement("datalist", { id: `freq-presets-${i}` }, /* @__PURE__ */ React15.createElement("option", { value: "Once Daily" }), /* @__PURE__ */ React15.createElement("option", { value: "Twice Daily" }), /* @__PURE__ */ React15.createElement("option", { value: "Thrice Daily" }), /* @__PURE__ */ React15.createElement("option", { value: "As Needed" })), /* @__PURE__ */ React15.createElement("div", { className: "cl-chip-row" }, ["Once Daily", "Twice Daily", "As Needed"].map((f) => /* @__PURE__ */ React15.createElement(
+    "button",
+    {
+      key: f,
+      type: "button",
+      className: `cl-chip ${it.frequency === f ? "active" : ""}`,
+      onClick: () => setInstruction(i, "frequency", it.frequency === f ? "" : f)
+    },
+    f
+  )))), /* @__PURE__ */ React15.createElement("div", { className: "cl-inst-col" }, /* @__PURE__ */ React15.createElement("span", { className: "cl-inst-lbl" }, "Duration"), /* @__PURE__ */ React15.createElement(
+    "input",
+    {
+      className: "input input-xs cl-inst-input",
+      placeholder: "e.g. 5 Days",
+      value: it.duration || "",
+      onChange: (e) => setInstruction(i, "duration", e.target.value),
+      list: `dur-presets-${i}`
+    }
+  ), /* @__PURE__ */ React15.createElement("datalist", { id: `dur-presets-${i}` }, /* @__PURE__ */ React15.createElement("option", { value: "3 Days" }), /* @__PURE__ */ React15.createElement("option", { value: "5 Days" }), /* @__PURE__ */ React15.createElement("option", { value: "7 Days" }), /* @__PURE__ */ React15.createElement("option", { value: "10 Days" }), /* @__PURE__ */ React15.createElement("option", { value: "Till Next Visit" })), /* @__PURE__ */ React15.createElement("div", { className: "cl-chip-row" }, ["5 Days", "10 Days", "Till Next Visit"].map((dur) => /* @__PURE__ */ React15.createElement(
+    "button",
+    {
+      key: dur,
+      type: "button",
+      className: `cl-chip ${it.duration === dur ? "active" : ""}`,
+      onClick: () => setInstruction(i, "duration", it.duration === dur ? "" : dur)
+    },
+    dur
+  ))))), /* @__PURE__ */ React15.createElement("div", { className: "cl-inst-extra", style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px", marginTop: "6px" } }, /* @__PURE__ */ React15.createElement("div", { className: "cl-inst-col" }, /* @__PURE__ */ React15.createElement("span", { className: "cl-inst-lbl" }, "Composition (Optional)"), /* @__PURE__ */ React15.createElement(
+    "input",
+    {
+      className: "input input-xs cl-inst-input",
+      placeholder: "e.g. Paracetamol 500mg",
+      value: it.composition || "",
+      onChange: (e) => setInstruction(i, "composition", e.target.value)
+    }
+  )), /* @__PURE__ */ React15.createElement("div", { className: "cl-inst-col" }, /* @__PURE__ */ React15.createElement("span", { className: "cl-inst-lbl" }, "Notes (Optional)"), /* @__PURE__ */ React15.createElement(
+    "input",
+    {
+      className: "input input-xs cl-inst-input",
+      placeholder: "e.g. Take with warm water",
+      value: it.notes || "",
+      onChange: (e) => setInstruction(i, "notes", e.target.value)
+    }
+  ))))))), /* @__PURE__ */ React15.createElement("div", { className: "cart-totals" }, /* @__PURE__ */ React15.createElement("div", { className: "kv" }, /* @__PURE__ */ React15.createElement("span", null, "Subtotal"), /* @__PURE__ */ React15.createElement("b", null, money2(subtotal))), /* @__PURE__ */ React15.createElement("div", { className: "cart-disc" }, /* @__PURE__ */ React15.createElement("span", { className: "kv-label" }, "Discount"), /* @__PURE__ */ React15.createElement(Seg, { size: "sm", value: discMode, onChange: setDiscMode, options: [{ value: "amt", label: "\u20B9" }, { value: "pct", label: "%" }] }), /* @__PURE__ */ React15.createElement(Input, { className: "cart-disc-input", type: "number", min: "0", value: discVal, onChange: (e) => setDiscVal(e.target.value), placeholder: "0" }), /* @__PURE__ */ React15.createElement("b", null, "\u2212 ", money2(disc))), /* @__PURE__ */ React15.createElement("div", { className: "kv kv-total" }, /* @__PURE__ */ React15.createElement("span", null, "TOTAL AMOUNT"), /* @__PURE__ */ React15.createElement("b", null, money2(total)))), /* @__PURE__ */ React15.createElement("div", { className: "cart-actions" }, /* @__PURE__ */ React15.createElement(
     Btn,
     {
       variant: "accent",
@@ -7580,7 +7997,7 @@ function PatientsTab({ from, to, setFrom, setTo, settings }) {
   }, [data?.returning, q]);
   const exportPatients = () => {
     const headers = ["UHID", "Name", "Age", "Gender", "Marital Status", "Mobile", "Address", "Registered Date & Time"];
-    const rows = (data?.new_patients || []).map((p) => [
+    const rows = filteredNew.map((p) => [
       p.uhid,
       p.name,
       p.age ?? "",
@@ -7595,7 +8012,7 @@ function PatientsTab({ from, to, setFrom, setTo, settings }) {
   const printPatients = () => {
     printReport({
       title: "Patients Registration Report",
-      subtitle: `${fmtDate(from)} to ${fmtDate(to)} \xB7 ${data?.new_patients?.length || 0} New Patients, ${data?.returning?.length || 0} Returning`,
+      subtitle: `${fmtDate(from)} to ${fmtDate(to)} \xB7 ${filteredNew.length} Patients${q ? ` (Search: "${q}")` : ""}`,
       columns: [
         { key: "uhid", label: "UHID" },
         { key: "name", label: "Name" },
@@ -7671,6 +8088,7 @@ function MedicinesTab({ from, to, setFrom, setTo, settings }) {
   const exp = useLiveQuery14(() => expiryBuckets(), []);
   const stock = useLiveQuery14(() => stockMap(), []);
   const money2 = (v) => fmtMoney(v, settings.currency);
+  const [q, setQ] = useState18("");
   const lowRows = low ? [...low.out, ...low.low] : [];
   const expRows = exp ? [
     ...exp.expired.map((b) => ({ ...b, state: "expired", days: b.days })),
@@ -7678,46 +8096,64 @@ function MedicinesTab({ from, to, setFrom, setTo, settings }) {
     ...exp.d60.map((b) => ({ ...b, state: "n60" })),
     ...exp.d90.map((b) => ({ ...b, state: "n90" }))
   ] : [];
+  const filteredTop = useMemo7(() => {
+    if (!top) return [];
+    if (!q.trim()) return top;
+    const s = q.trim().toLowerCase();
+    return top.filter((m) => m.name?.toLowerCase().includes(s));
+  }, [top, q]);
+  const filteredLow = useMemo7(() => {
+    if (!lowRows) return [];
+    if (!q.trim()) return lowRows;
+    const s = q.trim().toLowerCase();
+    return lowRows.filter((r) => r.medicine?.name?.toLowerCase().includes(s));
+  }, [lowRows, q]);
+  const filteredExp = useMemo7(() => {
+    if (!expRows) return [];
+    if (!q.trim()) return expRows;
+    const s = q.trim().toLowerCase();
+    return expRows.filter((b) => b.med_name?.toLowerCase().includes(s) || (b.batch?.batch_no || "").toLowerCase().includes(s));
+  }, [expRows, q]);
   const exportTop = () => {
     const headers = ["Medicine", "Qty Sold", "Revenue"];
-    const rows = (top || []).map((m) => [m.name, m.qty, m.revenue]);
+    const rows = filteredTop.map((m) => [m.name, m.qty, m.revenue]);
     download(`heeva-top-medicines-${from}-${to}.csv`, toCSV(headers, rows), "text/csv");
   };
   const printTop = () => {
     printReport({
       title: "Top Selling Medicines",
-      subtitle: `${fmtDate(from)} to ${fmtDate(to)}`,
+      subtitle: `${fmtDate(from)} to ${fmtDate(to)}${q ? ` \xB7 Filter: "${q}"` : ""}`,
       columns: [
         { key: "name", label: "Medicine" },
         { key: "qty", label: "Qty Sold", align: "right" },
         { key: "revenue", label: "Revenue", align: "right", render: (m) => money2(m.revenue) }
       ],
-      rows: top,
+      rows: filteredTop,
       settings
     });
   };
   const exportLow = () => {
     const headers = ["Medicine", "Available", "Minimum Level", "Status"];
-    const rows = lowRows.map((r) => [r.medicine.name, r.available, r.min, r.available <= 0 ? "OUT OF STOCK" : "LOW STOCK"]);
+    const rows = filteredLow.map((r) => [r.medicine.name, r.available, r.min, r.available <= 0 ? "OUT OF STOCK" : "LOW STOCK"]);
     download(`heeva-low-stock.csv`, toCSV(headers, rows), "text/csv");
   };
   const printLow = () => {
     printReport({
       title: "Low & Out of Stock Medicines",
-      subtitle: `Inventory stock alerts`,
+      subtitle: `Inventory stock alerts${q ? ` \xB7 Filter: "${q}"` : ""}`,
       columns: [
         { key: "name", label: "Medicine", render: (r) => r.medicine.name },
         { key: "available", label: "Available", align: "right" },
         { key: "min", label: "Minimum Level", align: "right" },
         { key: "st", label: "Status", render: (r) => r.available <= 0 ? "OUT OF STOCK" : "LOW STOCK" }
       ],
-      rows: lowRows,
+      rows: filteredLow,
       settings
     });
   };
   const exportExp = () => {
     const headers = ["Status", "Days Remaining", "Medicine", "Batch #", "Expiry Date", "On Hand Qty", "Value"];
-    const rows = expRows.map((b) => [
+    const rows = filteredExp.map((b) => [
       b.state === "expired" ? "EXPIRED" : `${b.days} days left`,
       b.days,
       b.med_name,
@@ -7731,7 +8167,7 @@ function MedicinesTab({ from, to, setFrom, setTo, settings }) {
   const printExp = () => {
     printReport({
       title: "Medicine Expiry Report",
-      subtitle: `Expired and near-expiry batches with inventory values`,
+      subtitle: `Expired and near-expiry batches${q ? ` \xB7 Filter: "${q}"` : ""}`,
       columns: [
         { key: "state", label: "Status", render: (b) => b.state === "expired" ? "EXPIRED" : `${b.days}d left` },
         { key: "med_name", label: "Medicine" },
@@ -7740,11 +8176,18 @@ function MedicinesTab({ from, to, setFrom, setTo, settings }) {
         { key: "on_hand", label: "On Hand", align: "right" },
         { key: "value", label: "Value", align: "right", render: (b) => money2(b.on_hand * (b.batch.purchase_price || 0)) }
       ],
-      rows: expRows,
+      rows: filteredExp,
       settings
     });
   };
-  return /* @__PURE__ */ React21.createElement("div", { className: "rep-stacks" }, /* @__PURE__ */ React21.createElement(
+  return /* @__PURE__ */ React21.createElement("div", { className: "rep-stacks" }, /* @__PURE__ */ React21.createElement("div", { style: { margin: "0 0 14px 0", maxWidth: 360 } }, /* @__PURE__ */ React21.createElement(
+    Input,
+    {
+      value: q,
+      onChange: (e) => setQ(e.target.value),
+      placeholder: "Filter medicines across reports\u2026"
+    }
+  )), /* @__PURE__ */ React21.createElement(
     Card,
     {
       title: "Top Selling Medicines",
@@ -7761,7 +8204,7 @@ function MedicinesTab({ from, to, setFrom, setTo, settings }) {
           { key: "qty", label: "Qty Sold", align: "right", sortable: true },
           { key: "revenue", label: "Revenue", align: "right", sortable: true, render: (m) => money2(m.revenue) }
         ],
-        rows: top,
+        rows: filteredTop,
         pageSize: 10,
         empty: /* @__PURE__ */ React21.createElement(EmptyState, { compact: true, icon: "\u{1F48A}", title: "No medicine sales in range" })
       }
@@ -7783,7 +8226,7 @@ function MedicinesTab({ from, to, setFrom, setTo, settings }) {
           { key: "min", label: "Minimum", align: "right" },
           { key: "st", label: "Status", render: (r) => r.available <= 0 ? /* @__PURE__ */ React21.createElement(Badge, { tone: "red" }, "OUT") : /* @__PURE__ */ React21.createElement(Badge, { tone: "amber" }, "LOW") }
         ],
-        rows: lowRows,
+        rows: filteredLow,
         pageSize: 10,
         empty: /* @__PURE__ */ React21.createElement(EmptyState, { compact: true, icon: "\u2705", title: "No low stock items" })
       }
@@ -7811,7 +8254,7 @@ function MedicinesTab({ from, to, setFrom, setTo, settings }) {
           { key: "on_hand", label: "On Hand", align: "right" },
           { key: "value", label: "Value (buy)", align: "right", render: (b) => money2(b.on_hand * (b.batch.purchase_price || 0)) }
         ],
-        rows: expRows,
+        rows: filteredExp,
         pageSize: 12,
         empty: /* @__PURE__ */ React21.createElement(EmptyState, { compact: true, icon: "\u2705", title: "Nothing expired or near expiry" })
       }
@@ -7821,15 +8264,24 @@ function MedicinesTab({ from, to, setFrom, setTo, settings }) {
 function FinancialTab({ from, to, setFrom, setTo, settings }) {
   const data = useLiveQuery14(() => financialReport(from, to), [from, to]);
   const money2 = (v) => fmtMoney(v, settings.currency);
+  const [q, setQ] = useState18("");
+  const filteredPending = useMemo7(() => {
+    const list = data?.pending_payments || [];
+    if (!q.trim()) return list;
+    const s = q.trim().toLowerCase();
+    return list.filter(
+      (r) => r.bill?.bill_no?.toLowerCase().includes(s) || r.bill?.patient_name?.toLowerCase().includes(s) || r.bill?.uhid?.toLowerCase().includes(s)
+    );
+  }, [data?.pending_payments, q]);
   const exportFinancial = () => {
     const summaryHeader = ["Report", "From", "To", "Total Revenue", "Total Expenses", "Net Profit", "Total Pending"];
-    const summaryRow = ["Financial Summary", fmtDate(from), fmtDate(to), data?.revenue || 0, data?.expenses || 0, data?.profit || 0, data?.pending_payments?.reduce((s, p) => s + p.due, 0) || 0];
+    const summaryRow = ["Financial Summary", fmtDate(from), fmtDate(to), data?.revenue || 0, data?.expenses || 0, data?.profit || 0, filteredPending.reduce((s, p) => s + p.due, 0)];
     const methodHeaders = ["Payment Method", "Amount Collected"];
     const methodRows = Object.entries(data?.revenue_by_method || {}).map(([m, a]) => [m, a]);
     const catHeaders = ["Expense Category", "Amount Spent"];
     const catRows = Object.entries(data?.expenses_by_category || {}).map(([c, a]) => [c, a]);
     const pendingHeaders = ["Bill #", "Patient Name", "UHID", "Bill Date", "Days Pending", "Amount Due"];
-    const pendingRows = (data?.pending_payments || []).map((r) => [
+    const pendingRows = filteredPending.map((r) => [
       r.bill.bill_no,
       r.bill.patient_name,
       r.bill.uhid,
@@ -7855,7 +8307,7 @@ function FinancialTab({ from, to, setFrom, setTo, settings }) {
   const printFinancial = () => {
     printReport({
       title: "Financial Report & Pending Receivables",
-      subtitle: `${fmtDate(from)} to ${fmtDate(to)} \xB7 Revenue: ${money2(data?.revenue)} \xB7 Expenses: ${money2(data?.expenses)} \xB7 Net Profit: ${money2(data?.profit)}`,
+      subtitle: `${fmtDate(from)} to ${fmtDate(to)} \xB7 Revenue: ${money2(data?.revenue)} \xB7 Expenses: ${money2(data?.expenses)} \xB7 Net Profit: ${money2(data?.profit)}${q ? ` \xB7 Filter: "${q}"` : ""}`,
       columns: [
         { key: "bill_no", label: "Bill #", render: (r) => r.bill.bill_no },
         { key: "patient", label: "Patient", render: (r) => r.bill.patient_name },
@@ -7864,8 +8316,8 @@ function FinancialTab({ from, to, setFrom, setTo, settings }) {
         { key: "days", label: "Days Pending", align: "right", render: (r) => Math.max(0, -r.days) },
         { key: "due", label: "Amount Due", align: "right", render: (r) => money2(r.due) }
       ],
-      rows: data?.pending_payments,
-      totals: { bill_no: "TOTAL DUE", due: money2(data?.pending_payments?.reduce((s, p) => s + p.due, 0)) },
+      rows: filteredPending,
+      totals: { bill_no: "TOTAL DUE", due: money2(filteredPending.reduce((s, p) => s + p.due, 0)) },
       settings
     });
   };
@@ -7876,7 +8328,7 @@ function FinancialTab({ from, to, setFrom, setTo, settings }) {
       actions: /* @__PURE__ */ React21.createElement(React21.Fragment, null, /* @__PURE__ */ React21.createElement(Btn, { size: "sm", variant: "ghost", icon: Download10, onClick: exportFinancial }, "Export"), /* @__PURE__ */ React21.createElement(Btn, { size: "sm", variant: "ghost", icon: Printer6, onClick: printFinancial }, "Print"))
     },
     /* @__PURE__ */ React21.createElement(RangeBar, { from, to, setFrom, setTo }),
-    data && /* @__PURE__ */ React21.createElement("div", { className: "rep-summary" }, /* @__PURE__ */ React21.createElement("span", { className: "cat-chip" }, /* @__PURE__ */ React21.createElement(TrendingUp2, { size: 13 }), " Revenue: ", /* @__PURE__ */ React21.createElement("b", null, money2(data.revenue))), /* @__PURE__ */ React21.createElement("span", { className: "cat-chip" }, /* @__PURE__ */ React21.createElement(Wallet4, { size: 13 }), " Expenses: ", /* @__PURE__ */ React21.createElement("b", null, money2(data.expenses))), /* @__PURE__ */ React21.createElement("span", { className: "cat-chip" }, "Est. Profit: ", /* @__PURE__ */ React21.createElement("b", { className: data.profit < 0 ? "val-red" : "val-green" }, money2(data.profit))), /* @__PURE__ */ React21.createElement("span", { className: "cat-chip" }, "Pending receivables: ", /* @__PURE__ */ React21.createElement("b", null, money2(data.pending_payments.reduce((s, p) => s + p.due, 0))), " (", data.pending_payments.length, " bills)")),
+    data && /* @__PURE__ */ React21.createElement("div", { className: "rep-summary" }, /* @__PURE__ */ React21.createElement("span", { className: "cat-chip" }, /* @__PURE__ */ React21.createElement(TrendingUp2, { size: 13 }), " Revenue: ", /* @__PURE__ */ React21.createElement("b", null, money2(data.revenue))), /* @__PURE__ */ React21.createElement("span", { className: "cat-chip" }, /* @__PURE__ */ React21.createElement(Wallet4, { size: 13 }), " Expenses: ", /* @__PURE__ */ React21.createElement("b", null, money2(data.expenses))), /* @__PURE__ */ React21.createElement("span", { className: "cat-chip" }, "Est. Profit: ", /* @__PURE__ */ React21.createElement("b", { className: data.profit < 0 ? "val-red" : "val-green" }, money2(data.profit))), /* @__PURE__ */ React21.createElement("span", { className: "cat-chip" }, "Pending receivables: ", /* @__PURE__ */ React21.createElement("b", null, money2(filteredPending.reduce((s, p) => s + p.due, 0))), " (", filteredPending.length, " bills)")),
     data && /* @__PURE__ */ React21.createElement("div", { className: "fin-cols" }, /* @__PURE__ */ React21.createElement("div", null, /* @__PURE__ */ React21.createElement("h4", { className: "sub-head" }, "Revenue by Payment Method"), /* @__PURE__ */ React21.createElement(
       DataTable,
       {
@@ -7902,7 +8354,14 @@ function FinancialTab({ from, to, setFrom, setTo, settings }) {
         empty: /* @__PURE__ */ React21.createElement(EmptyState, { compact: true, icon: "\u{1F4B0}", title: "No expenses in range" })
       }
     ))),
-    /* @__PURE__ */ React21.createElement("h4", { className: "sub-head" }, "Pending Payments (all time, oldest first)"),
+    /* @__PURE__ */ React21.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 14, marginBottom: 8, flexWrap: "wrap", gap: 8 } }, /* @__PURE__ */ React21.createElement("h4", { className: "sub-head", style: { margin: 0 } }, "Pending Payments (", filteredPending.length, ")"), /* @__PURE__ */ React21.createElement("div", { style: { maxWidth: 300, flex: 1 } }, /* @__PURE__ */ React21.createElement(
+      Input,
+      {
+        value: q,
+        onChange: (e) => setQ(e.target.value),
+        placeholder: "Search pending bills\u2026"
+      }
+    ))),
     /* @__PURE__ */ React21.createElement(
       DataTable,
       {
@@ -7915,7 +8374,7 @@ function FinancialTab({ from, to, setFrom, setTo, settings }) {
           { key: "age", label: "Days", align: "right", sortable: true, render: (r) => Math.max(0, -r.days) },
           { key: "amt", label: "Due", align: "right", sortable: true, sortValue: (r) => r.due, render: (r) => /* @__PURE__ */ React21.createElement("b", { className: "val-red" }, money2(r.due)) }
         ],
-        rows: data?.pending_payments,
+        rows: filteredPending,
         pageSize: 10,
         empty: /* @__PURE__ */ React21.createElement(EmptyState, { compact: true, icon: "\u2705", title: "All bills settled" })
       }

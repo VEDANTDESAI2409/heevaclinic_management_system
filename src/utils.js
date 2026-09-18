@@ -70,6 +70,19 @@ export function fmtDateTime(s) {
   return `${datePart} ${timePart}`;
 }
 
+export function fmtDateTime12h(s) {
+  if (!s) return '—';
+  const d = new Date(s);
+  if (isNaN(d.getTime())) return String(s);
+  const datePart = `${p2(d.getDate())}-${p2(d.getMonth() + 1)}-${d.getFullYear()}`;
+  let hours = d.getHours();
+  const ampm = hours >= 12 ? 'PM' : 'AM';
+  hours = hours % 12;
+  hours = hours ? hours : 12;
+  const timePart = `${p2(hours)}:${p2(d.getMinutes())} ${ampm}`;
+  return `${datePart} ${timePart}`;
+}
+
 export function fmtTime(s) {
   if (!s) return '—';
   const d = new Date(s);

@@ -5,7 +5,7 @@ import { Btn, Modal, Badge, PaymentBadge, Input, Select, Field } from './ui';
 import { printInvoiceA4, downloadReceipt } from '../print/printers';
 import { recordPayment, cancelBill } from '../services/billing';
 import { syncAlerts } from '../services/notifications';
-import { fmtDate, fmtDateTime, fmtMoney, fmtQty } from '../utils';
+import { fmtDate, fmtDateTime, fmtMoney, fmtQty, toDDMMYYYY } from '../utils';
 import { Printer, Download, CreditCard, XCircle } from 'lucide-react';
 import { PAY_METHODS } from '../services/billing';
 import { Confirm } from './ui';
@@ -81,22 +81,55 @@ export default function BillViewer({ full, onClose, allowCancel = true, allowPay
             <span>{fmtDateTime(bill.time)}</span>
             {bill.cancel_reason && <Badge tone="red">Cancelled: {bill.cancel_reason}</Badge>}
           </div>
-          <table className="table bv-table">
+          {bill.diagnosis && (
+            <div style={{ marginTop: '10px', padding: '8px 12px', background: 'var(--surface-2)', borderRadius: '6px', fontSize: '13px' }}>
+              <b style={{ textTransform: 'uppercase', letterSpacing: '0.04em', fontSize: '11px', color: 'var(--text-2)' }}>Diagnosis: </b>
+              <span style={{ fontWeight: 600, textTransform: 'uppercase' }}>{bill.diagnosis}</span>
+            </div>
+          )}
+          <table className="table bv-table" style={{ marginTop: '10px' }}>
             <thead>
-              <tr><th>Item</th><th>Category</th><th className="th-right">Qty</th><th className="th-right">Price</th><th className="th-right">Amount</th></tr>
+              <tr><th>Item</th><th>Dosage / Instructions</th><th className="th-right">Qty</th><th className="th-right">Price</th><th className="th-right">Amount</th></tr>
             </thead>
             <tbody>
-              {items.map((it) => (
-                <tr key={it.id}>
-                  <td>{it.name}{it.returned > 0 && <Badge tone="amber"> {fmtQty(it.returned)} returned</Badge>}</td>
-                  <td><Badge tone={it.item_type === 'medicine' ? 'teal' : it.item_type === 'consultation' ? 'navy' : 'blue'}>{it.item_type}</Badge></td>
-                  <td className="td-right">{fmtQty(it.qty)}</td>
-                  <td className="td-right">{money(it.price)}</td>
-                  <td className="td-right">{money(it.amount)}</td>
-                </tr>
-              ))}
+              {items.map((it) => {
+                const timingFreqDur = [it.timing, it.frequency, it.duration].filter(Boolean).join(' - ');
+                return (
+                  <tr key={it.id}>
+                    <td>
+                      <div><b>{it.name}</b>{it.returned > 0 && <Badge tone="amber"> {fmtQty(it.returned)} returned</Badge>}</div>
+                      {it.composition && <div style={{ fontSize: '11.5px', color: 'var(--text-2)' }}>Composition: {it.composition}</div>}
+                      {it.notes && <div style={{ fontSize: '11.5px', color: 'var(--text-3)', fontStyle: 'italic' }}>Note: {it.notes}</div>}
+                    </td>
+                    <td>
+                      {it.dosage ? <div><b>{it.dosage}</b></div> : null}
+                      {timingFreqDur && <div style={{ fontSize: '12px', color: 'var(--teal-700)' }}>{timingFreqDur}</div>}
+                      {!it.dosage && !timingFreqDur && <span style={{ color: 'var(--text-3)' }}>—</span>}
+                    </td>
+                    <td className="td-right">{fmtQty(it.qty)}{it.unit && it.unit !== 'service' ? ' ' + it.unit : ''}</td>
+                    <td className="td-right">{money(it.price)}</td>
+                    <td className="td-right">{money(it.amount)}</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
+          {(bill.advice || bill.next_visit) && (
+            <div style={{ margin: '12px 0', padding: '10px 12px', background: 'var(--surface-2)', borderRadius: '6px', fontSize: '12.5px' }}>
+              {bill.advice && (
+                <div style={{ marginBottom: bill.next_visit ? '6px' : '0' }}>
+                  <b style={{ textTransform: 'uppercase', fontSize: '11px', color: 'var(--text-2)', display: 'block' }}>Advice / Instructions:</b>
+                  <div style={{ whiteSpace: 'pre-wrap', marginTop: '2px' }}>{bill.advice}</div>
+                </div>
+              )}
+              {bill.next_visit && (
+                <div>
+                  <b style={{ textTransform: 'uppercase', fontSize: '11px', color: 'var(--text-2)' }}>Next Visit / Follow-up: </b>
+                  <b>{toDDMMYYYY(bill.next_visit) || bill.next_visit}</b>
+                </div>
+              )}
+            </div>
+          )}
           <div className="bv-totals">
             <div className="kv"><span>Subtotal</span><b>{money(bill.subtotal)}</b></div>
             <div className="kv"><span>Discount</span><b>− {money(bill.discount)}</b></div>

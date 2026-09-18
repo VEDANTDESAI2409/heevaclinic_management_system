@@ -84,3 +84,14 @@ export async function handleDelete(table, id, env) {
     return Response.json({ error: error.message || 'Operation failed' }, { status: 500 });
   }
 }
+
+export async function handleGetNextUhid(env) {
+  try {
+    const preview = await d1Client.getNextUhidPreview(env.DB);
+    return Response.json(preview, { status: 200, headers: noCacheHeaders });
+  } catch (error) {
+    console.error('[Worker D1 API] Error getting next UHID preview:', error);
+    return Response.json({ error: error.message || 'Operation failed' }, { status: 500, headers: noCacheHeaders });
+  }
+}
+

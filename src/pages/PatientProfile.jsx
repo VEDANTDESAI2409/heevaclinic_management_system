@@ -123,7 +123,7 @@ function EditPatientModal({ open, onClose, patient, user }) {
       gender: patient.gender === 'Female' ? 'F' : patient.gender === 'Male' ? 'M' : patient.gender || 'Other',
       marital_status: patient.marital_status || 'Single',
       mobile: patient.mobile,
-      alt_mobile: patient.alt_mobile, email: patient.email, address: patient.address,
+      address: patient.address,
       pin: patient.pin, blood_group: patient.blood_group, allergies: patient.allergies,
       conditions: patient.conditions, current_meds: patient.current_meds, notes: patient.notes,
     });
@@ -192,8 +192,6 @@ function EditPatientModal({ open, onClose, patient, user }) {
           </Select>
         </Field>
         <Field label="Mobile"><Input value={f.mobile || ''} onChange={set('mobile')} /></Field>
-        <Field label="Alternative Mobile"><Input value={f.alt_mobile || ''} onChange={set('alt_mobile')} /></Field>
-        <Field label="Email"><Input type="email" value={f.email || ''} onChange={set('email')} /></Field>
         <Field label="Address" className="fg-2"><Input value={f.address || ''} onChange={set('address')} /></Field>
         <Field label="PIN Code"><Input value={f.pin || ''} onChange={set('pin')} /></Field>
         <Field label="Blood Group">
@@ -306,8 +304,6 @@ export default function PatientProfile() {
         <div className="ov-grid">
           <Card title="Contact" className="ov-card">
             <div className="kv"><span>Mobile</span><b>{p.mobile || '—'}</b></div>
-            <div className="kv"><span>Alt. mobile</span><b>{p.alt_mobile || '—'}</b></div>
-            <div className="kv"><span>Email</span><b>{p.email || '—'}</b></div>
             <div className="kv"><span>Marital status</span><b>{p.marital_status || 'Single'}</b></div>
             <div className="kv"><span>Address</span><b>{p.address || '—'}{p.pin ? ` ${p.pin}` : ''}</b></div>
           </Card>

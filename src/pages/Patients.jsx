@@ -10,6 +10,7 @@ import {
 } from '../components/ui';
 import { registerPatient, deletePatient } from '../services/patients';
 import { getSettings } from '../services/core';
+import { getNextUhid } from '../services/api';
 import { ageLabel, fmtDate, fmtDateTime, fmtMoney, dkey, validMobile, download, toCSV } from '../utils';
 import { UserPlus, Download, Upload, Search, CheckCircle2, Phone, Droplets, Trash2 } from 'lucide-react';
 import CsvImportModal from '../components/csv/CsvImportModal';
@@ -19,9 +20,8 @@ const MARITAL_STATUSES = ['Single', 'Married', 'Divorced', 'Widowed', 'Other'];
 
 function emptyForm() {
   return {
-    name: '', age: '', gender: 'M', marital_status: 'Single', mobile: '', alt_mobile: '', email: '',
-    address: '', pin: '',
-    blood_group: '', allergies: '', conditions: '', current_meds: '', notes: '',
+    name: '', age: '', gender: 'M', marital_status: 'Single', mobile: '',
+    blood_group: '', address: '',
   };
 }
 
@@ -31,9 +31,19 @@ function RegisterModal({ open, onClose, prefill = {} }) {
   const [f, setF] = useState({ ...emptyForm(), ...prefill });
   const [errs, setErrs] = useState({});
   const [busy, setBusy] = useState(false);
+  const [serverPreview, setServerPreview] = useState(null);
 
   useEffect(() => {
-    if (open) { setF({ ...emptyForm(), ...prefill }); setErrs({}); }
+    if (open) {
+      setF({ ...emptyForm(), ...prefill });
+      setErrs({});
+      setServerPreview(null);
+      getNextUhid().then((res) => {
+        if (res && res.nextUhid) {
+          setServerPreview(res.nextUhid);
+        }
+      }).catch(() => {});
+    }
   }, [open]);
 
   // live UHID preview
@@ -41,11 +51,17 @@ function RegisterModal({ open, onClose, prefill = {} }) {
     if (!open) return null;
     const s = await getSettings();
     const year = new Date().getFullYear();
+    const pad = Number(s.uhid_padding) || 6;
+    const prefix = (s.uhid_prefix || 'HC').trim().toUpperCase();
+    const count = await db.patients.count();
+    if (count === 0) {
+      const n = Number(s.uhid_start) || 1;
+      return `${prefix}${s.uhid_include_year ? `-${year}` : ''}-${String(n).padStart(pad, '0')}`;
+    }
     const key = s.uhid_include_year ? `UHID|${year}` : 'UHID|ALL';
     const row = await db.counters.get(key);
     const n = row ? row.value + 1 : Number(s.uhid_start) || 1;
-    const pad = 3;
-    return `${(s.uhid_prefix || 'HC').toUpperCase()}${s.uhid_include_year ? `-${year}` : ''}-${String(n).padStart(pad, '0')}`;
+    return `${prefix}${s.uhid_include_year ? `-${year}` : ''}-${String(n).padStart(pad, '0')}`;
   }, [open]);
 
   const set = (k) => (e) => setF((x) => ({ ...x, [k]: e.target.value }));
@@ -79,7 +95,6 @@ function RegisterModal({ open, onClose, prefill = {} }) {
     if (!f.gender) e.gender = 'Select gender (M, F, Other)';
     if (!f.mobile || !f.mobile.trim()) e.mobile = 'Mobile number is required';
     else if (!validMobile(f.mobile)) e.mobile = 'Enter a valid 10-digit mobile number';
-    if (f.alt_mobile && !validMobile(f.alt_mobile)) e.alt_mobile = 'Invalid alternative mobile number';
     setErrs(e);
     return Object.keys(e).length === 0;
   };
@@ -103,9 +118,9 @@ function RegisterModal({ open, onClose, prefill = {} }) {
     <Modal
       open={open}
       onClose={onClose}
-      width="lg"
+      width="md"
       title="Register New Patient"
-      sub={<span className="uhid-preview">UHID will be assigned: <UhidChip uhid={uhidPreview || '…'} size="sm" /> — permanent, unique, never changes</span>}
+      sub={<span className="uhid-preview">UHID will be assigned: <UhidChip uhid={serverPreview || uhidPreview || '…'} size="sm" /> — permanent, unique, never changes</span>}
       footer={
         <>
           <Btn variant="ghost" onClick={onClose}>Cancel</Btn>
@@ -137,36 +152,13 @@ function RegisterModal({ open, onClose, prefill = {} }) {
         <Field label="Mobile Number" required error={errs.mobile}>
           <Input value={f.mobile} onChange={set('mobile')} placeholder="10-digit mobile" inputMode="numeric" />
         </Field>
-        <Field label="Alternative Mobile" error={errs.alt_mobile}>
-          <Input value={f.alt_mobile} onChange={set('alt_mobile')} inputMode="numeric" placeholder="Optional" />
-        </Field>
-        <Field label="Email Address">
-          <Input type="email" value={f.email} onChange={set('email')} placeholder="Optional email" />
-        </Field>
         <Field label="Blood Group">
           <Select value={f.blood_group} onChange={set('blood_group')}>
             {BLOOD_GROUPS.map((b) => <option key={b} value={b}>{b || 'Unknown'}</option>)}
           </Select>
         </Field>
-        <div className="fg-sep"><strong>Address Information</strong></div>
         <Field label="Address" className="fg-2">
           <Input value={f.address} onChange={set('address')} placeholder="Full address" />
-        </Field>
-        <Field label="PIN Code" error={errs.pin}>
-          <Input value={f.pin} onChange={set('pin')} inputMode="numeric" placeholder="Optional PIN" />
-        </Field>
-        <div className="fg-sep"><strong>Medical Information (Optional)</strong></div>
-        <Field label="Allergies" className="fg-2" hint="e.g. Penicillin, sulphur drugs">
-          <Textarea rows={2} value={f.allergies} onChange={set('allergies')} />
-        </Field>
-        <Field label="Important Medical Conditions" className="fg-2" hint="e.g. Diabetes, Hypertension, Asthma">
-          <Textarea rows={2} value={f.conditions} onChange={set('conditions')} />
-        </Field>
-        <Field label="Current Medications" className="fg-2">
-          <Textarea rows={2} value={f.current_meds} onChange={set('current_meds')} />
-        </Field>
-        <Field label="Notes" className="fg-2">
-          <Textarea rows={2} value={f.notes} onChange={set('notes')} />
         </Field>
       </div>
     </Modal>
@@ -224,21 +216,43 @@ export default function Patients() {
   }, [q, gender]);
 
   const exportCSV = () => {
+    const headers = [
+      'UHID',
+      'Registered Date & Time',
+      'Full Name',
+      'Age',
+      'Gender',
+      'Marital Status',
+      'Mobile Number',
+      'Blood Group',
+      'Address',
+      'PIN Code',
+      'Allergies',
+      'Important Medical Conditions',
+      'Current Medications',
+      'Notes',
+      'Patient Status',
+    ];
     const rows = (patients || []).map((p) => [
-      p.uhid,
-      p.name,
-      p.status || 'New',
+      p.uhid || '—',
+      fmtDateTime(p.created_at || p.reg_date),
+      p.name || '—',
       p.age != null ? p.age : ageLabel(p),
       p.gender || '—',
       p.marital_status || 'Single',
       p.mobile || '—',
-      p.address || '—',
-      fmtDateTime(p.created_at || p.reg_date),
       p.blood_group || '—',
+      p.address || '—',
+      p.pin || '—',
+      p.allergies || 'None',
+      p.conditions || 'None',
+      p.current_meds || 'None',
+      p.notes || '—',
+      p.status || 'New',
     ]);
     download(
-      `heeva-patients-${dkey()}.csv`,
-      toCSV(['UHID', 'Name', 'Status', 'Age', 'Gender', 'Marital Status', 'Mobile', 'Address', 'Registered Date & Time', 'Blood Group'], rows),
+      `heeva-patients-all-${dkey()}.csv`,
+      toCSV(headers, rows),
       'text/csv'
     );
   };

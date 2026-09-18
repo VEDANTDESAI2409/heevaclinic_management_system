@@ -7,7 +7,7 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import db from '../db';
 import { useApp } from '../context/AppContext';
 import {
-  Btn, Card, Modal, Field, Input, Select, Badge, PageHeader, EmptyState,
+  Btn, Card, Modal, Field, Input, Select, Textarea, Badge, PageHeader, EmptyState,
   UhidChip, SearchSelect, Seg, Confirm,
 } from '../components/ui';
 import BillViewer from '../components/BillViewer';
@@ -88,6 +88,9 @@ export default function Billing() {
   // patient
   const patients = useLiveQuery(async () => (await db.patients.toArray()).sort((a, b) => a.name.localeCompare(b.name)), []);
   const [patient, setPatient] = useState(null);
+  const [diagnosis, setDiagnosis] = useState('');
+  const [advice, setAdvice] = useState('');
+  const [nextVisit, setNextVisit] = useState('');
 
   // item catalog
   const stock = useLiveQuery(() => stockMap(), []);
@@ -115,7 +118,20 @@ export default function Billing() {
     setCart((x) => {
       const found = x.find((i) => i.item_type === 'medicine' && i.ref_id === m.id);
       if (found) return x.map((i) => (i === found ? { ...i, qty: i.qty + 1 } : i));
-      return [...x, { item_type: 'medicine', ref_id: m.id, name: m.name, qty: 1, price: m.selling_price, unit: m.unit }];
+      return [...x, {
+        item_type: 'medicine',
+        ref_id: m.id,
+        name: m.name,
+        qty: 1,
+        price: m.selling_price,
+        unit: m.unit,
+        dosage: '',
+        timing: '',
+        frequency: '',
+        duration: '',
+        composition: m.generic || '',
+        notes: '',
+      }];
     });
   };
 
@@ -144,6 +160,7 @@ export default function Billing() {
   };
 
   const setPrice = (idx, price) => setCart((x) => x.map((it, i) => (i === idx ? { ...it, price } : it)));
+  const setInstruction = (idx, field, value) => setCart((x) => x.map((it, i) => (i === idx ? { ...it, [field]: value } : it)));
   const removeItem = (idx) => setCart((x) => x.filter((_, i) => i !== idx));
 
   const subtotal = r2(cart.reduce((s, i) => s + i.qty * (Number(i.price) || 0), 0));
@@ -167,6 +184,29 @@ export default function Billing() {
     }
   }, [params, patients, services]); // eslint-disable-line
 
+  // Prefill diagnosis, advice, follow-up from patient's latest consultation
+  useEffect(() => {
+    if (patient?.id) {
+      db.consultations
+        .where('patient_id')
+        .equals(patient.id)
+        .reverse()
+        .sortBy('time')
+        .then((list) => {
+          if (list && list[0]) {
+            setDiagnosis((cur) => cur || list[0].diagnosis || '');
+            setAdvice((cur) => cur || list[0].advice || '');
+            setNextVisit((cur) => cur || list[0].follow_up || '');
+          }
+        })
+        .catch(() => {});
+    } else {
+      setDiagnosis('');
+      setAdvice('');
+      setNextVisit('');
+    }
+  }, [patient?.id]);
+
   const complete = async (payments) => {
     if (!patient) throw new Error('Select a patient first');
     if (!cart.length) throw new Error('Bill has no items');
@@ -179,6 +219,9 @@ export default function Billing() {
         discount_mode: discMode,
         discount_value: Number(discVal) || 0,
         payments,
+        diagnosis,
+        advice,
+        next_visit: nextVisit,
       }, user.id);
       pushToast('success', `Bill ${bill.bill_no} completed — inventory updated automatically`);
       await syncAlerts(user.id).catch(() => {});
@@ -186,6 +229,9 @@ export default function Billing() {
       setCart([]);
       setDiscVal('');
       setPatient(null);
+      setDiagnosis('');
+      setAdvice('');
+      setNextVisit('');
     } finally {
       setBusy(false);
     }
@@ -263,6 +309,33 @@ export default function Billing() {
                 )}
               </div>
             )}
+          </Card>
+
+          <Card title="Clinical Details" sub="Diagnosis, advice & follow-up" pad className="pos-clinical-card">
+            <Field label="Diagnosis">
+              <Input
+                value={diagnosis}
+                onChange={(e) => setDiagnosis(e.target.value)}
+                placeholder="e.g. CERVICAL RADICULOPATHY, ADHESIVE CAPSULITIS LEFT"
+              />
+            </Field>
+            <div style={{ marginTop: '8px' }}>
+              <Field label="Next Visit / Follow-up">
+                <Input
+                  type="date"
+                  value={nextVisit}
+                  onChange={(e) => setNextVisit(e.target.value)}
+                />
+              </Field>
+            </div>
+            <Field label="Advice / Instructions" style={{ marginTop: '8px' }}>
+              <Textarea
+                rows={2}
+                value={advice}
+                onChange={(e) => setAdvice(e.target.value)}
+                placeholder="Patient instructions, ice packs, exercise, diet (English / Gujarati)…"
+              />
+            </Field>
           </Card>
 
           <Card pad className="pos-catalog">
@@ -344,6 +417,149 @@ export default function Billing() {
                       </span>
                       <b className="cl-amt">{money(it.qty * (Number(it.price) || 0))}</b>
                     </div>
+                    {it.item_type === 'medicine' && (
+                      <div className="cl-instructions">
+                        <div className="cl-inst-grid">
+                          <div className="cl-inst-col">
+                            <span className="cl-inst-lbl">Dosage</span>
+                            <input
+                              className="input input-xs cl-inst-input"
+                              placeholder="e.g. 1-0-1"
+                              value={it.dosage || ''}
+                              onChange={(e) => setInstruction(i, 'dosage', e.target.value)}
+                              list={`dosage-presets-${i}`}
+                            />
+                            <datalist id={`dosage-presets-${i}`}>
+                              <option value="1-0-1" />
+                              <option value="1-0-0" />
+                              <option value="0-0-1" />
+                              <option value="1-1-1" />
+                            </datalist>
+                            <div className="cl-chip-row">
+                              {['1-0-1', '1-0-0', '0-0-1', '1-1-1'].map((d) => (
+                                <button
+                                  key={d}
+                                  type="button"
+                                  className={`cl-chip ${it.dosage === d ? 'active' : ''}`}
+                                  onClick={() => setInstruction(i, 'dosage', it.dosage === d ? '' : d)}
+                                >
+                                  {d}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+
+                          <div className="cl-inst-col">
+                            <span className="cl-inst-lbl">Timing</span>
+                            <input
+                              className="input input-xs cl-inst-input"
+                              placeholder="e.g. After Food"
+                              value={it.timing || ''}
+                              onChange={(e) => setInstruction(i, 'timing', e.target.value)}
+                              list={`timing-presets-${i}`}
+                            />
+                            <datalist id={`timing-presets-${i}`}>
+                              <option value="After Food" />
+                              <option value="Before Food" />
+                              <option value="With Food" />
+                              <option value="At Bedtime" />
+                            </datalist>
+                            <div className="cl-chip-row">
+                              {['After Food', 'Before Food', 'At Bedtime'].map((t) => (
+                                <button
+                                  key={t}
+                                  type="button"
+                                  className={`cl-chip ${it.timing === t ? 'active' : ''}`}
+                                  onClick={() => setInstruction(i, 'timing', it.timing === t ? '' : t)}
+                                >
+                                  {t}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+
+                          <div className="cl-inst-col">
+                            <span className="cl-inst-lbl">Frequency</span>
+                            <input
+                              className="input input-xs cl-inst-input"
+                              placeholder="e.g. Twice Daily"
+                              value={it.frequency || ''}
+                              onChange={(e) => setInstruction(i, 'frequency', e.target.value)}
+                              list={`freq-presets-${i}`}
+                            />
+                            <datalist id={`freq-presets-${i}`}>
+                              <option value="Once Daily" />
+                              <option value="Twice Daily" />
+                              <option value="Thrice Daily" />
+                              <option value="As Needed" />
+                            </datalist>
+                            <div className="cl-chip-row">
+                              {['Once Daily', 'Twice Daily', 'As Needed'].map((f) => (
+                                <button
+                                  key={f}
+                                  type="button"
+                                  className={`cl-chip ${it.frequency === f ? 'active' : ''}`}
+                                  onClick={() => setInstruction(i, 'frequency', it.frequency === f ? '' : f)}
+                                >
+                                  {f}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+
+                          <div className="cl-inst-col">
+                            <span className="cl-inst-lbl">Duration</span>
+                            <input
+                              className="input input-xs cl-inst-input"
+                              placeholder="e.g. 5 Days"
+                              value={it.duration || ''}
+                              onChange={(e) => setInstruction(i, 'duration', e.target.value)}
+                              list={`dur-presets-${i}`}
+                            />
+                            <datalist id={`dur-presets-${i}`}>
+                              <option value="3 Days" />
+                              <option value="5 Days" />
+                              <option value="7 Days" />
+                              <option value="10 Days" />
+                              <option value="Till Next Visit" />
+                            </datalist>
+                            <div className="cl-chip-row">
+                              {['5 Days', '10 Days', 'Till Next Visit'].map((dur) => (
+                                <button
+                                  key={dur}
+                                  type="button"
+                                  className={`cl-chip ${it.duration === dur ? 'active' : ''}`}
+                                  onClick={() => setInstruction(i, 'duration', it.duration === dur ? '' : dur)}
+                                >
+                                  {dur}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="cl-inst-extra" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginTop: '6px' }}>
+                          <div className="cl-inst-col">
+                            <span className="cl-inst-lbl">Composition (Optional)</span>
+                            <input
+                              className="input input-xs cl-inst-input"
+                              placeholder="e.g. Paracetamol 500mg"
+                              value={it.composition || ''}
+                              onChange={(e) => setInstruction(i, 'composition', e.target.value)}
+                            />
+                          </div>
+                          <div className="cl-inst-col">
+                            <span className="cl-inst-lbl">Notes (Optional)</span>
+                            <input
+                              className="input input-xs cl-inst-input"
+                              placeholder="e.g. Take with warm water"
+                              value={it.notes || ''}
+                              onChange={(e) => setInstruction(i, 'notes', e.target.value)}
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>

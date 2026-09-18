@@ -105,7 +105,7 @@ function PatientsTab({ from, to, setFrom, setTo, settings }) {
 
   const exportPatients = () => {
     const headers = ['UHID', 'Name', 'Age', 'Gender', 'Marital Status', 'Mobile', 'Address', 'Registered Date & Time'];
-    const rows = (data?.new_patients || []).map((p) => [
+    const rows = filteredNew.map((p) => [
       p.uhid,
       p.name,
       p.age ?? '',
@@ -121,7 +121,7 @@ function PatientsTab({ from, to, setFrom, setTo, settings }) {
   const printPatients = () => {
     printReport({
       title: 'Patients Registration Report',
-      subtitle: `${fmtDate(from)} to ${fmtDate(to)} · ${data?.new_patients?.length || 0} New Patients, ${data?.returning?.length || 0} Returning`,
+      subtitle: `${fmtDate(from)} to ${fmtDate(to)} · ${filteredNew.length} Patients${q ? ` (Search: "${q}")` : ''}`,
       columns: [
         { key: 'uhid', label: 'UHID' },
         { key: 'name', label: 'Name' },
@@ -207,6 +207,7 @@ function MedicinesTab({ from, to, setFrom, setTo, settings }) {
   const exp = useLiveQuery(() => expiryBuckets(), []);
   const stock = useLiveQuery(() => stockMap(), []);
   const money = (v) => fmtMoney(v, settings.currency);
+  const [q, setQ] = useState('');
 
   const lowRows = low ? [...low.out, ...low.low] : [];
 
@@ -217,50 +218,71 @@ function MedicinesTab({ from, to, setFrom, setTo, settings }) {
     ...exp.d90.map((b) => ({ ...b, state: 'n90' })),
   ] : [];
 
+  const filteredTop = useMemo(() => {
+    if (!top) return [];
+    if (!q.trim()) return top;
+    const s = q.trim().toLowerCase();
+    return top.filter((m) => m.name?.toLowerCase().includes(s));
+  }, [top, q]);
+
+  const filteredLow = useMemo(() => {
+    if (!lowRows) return [];
+    if (!q.trim()) return lowRows;
+    const s = q.trim().toLowerCase();
+    return lowRows.filter((r) => r.medicine?.name?.toLowerCase().includes(s));
+  }, [lowRows, q]);
+
+  const filteredExp = useMemo(() => {
+    if (!expRows) return [];
+    if (!q.trim()) return expRows;
+    const s = q.trim().toLowerCase();
+    return expRows.filter((b) => b.med_name?.toLowerCase().includes(s) || (b.batch?.batch_no || '').toLowerCase().includes(s));
+  }, [expRows, q]);
+
   const exportTop = () => {
     const headers = ['Medicine', 'Qty Sold', 'Revenue'];
-    const rows = (top || []).map((m) => [m.name, m.qty, m.revenue]);
+    const rows = filteredTop.map((m) => [m.name, m.qty, m.revenue]);
     download(`heeva-top-medicines-${from}-${to}.csv`, toCSV(headers, rows), 'text/csv');
   };
 
   const printTop = () => {
     printReport({
       title: 'Top Selling Medicines',
-      subtitle: `${fmtDate(from)} to ${fmtDate(to)}`,
+      subtitle: `${fmtDate(from)} to ${fmtDate(to)}${q ? ` · Filter: "${q}"` : ''}`,
       columns: [
         { key: 'name', label: 'Medicine' },
         { key: 'qty', label: 'Qty Sold', align: 'right' },
         { key: 'revenue', label: 'Revenue', align: 'right', render: (m) => money(m.revenue) },
       ],
-      rows: top,
+      rows: filteredTop,
       settings,
     });
   };
 
   const exportLow = () => {
     const headers = ['Medicine', 'Available', 'Minimum Level', 'Status'];
-    const rows = lowRows.map((r) => [r.medicine.name, r.available, r.min, r.available <= 0 ? 'OUT OF STOCK' : 'LOW STOCK']);
+    const rows = filteredLow.map((r) => [r.medicine.name, r.available, r.min, r.available <= 0 ? 'OUT OF STOCK' : 'LOW STOCK']);
     download(`heeva-low-stock.csv`, toCSV(headers, rows), 'text/csv');
   };
 
   const printLow = () => {
     printReport({
       title: 'Low & Out of Stock Medicines',
-      subtitle: `Inventory stock alerts`,
+      subtitle: `Inventory stock alerts${q ? ` · Filter: "${q}"` : ''}`,
       columns: [
         { key: 'name', label: 'Medicine', render: (r) => r.medicine.name },
         { key: 'available', label: 'Available', align: 'right' },
         { key: 'min', label: 'Minimum Level', align: 'right' },
         { key: 'st', label: 'Status', render: (r) => r.available <= 0 ? 'OUT OF STOCK' : 'LOW STOCK' },
       ],
-      rows: lowRows,
+      rows: filteredLow,
       settings,
     });
   };
 
   const exportExp = () => {
     const headers = ['Status', 'Days Remaining', 'Medicine', 'Batch #', 'Expiry Date', 'On Hand Qty', 'Value'];
-    const rows = expRows.map((b) => [
+    const rows = filteredExp.map((b) => [
       b.state === 'expired' ? 'EXPIRED' : `${b.days} days left`,
       b.days,
       b.med_name,
@@ -275,7 +297,7 @@ function MedicinesTab({ from, to, setFrom, setTo, settings }) {
   const printExp = () => {
     printReport({
       title: 'Medicine Expiry Report',
-      subtitle: `Expired and near-expiry batches with inventory values`,
+      subtitle: `Expired and near-expiry batches${q ? ` · Filter: "${q}"` : ''}`,
       columns: [
         { key: 'state', label: 'Status', render: (b) => b.state === 'expired' ? 'EXPIRED' : `${b.days}d left` },
         { key: 'med_name', label: 'Medicine' },
@@ -284,13 +306,21 @@ function MedicinesTab({ from, to, setFrom, setTo, settings }) {
         { key: 'on_hand', label: 'On Hand', align: 'right' },
         { key: 'value', label: 'Value', align: 'right', render: (b) => money(b.on_hand * (b.batch.purchase_price || 0)) },
       ],
-      rows: expRows,
+      rows: filteredExp,
       settings,
     });
   };
 
   return (
     <div className="rep-stacks">
+      <div style={{ margin: '0 0 14px 0', maxWidth: 360 }}>
+        <Input
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder="Filter medicines across reports…"
+        />
+      </div>
+
       <Card
         title="Top Selling Medicines"
         sub={`Quantity & revenue · ${fmtDate(from)} to ${fmtDate(to)}`}
@@ -307,7 +337,7 @@ function MedicinesTab({ from, to, setFrom, setTo, settings }) {
             { key: 'qty', label: 'Qty Sold', align: 'right', sortable: true },
             { key: 'revenue', label: 'Revenue', align: 'right', sortable: true, render: (m) => money(m.revenue) },
           ]}
-          rows={top}
+          rows={filteredTop}
           pageSize={10}
           empty={<EmptyState compact icon="💊" title="No medicine sales in range" />}
         />
@@ -329,7 +359,7 @@ function MedicinesTab({ from, to, setFrom, setTo, settings }) {
             { key: 'min', label: 'Minimum', align: 'right' },
             { key: 'st', label: 'Status', render: (r) => r.available <= 0 ? <Badge tone="red">OUT</Badge> : <Badge tone="amber">LOW</Badge> },
           ]}
-          rows={lowRows}
+          rows={filteredLow}
           pageSize={10}
           empty={<EmptyState compact icon="✅" title="No low stock items" />}
         />
@@ -356,7 +386,7 @@ function MedicinesTab({ from, to, setFrom, setTo, settings }) {
             { key: 'on_hand', label: 'On Hand', align: 'right' },
             { key: 'value', label: 'Value (buy)', align: 'right', render: (b) => money(b.on_hand * (b.batch.purchase_price || 0)) },
           ]}
-          rows={expRows}
+          rows={filteredExp}
           pageSize={12}
           empty={<EmptyState compact icon="✅" title="Nothing expired or near expiry" />}
         />
@@ -368,10 +398,22 @@ function MedicinesTab({ from, to, setFrom, setTo, settings }) {
 function FinancialTab({ from, to, setFrom, setTo, settings }) {
   const data = useLiveQuery(() => financialReport(from, to), [from, to]);
   const money = (v) => fmtMoney(v, settings.currency);
+  const [q, setQ] = useState('');
+
+  const filteredPending = useMemo(() => {
+    const list = data?.pending_payments || [];
+    if (!q.trim()) return list;
+    const s = q.trim().toLowerCase();
+    return list.filter((r) =>
+      r.bill?.bill_no?.toLowerCase().includes(s) ||
+      r.bill?.patient_name?.toLowerCase().includes(s) ||
+      r.bill?.uhid?.toLowerCase().includes(s)
+    );
+  }, [data?.pending_payments, q]);
 
   const exportFinancial = () => {
     const summaryHeader = ['Report', 'From', 'To', 'Total Revenue', 'Total Expenses', 'Net Profit', 'Total Pending'];
-    const summaryRow = ['Financial Summary', fmtDate(from), fmtDate(to), data?.revenue || 0, data?.expenses || 0, data?.profit || 0, data?.pending_payments?.reduce((s, p) => s + p.due, 0) || 0];
+    const summaryRow = ['Financial Summary', fmtDate(from), fmtDate(to), data?.revenue || 0, data?.expenses || 0, data?.profit || 0, filteredPending.reduce((s, p) => s + p.due, 0)];
 
     const methodHeaders = ['Payment Method', 'Amount Collected'];
     const methodRows = Object.entries(data?.revenue_by_method || {}).map(([m, a]) => [m, a]);
@@ -380,7 +422,7 @@ function FinancialTab({ from, to, setFrom, setTo, settings }) {
     const catRows = Object.entries(data?.expenses_by_category || {}).map(([c, a]) => [c, a]);
 
     const pendingHeaders = ['Bill #', 'Patient Name', 'UHID', 'Bill Date', 'Days Pending', 'Amount Due'];
-    const pendingRows = (data?.pending_payments || []).map((r) => [
+    const pendingRows = filteredPending.map((r) => [
       r.bill.bill_no,
       r.bill.patient_name,
       r.bill.uhid,
@@ -409,7 +451,7 @@ function FinancialTab({ from, to, setFrom, setTo, settings }) {
   const printFinancial = () => {
     printReport({
       title: 'Financial Report & Pending Receivables',
-      subtitle: `${fmtDate(from)} to ${fmtDate(to)} · Revenue: ${money(data?.revenue)} · Expenses: ${money(data?.expenses)} · Net Profit: ${money(data?.profit)}`,
+      subtitle: `${fmtDate(from)} to ${fmtDate(to)} · Revenue: ${money(data?.revenue)} · Expenses: ${money(data?.expenses)} · Net Profit: ${money(data?.profit)}${q ? ` · Filter: "${q}"` : ''}`,
       columns: [
         { key: 'bill_no', label: 'Bill #', render: (r) => r.bill.bill_no },
         { key: 'patient', label: 'Patient', render: (r) => r.bill.patient_name },
@@ -418,8 +460,8 @@ function FinancialTab({ from, to, setFrom, setTo, settings }) {
         { key: 'days', label: 'Days Pending', align: 'right', render: (r) => Math.max(0, -r.days) },
         { key: 'due', label: 'Amount Due', align: 'right', render: (r) => money(r.due) },
       ],
-      rows: data?.pending_payments,
-      totals: { bill_no: 'TOTAL DUE', due: money(data?.pending_payments?.reduce((s, p) => s + p.due, 0)) },
+      rows: filteredPending,
+      totals: { bill_no: 'TOTAL DUE', due: money(filteredPending.reduce((s, p) => s + p.due, 0)) },
       settings,
     });
   };
@@ -439,7 +481,7 @@ function FinancialTab({ from, to, setFrom, setTo, settings }) {
             <span className="cat-chip"><TrendingUp size={13} /> Revenue: <b>{money(data.revenue)}</b></span>
             <span className="cat-chip"><Wallet size={13} /> Expenses: <b>{money(data.expenses)}</b></span>
             <span className="cat-chip">Est. Profit: <b className={data.profit < 0 ? 'val-red' : 'val-green'}>{money(data.profit)}</b></span>
-            <span className="cat-chip">Pending receivables: <b>{money(data.pending_payments.reduce((s, p) => s + p.due, 0))}</b> ({data.pending_payments.length} bills)</span>
+            <span className="cat-chip">Pending receivables: <b>{money(filteredPending.reduce((s, p) => s + p.due, 0))}</b> ({filteredPending.length} bills)</span>
           </div>
         )}
         {data && (
@@ -472,7 +514,16 @@ function FinancialTab({ from, to, setFrom, setTo, settings }) {
             </div>
           </div>
         )}
-        <h4 className="sub-head">Pending Payments (all time, oldest first)</h4>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 14, marginBottom: 8, flexWrap: 'wrap', gap: 8 }}>
+          <h4 className="sub-head" style={{ margin: 0 }}>Pending Payments ({filteredPending.length})</h4>
+          <div style={{ maxWidth: 300, flex: 1 }}>
+            <Input
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder="Search pending bills…"
+            />
+          </div>
+        </div>
         <DataTable
           dense
           columns={[
@@ -483,7 +534,7 @@ function FinancialTab({ from, to, setFrom, setTo, settings }) {
             { key: 'age', label: 'Days', align: 'right', sortable: true, render: (r) => Math.max(0, -r.days) },
             { key: 'amt', label: 'Due', align: 'right', sortable: true, sortValue: (r) => r.due, render: (r) => <b className="val-red">{money(r.due)}</b> },
           ]}
-          rows={data?.pending_payments}
+          rows={filteredPending}
           pageSize={10}
           empty={<EmptyState compact icon="✅" title="All bills settled" />}
         />

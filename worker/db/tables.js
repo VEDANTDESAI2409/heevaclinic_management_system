@@ -45,8 +45,8 @@ export const tableColumns = {
   ],
   counters: ['id', 'key', 'value', 'created_at', 'updated_at'],
   patients: [
-    'id', 'uhid', 'name', 'age', 'gender', 'mobile', 'alt_mobile',
-    'email', 'address', 'pin', 'marital_status',
+    'id', 'uhid', 'name', 'age', 'gender', 'mobile',
+    'address', 'pin', 'marital_status',
     'blood_group', 'allergies', 'conditions', 'current_meds', 'notes', 'active',
     'reg_date', 'created_by', 'created_at', 'updated_at'
   ],
@@ -101,13 +101,14 @@ export const tableColumns = {
   bills: [
     'id', 'bill_no', 'patient_id', 'uhid', 'patient_name', 'patient_mobile',
     'patient_age', 'patient_gender', 'date', 'time', 'doctor_name', 'doctor_phone',
+    'diagnosis', 'advice', 'next_visit',
     'item_count', 'subtotal',
     'discount', 'total', 'paid', 'status', 'payment_status', 'bill_type',
     'created_by', 'cancel_reason', 'cancelled_at', 'cancelled_by', 'created_at', 'updated_at'
   ],
   bill_items: [
     'id', 'bill_id', 'item_type', 'ref_id', 'name', 'qty', 'price', 'amount',
-    'batch_id', 'batch_no', 'returned', 'created_at', 'updated_at'
+    'batch_id', 'batch_no', 'dosage', 'timing', 'frequency', 'duration', 'composition', 'notes', 'returned', 'created_at', 'updated_at'
   ],
   payments: [
     'id', 'bill_id', 'patient_id', 'kind', 'amount', 'method', 'note', 'by',

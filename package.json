@@ -13,9 +13,10 @@
     "build": "vite build",
     "preview": "vite preview",
     "icons": "node scripts/make-icons.js",
+    "test:uhid": "esbuild scripts/test-uhid-sequence.mjs --bundle --platform=node --format=esm --external:dexie --external:fake-indexeddb --outfile=.test-uhid.bundle.mjs --log-level=warning && node --import ./scripts/fidb-first.mjs .test-uhid.bundle.mjs",
     "smoke": "esbuild scripts/smoke.mjs --bundle --platform=node --format=esm --external:dexie --external:fake-indexeddb --outfile=.smoke.bundle.mjs --log-level=warning && node --import ./scripts/fidb-first.mjs .smoke.bundle.mjs",
     "render": "esbuild scripts/render-test.mjs --bundle --platform=node --format=esm --packages=external --outfile=.render.bundle.mjs --log-level=warning && node --import ./scripts/fidb-first.mjs .render.bundle.mjs",
-    "test": "npm run smoke && npm run render"
+    "test": "npm run test:uhid && npm run smoke && npm run render"
   },
   "dependencies": {
     "@fontsource-variable/inter": "^5.1.0",

@@ -86,7 +86,17 @@ export async function nextCounter(key, start = 1) {
 export async function makeUHID(settings, year = new Date().getFullYear()) {
   const s = settings || (await getSettings());
   const key = s.uhid_include_year ? `UHID|${year}` : 'UHID|ALL';
-  const n = await nextCounter(key, Number(s.uhid_start) || 1);
+  const patientCount = await db.patients.count();
+  const start = Number(s.uhid_start) || 1;
+  let n;
+  if (patientCount === 0) {
+    // Intentional exception: When patient database is completely empty, sequence starts from uhid_start (1)
+    n = start;
+    await db.counters.put({ key, value: n });
+  } else {
+    // Patients exist: persistent counter MUST NEVER reuse deleted patient numbers
+    n = await nextCounter(key, start);
+  }
   const pad = Number(s.uhid_padding) || 6;
   const prefix = (s.uhid_prefix || 'HC').trim().toUpperCase();
   return `${prefix}${s.uhid_include_year ? `-${year}` : ''}-${String(n).padStart(pad, '0')}`;

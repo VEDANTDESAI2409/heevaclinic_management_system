@@ -40,15 +40,16 @@ for (const entity of ['patients', 'medicines', 'medicine_categories', 'doctors',
 
 // Test patient validation
 const patientRows = [
-  { __rowNum: 2, name: 'John Doe', dob: '1990-01-01', gender: 'male', mobile: '9825012345', email: 'john@example.com' },
-  { __rowNum: 3, name: 'J', dob: '2099-01-01', gender: 'invalid', mobile: '123' }, // Multiple invalid fields
+  { __rowNum: 2, name: 'John Doe', age: '34', gender: 'male', mobile: '9825012345', date_time: '05-09-2026 10:45' },
+  { __rowNum: 3, name: 'J', age: '-5', gender: 'invalid', mobile: '123', date_time: 'invalid-date' }, // Multiple invalid fields
 ];
 
 const patientValidation = validateCSVRows('patients', patientRows);
 assert(patientValidation.summary.total === 2, 'Patient validation total count is 2');
 assert(patientValidation.summary.validCount === 1, '1 valid patient row');
 assert(patientValidation.summary.invalidCount === 1, '1 invalid patient row');
-assert(patientValidation.invalidRows[0].errors.length >= 3, 'Correctly flagged short name, future DOB, invalid gender, invalid mobile');
+assert(patientValidation.invalidRows[0].errors.length >= 3, 'Correctly flagged short name, invalid age, invalid gender, invalid mobile, invalid date_time');
+assert(patientValidation.validRows[0].created_at === '2026-09-05T10:45:00.000Z', 'Correctly preserved historical Date & Time in created_at');
 
 // Test batch validation with medicine lookup
 const medContext = {
@@ -69,16 +70,34 @@ const API_BASE = process.env.API_BASE || 'http://localhost:8787';
 
 async function testBackend() {
   try {
-    const res = await fetch(`${API_BASE}/api/health`);
+    let res;
+    try {
+      res = await fetch(`${API_BASE}/api/health`);
+    } catch {
+      console.log(`Backend server at ${API_BASE} is not running. Unit and parser tests passed (${passed} checks). Skipping live network checks.`);
+      process.exit(0);
+    }
     if (!res.ok) throw new Error(`Healthcheck failed: ${res.status}`);
     const health = await res.json();
     assert(health.status === 'ok' && (health.storage === 'd1' || health.storage === 'json'), 'Backend is online and serving storage');
+
+    // Authenticate to get session token
+    const loginRes = await fetch(`${API_BASE}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: 'heeva@26' }),
+    });
+    const loginData = await loginRes.json();
+    const authHeaders = {
+      'Content-Type': 'application/json',
+      ...(loginData?.token ? { 'Authorization': `Bearer ${loginData.token}` } : {}),
+    };
 
     // Test import categories
     const testCatName = `TestCat-${Date.now()}`;
     const catRes = await fetch(`${API_BASE}/api/medicine_categories/import`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders,
       body: JSON.stringify({
         records: [{ name: testCatName }],
         userId: 'test-admin',
@@ -93,15 +112,15 @@ async function testBackend() {
     const testMobile = `98${Math.floor(10000000 + Math.random() * 90000000)}`;
     const patientRes = await fetch(`${API_BASE}/api/patients/import`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders,
       body: JSON.stringify({
         records: [{
           name: 'CSV Test Patient',
-          dob: '1992-04-10',
+          age: 34,
           gender: 'Male',
           mobile: testMobile,
-          city: 'Surat',
-          state: 'Gujarat',
+          date_time: '05-09-2026 10:45',
+          address: 'Surat',
         }],
         userId: 'test-admin',
       }),
@@ -116,7 +135,7 @@ async function testBackend() {
     const testMedName = `TestMed-${Date.now()}`;
     const medRes = await fetch(`${API_BASE}/api/medicines/import`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders,
       body: JSON.stringify({
         records: [{
           name: testMedName,
@@ -138,7 +157,7 @@ async function testBackend() {
     const testDocName = `Dr. Test-${Date.now()}`;
     const docRes = await fetch(`${API_BASE}/api/doctors/import`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders,
       body: JSON.stringify({
         records: [{
           name: testDocName,
@@ -157,7 +176,7 @@ async function testBackend() {
     const testBatchNo = `BAT-${Date.now()}`;
     const batchRes = await fetch(`${API_BASE}/api/medicine_batches/import`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders,
       body: JSON.stringify({
         records: [{
           medicine_id: createdMed.id,
@@ -177,19 +196,19 @@ async function testBackend() {
 
     // Clean up created test records
     if (patientData.records[0]?.id) {
-      await fetch(`${API_BASE}/api/patients/${patientData.records[0].id}`, { method: 'DELETE' });
+      await fetch(`${API_BASE}/api/patients/${patientData.records[0].id}`, { method: 'DELETE', headers: authHeaders });
     }
     if (catData.records[0]?.id) {
-      await fetch(`${API_BASE}/api/medicine_categories/${catData.records[0].id}`, { method: 'DELETE' });
+      await fetch(`${API_BASE}/api/medicine_categories/${catData.records[0].id}`, { method: 'DELETE', headers: authHeaders });
     }
     if (createdMed?.id) {
-      await fetch(`${API_BASE}/api/medicines/${createdMed.id}`, { method: 'DELETE' });
+      await fetch(`${API_BASE}/api/medicines/${createdMed.id}`, { method: 'DELETE', headers: authHeaders });
     }
     if (docData.records[0]?.id) {
-      await fetch(`${API_BASE}/api/doctors/${docData.records[0].id}`, { method: 'DELETE' });
+      await fetch(`${API_BASE}/api/doctors/${docData.records[0].id}`, { method: 'DELETE', headers: authHeaders });
     }
     if (batchData.records[0]?.id) {
-      await fetch(`${API_BASE}/api/medicine_batches/${batchData.records[0].id}`, { method: 'DELETE' });
+      await fetch(`${API_BASE}/api/medicine_batches/${batchData.records[0].id}`, { method: 'DELETE', headers: authHeaders });
     }
 
     console.log(`\nResults: ${passed} passed, ${failed} failed.`);

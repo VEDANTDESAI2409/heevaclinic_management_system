@@ -27,7 +27,7 @@ function billTypeLabel(items) {
  * payments: [{ amount, method, note? }]
  * Returns { bill, items, allocations } or throws (transaction rolls back).
  */
-export async function createBill({ patient_id, items, discount_mode = 'amt', discount_value = 0, payments = [], when = null, doctor_id = null, doctor_name = null, doctor_phone = null }, userId) {
+export async function createBill({ patient_id, items, discount_mode = 'amt', discount_value = 0, payments = [], when = null, doctor_id = null, doctor_name = null, doctor_phone = null, diagnosis = null, advice = null, next_visit = null }, userId) {
   const settings = await getSettings();
   return db.transaction('rw', [db.bills, db.bill_items, db.payments, db.batches, db.inventory_txns, db.counters, db.activity_logs, db.patients, db.medicines, db.services], async () => {
     const patient = await db.patients.get(patient_id);
@@ -45,7 +45,21 @@ export async function createBill({ patient_id, items, discount_mode = 'amt', dis
         const alloc = await allocateFEFO(med.id, qty, settings);
         const price = it.price != null && it.price !== '' ? Number(it.price) : med.selling_price;
         for (const a of alloc) {
-          resolved.push({ item_type: 'medicine', ref_id: med.id, name: med.name, qty: a.qty, price, batch_id: a.batch_id, batch_no: a.batch_no });
+          resolved.push({
+            item_type: 'medicine',
+            ref_id: med.id,
+            name: med.name,
+            qty: a.qty,
+            price,
+            batch_id: a.batch_id,
+            batch_no: a.batch_no,
+            dosage: it.dosage || null,
+            timing: it.timing || null,
+            frequency: it.frequency || null,
+            duration: it.duration || null,
+            composition: it.composition || null,
+            notes: it.notes || null,
+          });
         }
       } else if (it.item_type === 'service' || it.item_type === 'consultation') {
         const svc = await db.services.get(it.ref_id);
@@ -56,6 +70,12 @@ export async function createBill({ patient_id, items, discount_mode = 'amt', dis
           name: svc.name,
           qty,
           price: it.price != null && it.price !== '' ? Number(it.price) : svc.price,
+          dosage: it.dosage || null,
+          timing: it.timing || null,
+          frequency: it.frequency || null,
+          duration: it.duration || null,
+          composition: it.composition || null,
+          notes: it.notes || null,
         });
       } else throw new Error('Invalid item type');
     }
@@ -81,6 +101,9 @@ export async function createBill({ patient_id, items, discount_mode = 'amt', dis
       time: now,
       doctor_name: doctor_name || settings.doctor_name || 'Dr. Mit Nayak',
       doctor_phone: doctor_phone || settings.doctor_phone || '9913974000',
+      diagnosis: diagnosis ? diagnosis.trim() : null,
+      advice: advice ? advice.trim() : null,
+      next_visit: next_visit ? next_visit.trim() : null,
       item_count: resolved.length,
       subtotal,
       discount,
@@ -109,6 +132,12 @@ export async function createBill({ patient_id, items, discount_mode = 'amt', dis
         amount,
         batch_id: it.batch_id || null,
         batch_no: it.batch_no || null,
+        dosage: it.dosage || null,
+        timing: it.timing || null,
+        frequency: it.frequency || null,
+        duration: it.duration || null,
+        composition: it.composition || null,
+        notes: it.notes || null,
         returned: 0,
       });
     }

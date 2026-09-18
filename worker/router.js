@@ -5,6 +5,7 @@ import {
   handleCreate,
   handleUpdate,
   handleDelete,
+  handleGetNextUhid,
 } from './routes/genericCrud.js';
 import { handleBulkImport } from './routes/import.js';
 import { verifyAuthToken } from './auth.js';
@@ -62,6 +63,11 @@ export async function routeApi(request, env, pathname) {
   if (segments.length === 2 && segments[1] === 'import' && method === 'POST') {
     const body = await request.json().catch(() => ({}));
     return handleBulkImport(table, body, env);
+  }
+
+  // 5.5. Live UHID preview: GET /api/patients/next-uhid
+  if (table === 'patients' && segments.length === 2 && segments[1] === 'next-uhid' && method === 'GET') {
+    return handleGetNextUhid(env);
   }
 
   // 6. Collection Root: /api/:table

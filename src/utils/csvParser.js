@@ -103,13 +103,18 @@ export function parseCSV(text) {
 
   // Extract and normalize header line
   const rawHeaders = nonEmptyRows[0];
-  const headers = rawHeaders.map((h) =>
-    h
-      .toLowerCase()
-      .trim()
+  const headers = rawHeaders.map((h) => {
+    const s = h.toLowerCase().trim();
+    if (s === 'date & time' || s === 'date &time' || s === 'date&time' || s === 'date and time' || s === 'date_time') {
+      return 'date_time';
+    }
+    return s
+      .replace(/&/g, 'and')
       .replace(/[\s\-\/]+/g, '_')
       .replace(/[^a-z0-9_]/g, '')
-  );
+      .replace(/_+/g, '_')
+      .replace(/^_|_$/g, '');
+  });
 
   const rows = [];
   // Each data row begins at row index 2 (line 1 is the header)

@@ -2,6 +2,8 @@
 import db from '../db';
 import { uid, nowISO, dkey, ageFromDob } from '../utils';
 import { makeUHID, audit, getSettings } from './core';
+import { createPatient as createPatientRemote } from './api';
+import { isBrowserRuntime } from '../lib/remoteSync';
 
 const digits = (s) => String(s || '').replace(/\D/g, '');
 /**
@@ -18,30 +20,62 @@ export async function registerPatient(data, userId, { temp = false } = {}) {
   if (mobile.length !== 10) throw new Error('Enter a valid 10-digit mobile number');
   const gender = data.gender === 'Male' ? 'M' : data.gender === 'Female' ? 'F' : data.gender;
   const now = nowISO();
+  const createdAt = data.created_at || now;
+  const regDate = data.reg_date || dkey(new Date(createdAt));
+
+  const patientPayload = {
+    id: data.id || uid(),
+    name,
+    age,
+    gender,
+    marital_status: data.marital_status || 'Single',
+    mobile,
+    address: data.address || '',
+    pin: String(data.pin || ''),
+    blood_group: data.blood_group || '',
+    allergies: data.allergies || '',
+    conditions: data.conditions || '',
+    current_meds: data.current_meds || '',
+    notes: data.notes || '',
+    active: 1,
+    reg_date: regDate,
+    created_at: createdAt,
+    created_by: userId || null,
+  };
+
+  // If running in browser and backend is connected, atomically allocate UHID in Cloudflare D1
+  if (isBrowserRuntime()) {
+    try {
+      const serverPatient = await createPatientRemote(patientPayload);
+      if (serverPatient && serverPatient.uhid) {
+        const prevHydrating = db.__hydrating;
+        db.__hydrating = true;
+        try {
+          await db.patients.put(serverPatient);
+          const year = new Date().getFullYear();
+          const key = settings.uhid_include_year ? `UHID|${year}` : 'UHID|ALL';
+          const match = serverPatient.uhid.match(/-(\d+)$/);
+          if (match) {
+            await db.counters.put({ key, value: Number(match[1]) });
+          }
+        } finally {
+          db.__hydrating = prevHydrating;
+        }
+        await audit(userId, 'PATIENT_CREATE', 'patient', serverPatient.id, `${serverPatient.name} · ${serverPatient.uhid}`);
+        return serverPatient;
+      }
+    } catch (err) {
+      console.warn('[registerPatient] Server allocation failed or offline, falling back to local transaction:', err.message);
+    }
+  }
+
+  // Fallback for offline / Node.js test environment (fake-indexeddb)
   return db.transaction('rw', [db.patients, db.counters, db.activity_logs], async () => {
     const uhid = await makeUHID(settings);
     if (await db.patients.where('uhid').equals(uhid).count()) throw new Error('UHID collision detected — please retry');
     const p = {
-      id: uid(),
+      ...patientPayload,
       uhid,
-      name,
-      age,
-      gender,
-      marital_status: data.marital_status || 'Single',
-      mobile,
-      alt_mobile: digits(data.alt_mobile),
-      email: data.email || '',
-      address: data.address || '',
-      pin: String(data.pin || ''),
-      blood_group: data.blood_group || '',
-      allergies: data.allergies || '',
-      conditions: data.conditions || '',
-      current_meds: data.current_meds || '',
-      notes: data.notes || '',
-      active: 1,
-      reg_date: dkey(new Date(now)),
-      created_at: now,
-      created_by: userId || null,
     };
     await db.patients.add(p);
     await audit(userId, 'PATIENT_CREATE', 'patient', p.id, `${p.name} · ${p.uhid}`);
@@ -86,7 +120,7 @@ export async function reactivatePatient(id, userId) {
 }
 
 export async function deletePatient(id, userId) {
-  return db.transaction('rw', [db.patients, db.consultations, db.bills, db.prescriptions, db.appointments, db.patient_vitals, db.activity_logs], async () => {
+  return db.transaction('rw', [db.patients, db.counters, db.consultations, db.bills, db.prescriptions, db.appointments, db.patient_vitals, db.activity_logs], async () => {
     const p = await db.patients.get(id);
     if (!p) throw new Error('Patient not found');
     const [cCount, bCount, prCount, aCount, vCount] = await Promise.all([
@@ -101,6 +135,15 @@ export async function deletePatient(id, userId) {
     }
     await db.patients.delete(id);
     await audit(userId, 'PATIENT_DELETE', 'patient', id, `${p.name} · ${p.uhid}`);
+
+    // If all patients are now deleted (0 patients remaining in database), reset local UHID counters
+    const remaining = await db.patients.count();
+    if (remaining === 0) {
+      const uhidCounters = await db.counters.filter((c) => String(c.key).startsWith('UHID|')).toArray();
+      for (const c of uhidCounters) {
+        await db.counters.put({ ...c, value: 0 });
+      }
+    }
   });
 }
 

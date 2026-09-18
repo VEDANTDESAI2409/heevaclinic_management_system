@@ -67,8 +67,148 @@ export const d1Client = {
     return row;
   },
 
-  async create(db, collection, item) {
+  async getNextUhidPreview(db) {
+    const settingsRow = (await db.prepare('SELECT * FROM clinic_settings LIMIT 1').first()) || {};
+    const year = new Date().getFullYear();
+    const includeYear = settingsRow.uhid_include_year !== 0 && settingsRow.uhid_include_year !== false;
+    const counterKey = includeYear ? `UHID|${year}` : 'UHID|ALL';
+    const pad = Number(settingsRow.uhid_padding) || 6;
+    const prefix = (settingsRow.uhid_prefix || 'HC').trim().toUpperCase();
+    const start = Number(settingsRow.uhid_start) || 1;
+
+    const countRow = await db.prepare('SELECT COUNT(*) as count FROM patients').first();
+    const patientCount = countRow ? Number(countRow.count) : 0;
+
+    let nextNumber;
+    if (patientCount === 0) {
+      nextNumber = start;
+    } else {
+      const counterRow = await db.prepare('SELECT * FROM counters WHERE key = ? OR id = ? LIMIT 1').bind(counterKey, counterKey).first();
+      nextNumber = counterRow ? Number(counterRow.value) + 1 : start;
+    }
+
+    const nextUhid = `${prefix}${includeYear ? `-${year}` : ''}-${String(nextNumber).padStart(pad, '0')}`;
+    return {
+      ok: true,
+      nextUhid,
+      nextNumber,
+      counterKey,
+      pad,
+      prefix,
+      year,
+      patientCount,
+    };
+  },
+
+  async allocatePatient(db, item, options = {}) {
+    const now = nowISO();
+    const today = now.slice(0, 10);
+    const userId = options.userId || item.created_by || null;
+    const id = String(item.id || crypto.randomUUID());
+
+    // Check if patient with this id already exists
+    const existing = await this.getById(db, 'patients', id);
+    if (existing) {
+      return this.update(db, 'patients', id, item);
+    }
+
+    const settingsRow = (await db.prepare('SELECT * FROM clinic_settings LIMIT 1').first()) || {};
+    const year = new Date().getFullYear();
+    const includeYear = settingsRow.uhid_include_year !== 0 && settingsRow.uhid_include_year !== false;
+    const counterKey = includeYear ? `UHID|${year}` : 'UHID|ALL';
+    const pad = Number(settingsRow.uhid_padding) || 6;
+    const prefix = (settingsRow.uhid_prefix || 'HC').trim().toUpperCase();
+    const start = Number(settingsRow.uhid_start) || 1;
+
+    // Check actual count of patients in D1 database
+    const countRow = await db.prepare('SELECT COUNT(*) as count FROM patients').first();
+    const patientCount = countRow ? Number(countRow.count) : 0;
+
+    let uhid = item.uhid ? String(item.uhid).trim() : null;
+    let nextVal;
+
+    if (patientCount === 0) {
+      // Intentional exception: When patient database has ZERO patients, sequence starts from uhid_start (default 1)
+      nextVal = start;
+      if (!uhid) {
+        uhid = `${prefix}${includeYear ? `-${year}` : ''}-${String(nextVal).padStart(pad, '0')}`;
+      }
+    } else {
+      // Patients exist: persistent counter MUST NEVER reuse deleted patient numbers
+      const counterRow = await db.prepare('SELECT * FROM counters WHERE key = ? OR id = ? LIMIT 1').bind(counterKey, counterKey).first();
+      nextVal = counterRow ? Number(counterRow.value) + 1 : start;
+      if (!uhid) {
+        uhid = `${prefix}${includeYear ? `-${year}` : ''}-${String(nextVal).padStart(pad, '0')}`;
+      }
+    }
+
+    // If a specific UHID was provided, advance counter to ensure it's not reused
+    if (uhid) {
+      const match = uhid.match(/-(\d+)$/);
+      if (match) {
+        const numInUhid = Number(match[1]);
+        if (!isNaN(numInUhid) && numInUhid > nextVal) {
+          nextVal = numInUhid;
+        }
+      }
+    }
+
+    const itemAge = item.age !== undefined && item.age !== null && item.age !== ''
+      ? Number(item.age)
+      : (item.dob ? Math.max(0, Math.floor((Date.now() - new Date(item.dob).getTime()) / (365.25 * 24 * 3600 * 1000))) : null);
+
+    const itemCreatedAt = item.created_at || now;
+    const itemRegDate = item.reg_date || itemCreatedAt.slice(0, 10) || today;
+
+    const patientRecord = {
+      id,
+      uhid,
+      name: String(item.name || '').trim(),
+      age: itemAge,
+      gender: item.gender || '',
+      mobile: String(item.mobile || ''),
+      marital_status: item.marital_status || 'Single',
+      address: item.address || '',
+      pin: item.pin ? String(item.pin) : '',
+      blood_group: item.blood_group || '',
+      allergies: item.allergies || '',
+      conditions: item.conditions || '',
+      current_meds: item.current_meds || '',
+      notes: item.notes || '',
+      active: item.active !== undefined ? item.active : 1,
+      reg_date: itemRegDate,
+      created_by: userId,
+      created_at: itemCreatedAt,
+      updated_at: now,
+    };
+
+    const filtered = filterFields('patients', patientRecord);
+    const cols = Object.keys(filtered);
+    const placeholders = cols.map(() => '?');
+    const values = cols.map((c) => filtered[c]);
+
+    const batchStmts = [
+      // 1. Atomically update counter
+      db.prepare(`
+        INSERT INTO counters (id, key, value, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          value = excluded.value,
+          updated_at = excluded.updated_at
+      `).bind(counterKey, counterKey, nextVal, now, now),
+      // 2. Insert patient record
+      db.prepare(`INSERT INTO patients ("${cols.join('", "')}") VALUES (${placeholders.join(', ')})`).bind(...values),
+    ];
+
+    await db.batch(batchStmts);
+    return this.getById(db, 'patients', id);
+  },
+
+  async create(db, collection, item, options = {}) {
     const actual = resolveCollection(collection);
+    if (actual === 'patients') {
+      return this.allocatePatient(db, item, options);
+    }
     const now = nowISO();
     const id = actual === 'counters'
       ? String(item.key || item.id || crypto.randomUUID())
@@ -191,6 +331,15 @@ export const d1Client = {
       await db.prepare(deleteSql).bind(strId).run();
     }
 
+    if (actual === 'patients') {
+      const countRow = await db.prepare('SELECT COUNT(*) as count FROM patients').first();
+      const remaining = countRow ? Number(countRow.count) : 0;
+      if (remaining === 0) {
+        const now = nowISO();
+        await db.prepare("UPDATE counters SET value = 0, updated_at = ? WHERE key LIKE 'UHID|%' OR id LIKE 'UHID|%'").bind(now).run();
+      }
+    }
+
     if (actual === 'returns') {
       await db.prepare('DELETE FROM return_items WHERE return_id = ?').bind(strId).run();
     }
@@ -245,8 +394,15 @@ export const d1Client = {
       const pad = Number(settingsRow.uhid_padding) || 6;
       const prefix = (settingsRow.uhid_prefix || 'HC').trim().toUpperCase();
 
+      const countRow = await db.prepare('SELECT COUNT(*) as count FROM patients').first();
+      const patientCount = countRow ? Number(countRow.count) : 0;
       const counterRow = await db.prepare('SELECT * FROM counters WHERE key = ? OR id = ? LIMIT 1').bind(counterKey, counterKey).first();
-      let counterVal = counterRow ? Number(counterRow.value) : (Number(settingsRow.uhid_start) || 1) - 1;
+      let counterVal;
+      if (patientCount === 0) {
+        counterVal = (Number(settingsRow.uhid_start) || 1) - 1;
+      } else {
+        counterVal = counterRow ? Number(counterRow.value) : (Number(settingsRow.uhid_start) || 1) - 1;
+      }
 
       const newPatients = [];
       const skipped = [];
@@ -261,6 +417,8 @@ export const d1Client = {
         }
         counterVal++;
         const uhid = item.uhid || `${prefix}${settingsRow.uhid_include_year !== 0 && settingsRow.uhid_include_year !== false ? `-${year}` : ''}-${String(counterVal).padStart(pad, '0')}`;
+        const itemCreatedAt = item.created_at || (item.date_time ? new Date(item.date_time).toISOString() : null) || now;
+        const itemRegDate = item.reg_date || (itemCreatedAt ? itemCreatedAt.slice(0, 10) : today);
         const p = {
           id: item.id || crypto.randomUUID(),
           uhid,
@@ -268,8 +426,6 @@ export const d1Client = {
           age: itemAge,
           gender: item.gender,
           mobile: String(item.mobile),
-          alt_mobile: item.alt_mobile ? String(item.alt_mobile) : '',
-          email: item.email || '',
           marital_status: item.marital_status || 'Single',
           address: item.address || '',
           pin: item.pin ? String(item.pin) : '',
@@ -279,9 +435,9 @@ export const d1Client = {
           current_meds: item.current_meds || '',
           notes: item.notes || '',
           active: 1,
-          reg_date: item.reg_date || today,
+          reg_date: itemRegDate,
           created_by: userId,
-          created_at: now,
+          created_at: itemCreatedAt,
           updated_at: now,
         };
         newPatients.push(p);

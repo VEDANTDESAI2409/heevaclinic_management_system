@@ -169,6 +169,7 @@ export const bulkImportRecords = (table, records, userId = null) =>
   request(`/${table}/import`, { method: 'POST', body: JSON.stringify({ records, userId }) });
 
 export const getPatients = () => getRecords('patients');
+export const getNextUhid = () => request('/patients/next-uhid');
 export const createPatient = (patient) => createRecord('patients', patient);
 export const updatePatient = (id, patch) => updateRecord('patients', id, patch);
 export const deletePatient = (id) => deleteRecord('patients', id);

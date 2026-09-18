@@ -4,32 +4,31 @@ export const CSV_TEMPLATES = {
   patients: {
     title: 'Patients',
     filename: 'heeva-patients-template.csv',
-    description: 'Bulk register patients. Mandatory columns: name, age, gender (M/F/Other), mobile (10 digits). Dates must be in DD-MM-YYYY format.',
+    description: 'Bulk register patients. Mandatory columns: name, age, gender (M/F/Other), mobile (10 digits). Historical Date & Time is optional in DD-MM-YYYY HH:mm format.',
     headers: [
-      'name', 'age', 'gender', 'marital_status', 'mobile', 'alt_mobile', 'email',
+      'name', 'date_time', 'age', 'gender', 'marital_status', 'mobile',
       'address', 'pin',
       'blood_group', 'allergies', 'conditions', 'current_meds', 'notes'
     ],
     sampleRows: [
       [
-        'Ramesh Sharma', '36', 'M', 'Married', '9825012345', '9825098765', 'ramesh@example.com',
+        'Ramesh Sharma', '05-09-2026 10:45', '36', 'M', 'Married', '9825012345',
         'Flat 402, Shivalik Residency, Pal Gam, Surat', '395009',
         'B+', 'Penicillin', 'Hypertension', 'Amlodipine 5mg', 'Regular follow up'
       ],
       [
-        'Priya Patel', '28', 'F', 'Single', '9724012345', '', 'priya.patel@example.com',
+        'Priya Patel', '06-09-2026 14:20', '28', 'F', 'Single', '9724012345',
         'B-12, Green City, Adajan, Surat', '395009',
         'O+', 'None', 'None', '', 'New patient'
       ]
     ],
     columns: [
       { key: 'name', label: 'Full Name', required: true },
+      { key: 'date_time', label: 'Date & Time (DD-MM-YYYY HH:mm)', required: false },
       { key: 'age', label: 'Age (Years)', required: true },
       { key: 'gender', label: 'Gender (M/F/Other)', required: true },
       { key: 'marital_status', label: 'Marital Status (Single/Married/etc)', required: false },
       { key: 'mobile', label: 'Mobile (10 digits)', required: true },
-      { key: 'alt_mobile', label: 'Alt Mobile', required: false },
-      { key: 'email', label: 'Email Address', required: false },
       { key: 'address', label: 'Address', required: false },
       { key: 'pin', label: 'Pincode', required: false },
       { key: 'blood_group', label: 'Blood Group', required: false },

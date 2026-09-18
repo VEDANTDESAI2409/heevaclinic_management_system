@@ -1,7 +1,7 @@
 // ─── HEEVA CLINIC — print documents (thermal receipts, A4, prescription) ───
 import React from 'react';
 import { Logo } from '../components/ui';
-import { fmtDate, fmtDateTime, fmtMoney, fmtQty, ageLabel } from '../utils';
+import { fmtDate, fmtDateTime, fmtDateTime12h, fmtMoney, fmtQty, ageLabel, toDDMMYYYY } from '../utils';
 
 // Bridge: PrintProvider registers its setter so any module can trigger a print.
 let _printFn = null;
@@ -20,6 +20,11 @@ export function printInvoiceA4(bill, items = [], payments = [], s = {}) {
   const docName = bill.doctor_name || s.doctor_name || 'Dr. Mit Nayak';
   const docPhone = bill.doctor_phone || s.doctor_phone || '9913974000';
 
+  const ageStr = bill.patient_age != null
+    ? (String(bill.patient_age).includes('Y') ? bill.patient_age : `${bill.patient_age} Y`)
+    : '';
+  const ageSex = [ageStr, bill.patient_gender].filter(Boolean).join(' / ') || '—';
+
   printNode(
     <div className="print-job a4-letterhead-job">
       <style>{`
@@ -28,316 +33,375 @@ export function printInvoiceA4(bill, items = [], payments = [], s = {}) {
           width: 210mm;
           min-height: 297mm;
           box-sizing: border-box;
-          padding-top: 48mm;
-          padding-bottom: 35mm;
+          padding-top: 52mm;
+          padding-bottom: 38mm;
           padding-left: 20mm;
           padding-right: 20mm;
           font-family: Inter, system-ui, -apple-system, sans-serif;
           color: #1a202c;
-          font-size: 13.5px;
+          font-size: 13px;
           line-height: 1.45;
           background: #ffffff;
+          page-break-after: avoid !important;
+          page-break-inside: avoid !important;
+          break-inside: avoid !important;
         }
-        .lh-header {
-          display: flex;
-          justify-content: space-between;
-          align-items: flex-start;
-          border-bottom: 2px solid #2d3748;
-          padding-bottom: 12px;
-          margin-bottom: 16px;
+        .med-doc-patient {
+          border-top: 1.5px solid #2d3748;
+          border-bottom: 1.5px solid #2d3748;
+          padding: 8px 0;
+          margin-bottom: 10px;
+          font-size: 12.5px;
+          line-height: 1.5;
         }
-        .lh-title-block h1 {
-          margin: 0;
-          font-size: 20px;
-          font-weight: 800;
-          letter-spacing: 0.05em;
-          color: #1a202c;
-          text-transform: uppercase;
-        }
-        .lh-title-block .lh-subtitle {
-          font-size: 12px;
-          color: #718096;
-          margin-top: 2px;
-        }
-        .lh-meta-block {
-          text-align: right;
-          font-size: 13px;
-        }
-        .lh-docno {
-          font-family: Consolas, monospace;
-          font-size: 16px;
-          font-weight: 700;
-          color: #2b6cb0;
-        }
-        .lh-date {
-          color: #4a5568;
-          margin-top: 3px;
-        }
-        .lh-status-badge {
-          display: inline-block;
-          font-size: 11px;
-          font-weight: 700;
-          text-transform: uppercase;
-          padding: 2px 8px;
-          border-radius: 4px;
-          margin-top: 4px;
-        }
-        .lh-status-paid { background: #c6f6d5; color: #22543d; }
-        .lh-status-partial { background: #feebc8; color: #7b341e; }
-        .lh-status-pending { background: #edf2f7; color: #4a5568; }
-        .lh-status-cancelled { background: #fed7d7; color: #742a2a; }
-
-        .lh-patient-box {
+        .med-doc-grid {
           display: grid;
-          grid-template-columns: 1.4fr 1fr;
-          gap: 16px;
-          background: #f7fafc;
-          border: 1px solid #e2e8f0;
-          border-radius: 6px;
-          padding: 12px 16px;
-          margin-bottom: 20px;
+          grid-template-columns: 1.1fr 1fr 1.1fr;
+          row-gap: 5px;
+          column-gap: 16px;
         }
-        .lh-pat-col {
+        .med-doc-field {
           display: flex;
-          flex-direction: column;
-          gap: 4px;
+          align-items: baseline;
+          gap: 6px;
         }
-        .lh-label {
+        .med-doc-lbl {
           font-size: 10.5px;
           font-weight: 700;
-          color: #718096;
+          color: #4a5568;
           text-transform: uppercase;
-          letter-spacing: 0.05em;
+          letter-spacing: 0.04em;
+          white-space: nowrap;
         }
-        .lh-val-name {
-          font-size: 16px;
-          font-weight: 700;
+        .med-doc-val {
+          font-size: 13px;
+          font-weight: 600;
           color: #1a202c;
         }
-        .lh-info-row {
-          display: flex;
-          gap: 16px;
-          font-size: 13px;
-          color: #2d3748;
-          flex-wrap: wrap;
+
+        .med-doc-diag {
+          margin-bottom: 12px;
+          padding: 4px 0 6px 0;
+          border-bottom: 1px dashed #cbd5e0;
+          font-size: 12.5px;
+          line-height: 1.4;
+        }
+        .med-doc-diag-lbl {
+          font-weight: 800;
+          color: #1a202c;
+          text-transform: uppercase;
+          letter-spacing: 0.04em;
+          font-size: 11.5px;
+          margin-right: 6px;
+        }
+        .med-doc-diag-val {
+          font-weight: 700;
+          color: #1a202c;
+          text-transform: uppercase;
         }
 
-        .lh-table {
+        .med-doc-table {
           width: 100%;
           border-collapse: collapse;
-          margin-bottom: 20px;
-          font-size: 13.5px;
+          margin-bottom: 14px;
+          font-size: 12.5px;
         }
-        .lh-table th {
-          background: #2d3748;
-          color: #ffffff;
+        .med-doc-table th {
+          border-top: 1.5px solid #2d3748;
+          border-bottom: 1.5px solid #2d3748;
+          padding: 6px 8px;
           font-weight: 700;
+          font-size: 11px;
           text-transform: uppercase;
-          font-size: 11.5px;
           letter-spacing: 0.04em;
-          padding: 9px 10px;
+          color: #1a202c;
+          background: #f8fafc;
           text-align: left;
         }
-        .lh-table td {
-          padding: 9px 10px;
+        .med-doc-table td {
           border-bottom: 1px solid #e2e8f0;
+          padding: 6px 8px;
           color: #2d3748;
+          vertical-align: top;
         }
-        .lh-table .th-r, .lh-table .td-r { text-align: right; }
-        .lh-table .th-c, .lh-table .td-c { text-align: center; }
+        .med-doc-table .th-c, .med-doc-table .td-c { text-align: center; }
+        .med-doc-table .th-r, .med-doc-table .td-r { text-align: right; }
 
-        .lh-summary-row {
+        .med-name {
+          font-weight: 700;
+          color: #1a202c;
+          font-size: 13px;
+        }
+        .med-comp {
+          font-size: 11px;
+          color: #4a5568;
+          margin-top: 2px;
+        }
+        .med-note {
+          font-size: 11px;
+          color: #4a5568;
+          font-style: italic;
+          margin-top: 1px;
+        }
+
+        .med-doc-pay-row {
           display: flex;
           justify-content: space-between;
           align-items: flex-start;
-          gap: 24px;
-          margin-bottom: 24px;
+          gap: 20px;
+          margin-bottom: 12px;
+          padding-bottom: 10px;
+          border-bottom: 1px solid #e2e8f0;
+          font-size: 12.5px;
         }
-        .lh-payment-info {
+        .med-doc-pay-left {
           flex: 1;
-          background: #f7fafc;
-          border: 1px solid #e2e8f0;
-          border-radius: 6px;
-          padding: 12px 14px;
-          font-size: 13px;
         }
-        .lh-pay-method-pill {
-          display: inline-block;
+        .med-doc-pay-lbl {
+          font-size: 11px;
           font-weight: 700;
-          background: #ebf8ff;
-          color: #2b6cb0;
-          padding: 2px 8px;
-          border-radius: 4px;
-          font-size: 13px;
-          margin-left: 6px;
+          color: #4a5568;
+          text-transform: uppercase;
         }
-        .lh-totals-box {
-          width: 260px;
-          border: 1px solid #e2e8f0;
-          border-radius: 6px;
-          background: #ffffff;
-          overflow: hidden;
+        .med-doc-pay-txns {
+          margin-top: 6px;
+          font-size: 11.5px;
+          color: #4a5568;
         }
-        .lh-tot-row {
+        .med-doc-pay-right {
+          width: 230px;
+        }
+        .med-doc-tot-line {
           display: flex;
           justify-content: space-between;
-          padding: 7px 12px;
-          font-size: 13.5px;
-          border-bottom: 1px solid #f0f4f8;
+          padding: 2px 0;
+          font-size: 12px;
+          color: #4a5568;
         }
-        .lh-tot-row.grand {
-          background: #edf2f7;
+        .med-doc-tot-line.bold {
+          font-weight: 700;
+          font-size: 13.5px;
+          color: #1a202c;
           border-top: 1px solid #cbd5e0;
-          border-bottom: 1px solid #cbd5e0;
+          margin-top: 3px;
+          padding-top: 4px;
+        }
+        .med-doc-tot-line.due {
+          color: #c53030;
+          font-weight: 700;
+          font-size: 13px;
+        }
+
+        .med-doc-advice {
+          margin-bottom: 10px;
+          font-size: 12px;
+          line-height: 1.5;
+        }
+        .med-doc-sec-title {
           font-weight: 800;
-          font-size: 15.5px;
+          text-transform: uppercase;
+          font-size: 11px;
+          letter-spacing: 0.04em;
+          color: #1a202c;
+          margin-bottom: 2px;
+        }
+        .med-doc-sec-body {
+          white-space: pre-wrap;
+          color: #2d3748;
+        }
+
+        .med-doc-followup {
+          margin-bottom: 16px;
+          font-size: 12.5px;
           color: #1a202c;
         }
-        .lh-tot-row.paid { color: #22543d; font-weight: 600; }
-        .lh-tot-row.bal { color: #c53030; font-weight: 700; }
 
-        .lh-signature-area {
+        .med-doc-footer {
           display: flex;
           justify-content: space-between;
           align-items: flex-end;
-          margin-top: 36px;
-          padding-top: 10px;
+          margin-top: 24px;
+          padding-top: 8px;
         }
-        .lh-sign-box {
+        .med-doc-doc-info {
+          font-size: 12.5px;
+        }
+        .med-doc-doc-name {
+          font-weight: 700;
+          font-size: 14px;
+          color: #1a202c;
+        }
+        .med-doc-doc-phone {
+          font-size: 12px;
+          color: #4a5568;
+          margin-top: 2px;
+        }
+        .med-doc-sign-box {
           text-align: center;
           width: 200px;
         }
-        .lh-sign-line {
+        .med-doc-sign-line {
           border-top: 1px solid #718096;
-          margin-bottom: 6px;
+          margin-bottom: 5px;
         }
-        .lh-sign-text {
-          font-size: 12px;
-          color: #4a5568;
+        .med-doc-sign-lbl {
+          font-size: 11px;
           font-weight: 600;
+          color: #4a5568;
         }
       `}</style>
       <div className="letterhead-sheet">
-        <div className="lh-header">
-          <div className="lh-title-block">
-            <h1>Payment Receipt</h1>
-            <div className="lh-subtitle">Official Clinic Billing Receipt</div>
-          </div>
-          <div className="lh-meta-block">
-            <div className="lh-docno">{bill.bill_no}</div>
-            <div className="lh-date">{fmtDateTime(bill.time)}</div>
-            <div>
-              <span className={`lh-status-badge lh-status-${(bill.payment_status || '').toLowerCase()}`}>
-                {paymentStatus}
-              </span>
+        {/* 1. Patient Information Section */}
+        <div className="med-doc-patient">
+          <div className="med-doc-grid">
+            <div className="med-doc-field">
+              <span className="med-doc-lbl">Patient:</span>
+              <span className="med-doc-val">{bill.patient_name || '—'}</span>
             </div>
-            {bill.status === 'CANCELLED' && <div style={{ color: '#c53030', fontWeight: 800, marginTop: 4 }}>CANCELLED</div>}
+            <div className="med-doc-field">
+              <span className="med-doc-lbl">UHID:</span>
+              <span className="med-doc-val">{bill.uhid || '—'}</span>
+            </div>
+            <div className="med-doc-field">
+              <span className="med-doc-lbl">Bill No:</span>
+              <span className="med-doc-val" style={{ fontFamily: 'Consolas, monospace' }}>{bill.bill_no}</span>
+            </div>
+            <div className="med-doc-field">
+              <span className="med-doc-lbl">Age / Sex:</span>
+              <span className="med-doc-val">{ageSex}</span>
+            </div>
+            <div className="med-doc-field">
+              <span className="med-doc-lbl">Mobile:</span>
+              <span className="med-doc-val">{bill.patient_mobile || '—'}</span>
+            </div>
+            <div className="med-doc-field">
+              <span className="med-doc-lbl">Date & Time:</span>
+              <span className="med-doc-val">{fmtDateTime12h(bill.time)}</span>
+            </div>
           </div>
         </div>
 
-        <div className="lh-patient-box">
-          <div className="lh-pat-col">
-            <span className="lh-label">Billed To</span>
-            <span className="lh-val-name">{bill.patient_name}</span>
-            <div className="lh-info-row">
-              <span>UHID: <b>{bill.uhid}</b></span>
-              {(bill.patient_age != null || bill.patient_gender) && (
-                <span>Age / Sex: <b>{[bill.patient_age != null ? `${bill.patient_age} Y` : '', bill.patient_gender].filter(Boolean).join(' / ')}</b></span>
-              )}
-              {bill.patient_mobile && <span>Mobile: <b>{bill.patient_mobile}</b></span>}
-            </div>
+        {/* 2. Diagnosis Section */}
+        {bill.diagnosis && (
+          <div className="med-doc-diag">
+            <span className="med-doc-diag-lbl">DIAGNOSIS:</span>
+            <span className="med-doc-diag-val">{bill.diagnosis}</span>
           </div>
-          <div className="lh-pat-col">
-            <span className="lh-label">Consulting Clinician</span>
-            <span style={{ fontWeight: 700, fontSize: '15px', color: '#1a202c' }}>{docName}</span>
-            <div style={{ fontSize: '12.5px', color: '#2d3748', marginTop: '2px' }}>Phone: <b>{docPhone}</b></div>
-          </div>
-        </div>
+        )}
 
-        <table className="lh-table">
+        {/* 3. Medicine / Prescription Table */}
+        <table className="med-doc-table">
           <thead>
             <tr>
-              <th style={{ width: '8%' }} className="th-c">Sr.</th>
-              <th style={{ width: '46%' }}>Item Description</th>
-              <th style={{ width: '16%' }}>Type</th>
-              <th style={{ width: '10%' }} className="th-r">Qty</th>
-              <th style={{ width: '10%' }} className="th-r">Rate</th>
-              <th style={{ width: '10%' }} className="th-r">Amount</th>
+              <th style={{ width: '5%' }} className="th-c">#</th>
+              <th style={{ width: '34%' }}>Medicine</th>
+              <th style={{ width: '14%' }} className="th-c">Dosage</th>
+              <th style={{ width: '25%' }}>Timing - Frequency - Duration</th>
+              <th style={{ width: '8%' }} className="th-c">Qty</th>
+              <th style={{ width: '7%' }} className="th-r">Rate</th>
+              <th style={{ width: '7%' }} className="th-r">Amount</th>
             </tr>
           </thead>
           <tbody>
-            {items.map((it, idx) => (
-              <tr key={it.id || idx}>
-                <td className="td-c">{idx + 1}</td>
-                <td><b style={{ color: '#1a202c' }}>{it.name}</b></td>
-                <td style={{ textTransform: 'capitalize', color: '#4a5568' }}>{it.item_type}</td>
-                <td className="td-r">{fmtQty(it.qty)}</td>
-                <td className="td-r">{money(it.price, s.currency)}</td>
-                <td className="td-r" style={{ fontWeight: 600 }}>{money(it.amount, s.currency)}</td>
-              </tr>
-            ))}
+            {items.map((it, idx) => {
+              const timingFreqDur = [it.timing, it.frequency, it.duration].filter(Boolean).join(' - ');
+              return (
+                <tr key={it.id || idx}>
+                  <td className="td-c">{idx + 1}</td>
+                  <td>
+                    <div className="med-name">{it.name}</div>
+                    {it.composition && <div className="med-comp">Composition: {it.composition}</div>}
+                    {it.notes && <div className="med-note">Note: {it.notes}</div>}
+                  </td>
+                  <td className="td-c">{it.dosage || '—'}</td>
+                  <td>{timingFreqDur || '—'}</td>
+                  <td className="td-c">{fmtQty(it.qty)}{it.unit && it.unit !== 'service' ? ' ' + it.unit : ''}</td>
+                  <td className="td-r">{money(it.price, s.currency)}</td>
+                  <td className="td-r" style={{ fontWeight: 600 }}>{money(it.amount != null ? it.amount : it.qty * (it.price || 0), s.currency)}</td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
 
-        <div className="lh-summary-row">
-          <div className="lh-payment-info">
-            <div style={{ marginBottom: 6 }}>
-              <span className="lh-label">Payment Method:</span>
-              <span className="lh-pay-method-pill">{payMethodDisplay}</span>
+        {/* 4. Payment Information (Clean & Minimal) */}
+        <div className="med-doc-pay-row">
+          <div className="med-doc-pay-left">
+            <div>
+              <span className="med-doc-pay-lbl">Payment Method:</span>{' '}
+              <b>{payMethodDisplay}</b>
+              <span style={{ marginLeft: '14px' }}>
+                <span className="med-doc-pay-lbl">Status:</span>{' '}
+                <b style={{ color: bill.payment_status === 'PAID' ? '#22543d' : '#7b341e' }}>{paymentStatus}</b>
+              </span>
             </div>
             {paidRows.length > 0 && (
-              <div style={{ marginTop: 8, fontSize: '12px', color: '#4a5568' }}>
-                <div style={{ fontWeight: 600, marginBottom: 2 }}>Payment Transactions:</div>
+              <div className="med-doc-pay-txns">
                 {paidRows.map((p, i) => (
-                  <div key={p.id || i} style={{ marginLeft: 6 }}>
-                    • {p.method}: <b>{money(p.amount, s.currency)}</b> on {fmtDate(p.at)}
-                  </div>
+                  <div key={p.id || i}>• {p.method}: <b>{money(p.amount, s.currency)}</b> on {fmtDate(p.at)}</div>
                 ))}
               </div>
             )}
             {bill.cancel_reason && (
-              <div style={{ marginTop: 8, color: '#c53030', fontWeight: 600, fontSize: '12px' }}>
+              <div style={{ marginTop: '6px', color: '#c53030', fontWeight: 600, fontSize: '11.5px' }}>
                 Cancellation Reason: {bill.cancel_reason}
               </div>
             )}
-            <div style={{ marginTop: 10, fontSize: '12px', color: '#718096', fontStyle: 'italic' }}>
-              Thank you for choosing our clinic. Get well soon!
-            </div>
           </div>
-
-          <div className="lh-totals-box">
-            <div className="lh-tot-row">
+          <div className="med-doc-pay-right">
+            <div className="med-doc-tot-line">
               <span>Subtotal</span>
-              <b>{money(bill.subtotal, s.currency)}</b>
+              <span>{money(bill.subtotal, s.currency)}</span>
             </div>
-            {(Number(bill.discount) > 0) && (
-              <div className="lh-tot-row" style={{ color: '#2b6cb0' }}>
+            {Number(bill.discount) > 0 && (
+              <div className="med-doc-tot-line" style={{ color: '#2b6cb0' }}>
                 <span>Discount</span>
-                <b>− {money(bill.discount, s.currency)}</b>
+                <span>− {money(bill.discount, s.currency)}</span>
               </div>
             )}
-            <div className="lh-tot-row grand">
+            <div className="med-doc-tot-line bold">
               <span>Total Amount</span>
               <span>{money(bill.total, s.currency)}</span>
             </div>
-            <div className="lh-tot-row paid">
+            <div className="med-doc-tot-line">
               <span>Paid Amount</span>
-              <b>{money(bill.paid || 0, s.currency)}</b>
+              <span>{money(bill.paid || 0, s.currency)}</span>
             </div>
-            <div className="lh-tot-row bal">
-              <span>Balance Due</span>
-              <b>{money(Math.max(0, bill.total - (bill.paid || 0)), s.currency)}</b>
-            </div>
+            {Math.max(0, bill.total - (bill.paid || 0)) > 0.005 && (
+              <div className="med-doc-tot-line due">
+                <span>Balance Due</span>
+                <span>{money(Math.max(0, bill.total - (bill.paid || 0)), s.currency)}</span>
+              </div>
+            )}
           </div>
         </div>
 
-        <div className="lh-signature-area">
-          <div style={{ fontSize: '12px', color: '#718096' }}>
-            Receipt generated on {fmtDateTime(bill.time)}
+        {/* 5. Advice / Instructions Section */}
+        {bill.advice && (
+          <div className="med-doc-advice">
+            <div className="med-doc-sec-title">Advice / Instructions:</div>
+            <div className="med-doc-sec-body">{bill.advice}</div>
           </div>
-          <div className="lh-sign-box">
-            <div className="lh-sign-line" />
-            <div className="lh-sign-text">Authorized Signatory</div>
+        )}
+
+        {/* 6. Next Visit / Follow-up */}
+        {bill.next_visit && (
+          <div className="med-doc-followup">
+            <span className="med-doc-sec-title">Next Visit / Follow-up:</span>{' '}
+            <b>{toDDMMYYYY(bill.next_visit) || bill.next_visit}</b>
+          </div>
+        )}
+
+        {/* 7. Consulting Doctor & Signature Section */}
+        <div className="med-doc-footer">
+          <div className="med-doc-doc-info">
+            <div style={{ fontSize: '10.5px', textTransform: 'uppercase', color: '#718096', fontWeight: 700, letterSpacing: '0.04em' }}>Consulting Doctor</div>
+            <div className="med-doc-doc-name">{docName}</div>
+            <div className="med-doc-doc-phone">Phone: <b>{docPhone}</b></div>
+          </div>
+          <div className="med-doc-sign-box">
+            <div className="med-doc-sign-line" />
+            <div className="med-doc-sign-lbl">Authorized Signatory</div>
           </div>
         </div>
       </div>
@@ -358,26 +422,41 @@ export function downloadReceipt(bill, items = [], payments = [], s = {}) {
   const sym = s.currency || '₹';
   const fmtM = (v) => `${sym} ${Number(v || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
-  const itemsRows = items.map((it, idx) => `
-    <tr>
-      <td style="text-align: center; padding: 9px 10px; border-bottom: 1px solid #e2e8f0;">${idx + 1}</td>
-      <td style="padding: 9px 10px; border-bottom: 1px solid #e2e8f0;"><b style="color: #1a202c;">${it.name || ''}</b></td>
-      <td style="padding: 9px 10px; border-bottom: 1px solid #e2e8f0; text-transform: capitalize; color: #4a5568;">${it.item_type || ''}</td>
-      <td style="text-align: right; padding: 9px 10px; border-bottom: 1px solid #e2e8f0;">${it.qty || 1}</td>
-      <td style="text-align: right; padding: 9px 10px; border-bottom: 1px solid #e2e8f0;">${fmtM(it.price)}</td>
-      <td style="text-align: right; padding: 9px 10px; border-bottom: 1px solid #e2e8f0; font-weight: 600;">${fmtM(it.amount)}</td>
-    </tr>
-  `).join('');
+  const ageStr = bill.patient_age != null
+    ? (String(bill.patient_age).includes('Y') ? bill.patient_age : `${bill.patient_age} Y`)
+    : '';
+  const ageSex = [ageStr, bill.patient_gender].filter(Boolean).join(' / ') || '—';
+
+  const itemsRows = items.map((it, idx) => {
+    const timingFreqDur = [it.timing, it.frequency, it.duration].filter(Boolean).join(' - ');
+    return `
+      <tr>
+        <td style="text-align: center; padding: 6px 8px; border-bottom: 1px solid #e2e8f0;">${idx + 1}</td>
+        <td style="padding: 6px 8px; border-bottom: 1px solid #e2e8f0;">
+          <div style="font-weight: 700; color: #1a202c; font-size: 13px;">${it.name || ''}</div>
+          ${it.composition ? `<div style="font-size: 11px; color: #4a5568; margin-top: 2px;">Composition: ${it.composition}</div>` : ''}
+          ${it.notes ? `<div style="font-size: 11px; color: #4a5568; font-style: italic; margin-top: 1px;">Note: ${it.notes}</div>` : ''}
+        </td>
+        <td style="text-align: center; padding: 6px 8px; border-bottom: 1px solid #e2e8f0;">${it.dosage || '—'}</td>
+        <td style="padding: 6px 8px; border-bottom: 1px solid #e2e8f0;">${timingFreqDur || '—'}</td>
+        <td style="text-align: center; padding: 6px 8px; border-bottom: 1px solid #e2e8f0;">${fmtQty(it.qty)}${it.unit && it.unit !== 'service' ? ' ' + it.unit : ''}</td>
+        <td style="text-align: right; padding: 6px 8px; border-bottom: 1px solid #e2e8f0;">${fmtM(it.price)}</td>
+        <td style="text-align: right; padding: 6px 8px; border-bottom: 1px solid #e2e8f0; font-weight: 600;">${fmtM(it.amount != null ? it.amount : it.qty * (it.price || 0))}</td>
+      </tr>
+    `;
+  }).join('');
 
   const paymentsRows = paidRows.map((p) => `
-    <div style="margin-left: 6px;">• ${p.method}: <b>${fmtM(p.amount)}</b> on ${fmtDate(p.at)}</div>
+    <div>• ${p.method}: <b>${fmtM(p.amount)}</b> on ${fmtDate(p.at)}</div>
   `).join('');
+
+  const nextVisitDisplay = bill.next_visit ? (toDDMMYYYY(bill.next_visit) || bill.next_visit) : '';
 
   const html = `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Payment Receipt - ${bill.bill_no}</title>
+  <title>Medical Bill - ${bill.bill_no}</title>
   <style>
     @page { size: A4 portrait; margin: 0; }
     body {
@@ -389,7 +468,7 @@ export function downloadReceipt(bill, items = [], payments = [], s = {}) {
     }
     .no-print {
       text-align: center;
-      padding: 16px;
+      padding: 14px;
       background: #ffffff;
       border-bottom: 1px solid #e2e8f0;
     }
@@ -397,8 +476,8 @@ export function downloadReceipt(bill, items = [], payments = [], s = {}) {
       background: #0b1f35;
       color: #ffffff;
       border: none;
-      padding: 10px 22px;
-      font-size: 14px;
+      padding: 9px 20px;
+      font-size: 13.5px;
       font-weight: 600;
       border-radius: 6px;
       cursor: pointer;
@@ -412,135 +491,189 @@ export function downloadReceipt(bill, items = [], payments = [], s = {}) {
       width: 210mm;
       min-height: 297mm;
       box-sizing: border-box;
-      padding-top: 48mm;
-      padding-bottom: 35mm;
+      padding-top: 52mm;
+      padding-bottom: 38mm;
       padding-left: 20mm;
       padding-right: 20mm;
       background: #ffffff;
       box-shadow: 0 4px 12px rgba(0,0,0,0.08);
-      font-size: 13.5px;
+      font-size: 13px;
       line-height: 1.45;
+      page-break-after: avoid !important;
+      page-break-inside: avoid !important;
+      break-inside: avoid !important;
     }
-    .lh-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: flex-start;
-      border-bottom: 2px solid #2d3748;
-      padding-bottom: 12px;
-      margin-bottom: 16px;
+    .med-doc-patient {
+      border-top: 1.5px solid #2d3748;
+      border-bottom: 1.5px solid #2d3748;
+      padding: 8px 0;
+      margin-bottom: 10px;
+      font-size: 12.5px;
+      line-height: 1.5;
     }
-    .lh-title-block h1 {
-      margin: 0;
-      font-size: 20px;
-      font-weight: 800;
-      letter-spacing: 0.05em;
-      color: #1a202c;
-      text-transform: uppercase;
-    }
-    .lh-meta-block {
-      text-align: right;
-    }
-    .lh-docno {
-      font-family: Consolas, monospace;
-      font-size: 16px;
-      font-weight: 700;
-      color: #2b6cb0;
-    }
-    .lh-patient-box {
+    .med-doc-grid {
       display: grid;
-      grid-template-columns: 1.4fr 1fr;
-      gap: 16px;
-      background: #f7fafc;
-      border: 1px solid #e2e8f0;
-      border-radius: 6px;
-      padding: 12px 16px;
-      margin-bottom: 20px;
+      grid-template-columns: 1.1fr 1fr 1.1fr;
+      row-gap: 5px;
+      column-gap: 16px;
     }
-    .lh-label {
+    .med-doc-field {
+      display: flex;
+      align-items: baseline;
+      gap: 6px;
+    }
+    .med-doc-lbl {
       font-size: 10.5px;
       font-weight: 700;
-      color: #718096;
+      color: #4a5568;
       text-transform: uppercase;
-      letter-spacing: 0.05em;
+      letter-spacing: 0.04em;
+      white-space: nowrap;
     }
-    .lh-val-name {
-      font-size: 16px;
-      font-weight: 700;
+    .med-doc-val {
+      font-size: 13px;
+      font-weight: 600;
       color: #1a202c;
     }
-    .lh-table {
+    .med-doc-diag {
+      margin-bottom: 12px;
+      padding: 4px 0 6px 0;
+      border-bottom: 1px dashed #cbd5e0;
+      font-size: 12.5px;
+      line-height: 1.4;
+    }
+    .med-doc-diag-lbl {
+      font-weight: 800;
+      color: #1a202c;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      font-size: 11.5px;
+      margin-right: 6px;
+    }
+    .med-doc-diag-val {
+      font-weight: 700;
+      color: #1a202c;
+      text-transform: uppercase;
+    }
+    .med-doc-table {
       width: 100%;
       border-collapse: collapse;
-      margin-bottom: 20px;
-      font-size: 13.5px;
+      margin-bottom: 14px;
+      font-size: 12.5px;
     }
-    .lh-table th {
-      background: #2d3748;
-      color: #ffffff;
+    .med-doc-table th {
+      border-top: 1.5px solid #2d3748;
+      border-bottom: 1.5px solid #2d3748;
+      padding: 6px 8px;
       font-weight: 700;
+      font-size: 11px;
       text-transform: uppercase;
-      font-size: 11.5px;
-      padding: 9px 10px;
+      letter-spacing: 0.04em;
+      color: #1a202c;
+      background: #f8fafc;
       text-align: left;
     }
-    .lh-summary-row {
+    .med-doc-table td {
+      border-bottom: 1px solid #e2e8f0;
+      padding: 6px 8px;
+      color: #2d3748;
+      vertical-align: top;
+    }
+    .med-doc-pay-row {
       display: flex;
       justify-content: space-between;
       align-items: flex-start;
-      gap: 24px;
-      margin-bottom: 24px;
+      gap: 20px;
+      margin-bottom: 12px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid #e2e8f0;
+      font-size: 12.5px;
     }
-    .lh-payment-info {
-      flex: 1;
-      background: #f7fafc;
-      border: 1px solid #e2e8f0;
-      border-radius: 6px;
-      padding: 12px 14px;
-      font-size: 13px;
-    }
-    .lh-pay-method-pill {
-      display: inline-block;
+    .med-doc-pay-left { flex: 1; }
+    .med-doc-pay-lbl {
+      font-size: 11px;
       font-weight: 700;
-      background: #ebf8ff;
-      color: #2b6cb0;
-      padding: 2px 8px;
-      border-radius: 4px;
-      font-size: 13px;
-      margin-left: 6px;
+      color: #4a5568;
+      text-transform: uppercase;
     }
-    .lh-totals-box {
-      width: 260px;
-      border: 1px solid #e2e8f0;
-      border-radius: 6px;
-      background: #ffffff;
+    .med-doc-pay-txns {
+      margin-top: 6px;
+      font-size: 11.5px;
+      color: #4a5568;
     }
-    .lh-tot-row {
+    .med-doc-pay-right { width: 230px; }
+    .med-doc-tot-line {
       display: flex;
       justify-content: space-between;
-      padding: 7px 12px;
+      padding: 2px 0;
+      font-size: 12px;
+      color: #4a5568;
+    }
+    .med-doc-tot-line.bold {
+      font-weight: 700;
       font-size: 13.5px;
-      border-bottom: 1px solid #f0f4f8;
-    }
-    .lh-tot-row.grand {
-      background: #edf2f7;
+      color: #1a202c;
       border-top: 1px solid #cbd5e0;
-      border-bottom: 1px solid #cbd5e0;
-      font-weight: 800;
-      font-size: 15.5px;
+      margin-top: 3px;
+      padding-top: 4px;
     }
-    .lh-signature-area {
+    .med-doc-tot-line.due {
+      color: #c53030;
+      font-weight: 700;
+      font-size: 13px;
+    }
+    .med-doc-advice {
+      margin-bottom: 10px;
+      font-size: 12px;
+      line-height: 1.5;
+    }
+    .med-doc-sec-title {
+      font-weight: 800;
+      text-transform: uppercase;
+      font-size: 11px;
+      letter-spacing: 0.04em;
+      color: #1a202c;
+      margin-bottom: 2px;
+    }
+    .med-doc-sec-body {
+      white-space: pre-wrap;
+      color: #2d3748;
+    }
+    .med-doc-followup {
+      margin-bottom: 16px;
+      font-size: 12.5px;
+      color: #1a202c;
+    }
+    .med-doc-footer {
       display: flex;
       justify-content: space-between;
       align-items: flex-end;
-      margin-top: 36px;
+      margin-top: 24px;
+      padding-top: 8px;
     }
-    .lh-sign-box {
+    .med-doc-doc-info { font-size: 12.5px; }
+    .med-doc-doc-name {
+      font-weight: 700;
+      font-size: 14px;
+      color: #1a202c;
+    }
+    .med-doc-doc-phone {
+      font-size: 12px;
+      color: #4a5568;
+      margin-top: 2px;
+    }
+    .med-doc-sign-box {
       text-align: center;
       width: 200px;
     }
-    .lh-sign-line {
+    .med-doc-sign-line {
       border-top: 1px solid #718096;
-      margin-bottom: 6px;
+      margin-bottom: 5px;
+    }
+    .med-doc-sign-lbl {
+      font-size: 11px;
+      font-weight: 600;
+      color: #4a5568;
     }
     @media print {
       body { background: #fff; }
@@ -556,44 +689,55 @@ export function downloadReceipt(bill, items = [], payments = [], s = {}) {
   </div>
   <div class="sheet-wrap">
     <div class="letterhead-sheet">
-      <div class="lh-header">
-        <div class="lh-title-block">
-          <h1>Payment Receipt</h1>
-          <div style="font-size: 12px; color: #718096; margin-top: 2px;">Official Clinic Billing Receipt</div>
-        </div>
-        <div class="lh-meta-block">
-          <div class="lh-docno">${bill.bill_no}</div>
-          <div style="color: #4a5568; margin-top: 3px;">${fmtDateTime(bill.time)}</div>
-          <div style="margin-top: 4px; font-weight: 700; color: #22543d;">${paymentStatus}</div>
-        </div>
-      </div>
-
-      <div class="lh-patient-box">
-        <div>
-          <div class="lh-label">Billed To</div>
-          <div class="lh-val-name">${bill.patient_name || 'Patient'}</div>
-          <div style="display: flex; gap: 14px; margin-top: 4px; font-size: 13px; color: #2d3748;">
-            <span>UHID: <b>${bill.uhid || '—'}</b></span>
-            ${(bill.patient_age != null || bill.patient_gender) ? `<span>Age / Sex: <b>${[bill.patient_age != null ? `${bill.patient_age} Y` : '', bill.patient_gender].filter(Boolean).join(' / ')}</b></span>` : ''}
-            ${bill.patient_mobile ? `<span>Mobile: <b>${bill.patient_mobile}</b></span>` : ''}
+      <!-- 1. Patient Information Section -->
+      <div class="med-doc-patient">
+        <div class="med-doc-grid">
+          <div class="med-doc-field">
+            <span class="med-doc-lbl">Patient:</span>
+            <span class="med-doc-val">${bill.patient_name || '—'}</span>
+          </div>
+          <div class="med-doc-field">
+            <span class="med-doc-lbl">UHID:</span>
+            <span class="med-doc-val">${bill.uhid || '—'}</span>
+          </div>
+          <div class="med-doc-field">
+            <span class="med-doc-lbl">Bill No:</span>
+            <span class="med-doc-val" style="font-family: Consolas, monospace;">${bill.bill_no}</span>
+          </div>
+          <div class="med-doc-field">
+            <span class="med-doc-lbl">Age / Sex:</span>
+            <span class="med-doc-val">${ageSex}</span>
+          </div>
+          <div class="med-doc-field">
+            <span class="med-doc-lbl">Mobile:</span>
+            <span class="med-doc-val">${bill.patient_mobile || '—'}</span>
+          </div>
+          <div class="med-doc-field">
+            <span class="med-doc-lbl">Date & Time:</span>
+            <span class="med-doc-val">${fmtDateTime12h(bill.time)}</span>
           </div>
         </div>
-        <div>
-          <div class="lh-label">Consulting Clinician</div>
-          <div style="font-weight: 700; font-size: 15px; color: #1a202c;">${docName}</div>
-          <div style="font-size: 12.5px; color: #2d3748; margin-top: 2px;">Phone: <b>${docPhone}</b></div>
-        </div>
       </div>
 
-      <table class="lh-table">
+      <!-- 2. Diagnosis Section -->
+      ${bill.diagnosis ? `
+        <div class="med-doc-diag">
+          <span class="med-doc-diag-lbl">DIAGNOSIS:</span>
+          <span class="med-doc-diag-val">${bill.diagnosis}</span>
+        </div>
+      ` : ''}
+
+      <!-- 3. Medicine / Prescription Table -->
+      <table class="med-doc-table">
         <thead>
           <tr>
-            <th style="width: 8%; text-align: center;">Sr.</th>
-            <th style="width: 46%;">Item Description</th>
-            <th style="width: 16%;">Type</th>
-            <th style="width: 10%; text-align: right;">Qty</th>
-            <th style="width: 10%; text-align: right;">Rate</th>
-            <th style="width: 10%; text-align: right;">Amount</th>
+            <th style="width: 5%; text-align: center;">#</th>
+            <th style="width: 34%;">Medicine</th>
+            <th style="width: 14%; text-align: center;">Dosage</th>
+            <th style="width: 25%;">Timing - Frequency - Duration</th>
+            <th style="width: 8%; text-align: center;">Qty</th>
+            <th style="width: 7%; text-align: right;">Rate</th>
+            <th style="width: 7%; text-align: right;">Amount</th>
           </tr>
         </thead>
         <tbody>
@@ -601,54 +745,80 @@ export function downloadReceipt(bill, items = [], payments = [], s = {}) {
         </tbody>
       </table>
 
-      <div class="lh-summary-row">
-        <div class="lh-payment-info">
+      <!-- 4. Payment Information (Clean & Minimal) -->
+      <div class="med-doc-pay-row">
+        <div class="med-doc-pay-left">
           <div>
-            <span class="lh-label">Payment Method:</span>
-            <span class="lh-pay-method-pill">${payMethodDisplay}</span>
+            <span class="med-doc-pay-lbl">Payment Method:</span> <b>${payMethodDisplay}</b>
+            <span style="margin-left: 14px;">
+              <span class="med-doc-pay-lbl">Status:</span>
+              <b style="color: ${bill.payment_status === 'PAID' ? '#22543d' : '#7b341e'};">${paymentStatus}</b>
+            </span>
           </div>
           ${paidRows.length > 0 ? `
-            <div style="margin-top: 8px; font-size: 12px; color: #4a5568;">
-              <div style="font-weight: 600; margin-bottom: 2px;">Payment Transactions:</div>
+            <div class="med-doc-pay-txns">
               ${paymentsRows}
             </div>
           ` : ''}
-          <div style="margin-top: 10px; font-size: 12px; color: #718096; font-style: italic;">
-            Thank you for choosing our clinic. Get well soon!
-          </div>
-        </div>
-
-        <div class="lh-totals-box">
-          <div class="lh-tot-row">
-            <span>Subtotal</span>
-            <b>${fmtM(bill.subtotal)}</b>
-          </div>
-          ${Number(bill.discount) > 0 ? `
-            <div class="lh-tot-row" style="color: #2b6cb0;">
-              <span>Discount</span>
-              <b>− ${fmtM(bill.discount)}</b>
+          ${bill.cancel_reason ? `
+            <div style="margin-top: 6px; color: #c53030; font-weight: 600; font-size: 11.5px;">
+              Cancellation Reason: ${bill.cancel_reason}
             </div>
           ` : ''}
-          <div class="lh-tot-row grand">
+        </div>
+        <div class="med-doc-pay-right">
+          <div class="med-doc-tot-line">
+            <span>Subtotal</span>
+            <span>${fmtM(bill.subtotal)}</span>
+          </div>
+          ${Number(bill.discount) > 0 ? `
+            <div class="med-doc-tot-line" style="color: #2b6cb0;">
+              <span>Discount</span>
+              <span>− ${fmtM(bill.discount)}</span>
+            </div>
+          ` : ''}
+          <div class="med-doc-tot-line bold">
             <span>Total Amount</span>
             <span>${fmtM(bill.total)}</span>
           </div>
-          <div class="lh-tot-row" style="color: #22543d; font-weight: 600;">
+          <div class="med-doc-tot-line">
             <span>Paid Amount</span>
-            <b>${fmtM(bill.paid || 0)}</b>
+            <span>${fmtM(bill.paid || 0)}</span>
           </div>
-          <div class="lh-tot-row" style="color: #c53030; font-weight: 700;">
-            <span>Balance Due</span>
-            <b>${fmtM(Math.max(0, bill.total - (bill.paid || 0)))}</b>
-          </div>
+          ${Math.max(0, bill.total - (bill.paid || 0)) > 0.005 ? `
+            <div class="med-doc-tot-line due">
+              <span>Balance Due</span>
+              <span>${fmtM(Math.max(0, bill.total - (bill.paid || 0)))}</span>
+            </div>
+          ` : ''}
         </div>
       </div>
 
-      <div class="lh-signature-area">
-        <div style="font-size: 12px; color: #718096;">Receipt generated on ${fmtDateTime(bill.time)}</div>
-        <div class="lh-sign-box">
-          <div class="lh-sign-line"></div>
-          <div style="font-size: 12px; color: #4a5568; font-weight: 600;">Authorized Signatory</div>
+      <!-- 5. Advice / Instructions Section -->
+      ${bill.advice ? `
+        <div class="med-doc-advice">
+          <div class="med-doc-sec-title">Advice / Instructions:</div>
+          <div class="med-doc-sec-body">${bill.advice}</div>
+        </div>
+      ` : ''}
+
+      <!-- 6. Next Visit / Follow-up -->
+      ${bill.next_visit ? `
+        <div class="med-doc-followup">
+          <span class="med-doc-sec-title">Next Visit / Follow-up:</span> <b>${nextVisitDisplay}</b>
+        </div>
+      ` : ''}
+
+      <!-- 7. Consulting Doctor & Signature Section -->
+      <div class="med-doc-footer">
+        <div class="med-doc-doc-info">
+          <div style="font-size: 10.5px; text-transform: uppercase; color: #718096; font-weight: 700; letter-spacing: 0.04em;">Consulting Doctor</div>
+          <div class="med-doc-doc-name">${docName}</div>
+          <div class="med-doc-doc-phone">Phone: <b>${docPhone}</b></div>
+        </div>
+        <div class="med-doc-sign-box">
+          <div class="med-doc-sign-line"></div>
+          <div class="med-doc-sign-lbl">Authorized Signatory</div>
         </div>
       </div>
     </div>
@@ -661,7 +831,7 @@ export function downloadReceipt(bill, items = [], payments = [], s = {}) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `receipt-${bill.bill_no || 'bill'}.html`;
+  a.download = `bill-${bill.bill_no || 'receipt'}.html`;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
