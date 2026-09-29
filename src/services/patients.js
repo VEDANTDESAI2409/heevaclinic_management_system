@@ -135,15 +135,6 @@ export async function deletePatient(id, userId) {
     }
     await db.patients.delete(id);
     await audit(userId, 'PATIENT_DELETE', 'patient', id, `${p.name} · ${p.uhid}`);
-
-    // If all patients are now deleted (0 patients remaining in database), reset local UHID counters
-    const remaining = await db.patients.count();
-    if (remaining === 0) {
-      const uhidCounters = await db.counters.filter((c) => String(c.key).startsWith('UHID|')).toArray();
-      for (const c of uhidCounters) {
-        await db.counters.put({ ...c, value: 0 });
-      }
-    }
   });
 }
 

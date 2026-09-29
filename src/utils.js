@@ -152,9 +152,9 @@ export function download(filename, content, mime = 'text/plain') {
 export function toCSV(headers, rows) {
   const esc = (v) => {
     const s = v == null ? '' : String(v);
-    return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+    return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
   };
-  return [headers.map(esc).join(','), ...rows.map((r) => r.map(esc).join(','))].join('\n');
+  return '\uFEFF' + [headers.map(esc).join(','), ...rows.map((r) => r.map(esc).join(','))].join('\r\n');
 }
 
 export function monthLabel(key) {

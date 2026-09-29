@@ -91,6 +91,8 @@ export default function Billing() {
   const [diagnosis, setDiagnosis] = useState('');
   const [advice, setAdvice] = useState('');
   const [nextVisit, setNextVisit] = useState('');
+  const doctors = useLiveQuery(() => db.doctors.filter((d) => d.active).toArray(), []) || [];
+  const [selectedDoctorId, setSelectedDoctorId] = useState('');
 
   // item catalog
   const stock = useLiveQuery(() => stockMap(), []);
@@ -197,6 +199,7 @@ export default function Billing() {
             setDiagnosis((cur) => cur || list[0].diagnosis || '');
             setAdvice((cur) => cur || list[0].advice || '');
             setNextVisit((cur) => cur || list[0].follow_up || '');
+            if (list[0].doctor_id) setSelectedDoctorId(list[0].doctor_id);
           }
         })
         .catch(() => {});
@@ -204,6 +207,7 @@ export default function Billing() {
       setDiagnosis('');
       setAdvice('');
       setNextVisit('');
+      setSelectedDoctorId('');
     }
   }, [patient?.id]);
 
@@ -212,9 +216,13 @@ export default function Billing() {
     if (!cart.length) throw new Error('Bill has no items');
     setBusy(true);
     setPayOpen(false);
+    const selectedDoc = doctors.find((d) => d.id === selectedDoctorId);
     try {
       const { bill, items, payments: createdPayments } = await createBill({
         patient_id: patient.id,
+        doctor_id: selectedDoc?.id || null,
+        doctor_name: selectedDoc?.name || settings.doctor_name || '',
+        doctor_phone: selectedDoc?.phone || settings.doctor_phone || '',
         items: cart,
         discount_mode: discMode,
         discount_value: Number(discVal) || 0,
@@ -232,6 +240,7 @@ export default function Billing() {
       setDiagnosis('');
       setAdvice('');
       setNextVisit('');
+      setSelectedDoctorId('');
     } finally {
       setBusy(false);
     }
@@ -312,6 +321,14 @@ export default function Billing() {
           </Card>
 
           <Card title="Clinical Details" sub="Diagnosis, advice & follow-up" pad className="pos-clinical-card">
+            <Field label="Attending Doctor" style={{ marginBottom: '8px' }}>
+              <Select value={selectedDoctorId} onChange={(e) => setSelectedDoctorId(e.target.value)}>
+                <option value="">{settings.doctor_name ? `${settings.doctor_name} (Clinic Default)` : 'Select Doctor…'}</option>
+                {doctors.map((d) => (
+                  <option key={d.id} value={d.id}>{d.name}{d.qualification ? ` · ${d.qualification}` : ''}</option>
+                ))}
+              </Select>
+            </Field>
             <Field label="Diagnosis">
               <Input
                 value={diagnosis}

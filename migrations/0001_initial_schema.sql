@@ -54,7 +54,9 @@ CREATE TABLE IF NOT EXISTS patients (
   name TEXT NOT NULL,
   dob TEXT,
   approx_age INTEGER,
+  age INTEGER,
   gender TEXT,
+  marital_status TEXT DEFAULT 'Single',
   mobile TEXT NOT NULL,
   alt_mobile TEXT,
   email TEXT,
@@ -155,6 +157,7 @@ CREATE TABLE IF NOT EXISTS appointments (
 );
 CREATE INDEX IF NOT EXISTS idx_appointments_date ON appointments(date);
 CREATE INDEX IF NOT EXISTS idx_appointments_patient_id ON appointments(patient_id);
+CREATE INDEX IF NOT EXISTS idx_appointments_doctor_id ON appointments(doctor_id);
 
 -- 8. Prescriptions
 CREATE TABLE IF NOT EXISTS prescriptions (
@@ -175,6 +178,7 @@ CREATE TABLE IF NOT EXISTS prescriptions (
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_prescriptions_patient_id ON prescriptions(patient_id);
+CREATE INDEX IF NOT EXISTS idx_prescriptions_doctor_id ON prescriptions(doctor_id);
 
 -- 9. Prescription Items
 CREATE TABLE IF NOT EXISTS prescription_items (
@@ -184,8 +188,10 @@ CREATE TABLE IF NOT EXISTS prescription_items (
   seq INTEGER,
   name TEXT,
   dosage TEXT,
+  timing TEXT,
   frequency TEXT,
   duration TEXT,
+  quantity TEXT,
   instruction TEXT,
   created_at TEXT DEFAULT (datetime('now')),
   updated_at TEXT DEFAULT (datetime('now'))
@@ -200,11 +206,9 @@ CREATE TABLE IF NOT EXISTS medicines (
   generic TEXT,
   brand TEXT,
   category TEXT,
-  manufacturer TEXT,
   type TEXT DEFAULT 'Tablet',
   strength TEXT,
   unit TEXT DEFAULT 'strip',
-  barcode TEXT,
   purchase_price REAL DEFAULT 0,
   selling_price REAL DEFAULT 0,
   min_stock REAL DEFAULT 0,

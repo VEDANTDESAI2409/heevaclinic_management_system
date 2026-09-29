@@ -74,7 +74,7 @@ export const tableColumns = {
   ],
   prescription_items: [
     'id', 'prescription_id', 'medicine_id', 'seq', 'name', 'dosage',
-    'frequency', 'duration', 'instruction', 'created_at', 'updated_at'
+    'timing', 'frequency', 'duration', 'quantity', 'instruction', 'created_at', 'updated_at'
   ],
   medicines: [
     'id', 'medicine_code', 'name', 'generic', 'brand', 'category',

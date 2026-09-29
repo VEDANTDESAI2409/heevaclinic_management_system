@@ -38,7 +38,7 @@ export function validateCSVRows(type, rows, context = {}) {
         const rowNum = row.__rowNum;
         const errors = [];
 
-        const name = String(row.name || '').trim();
+        const name = String(row.name || row.full_name || row.patient_name || '').trim();
         if (!name) {
           errors.push('Full name is required');
         } else if (name.length < 3) {
@@ -63,7 +63,7 @@ export function validateCSVRows(type, rows, context = {}) {
           gender = rawGender === 'm' || rawGender === 'male' ? 'M' : rawGender === 'f' || rawGender === 'female' ? 'F' : 'Other';
         }
 
-        const rawMobile = String(row.mobile || '').trim();
+        const rawMobile = String(row.mobile || row.mobile_number || row.phone || row.contact || '').trim();
         const mobile = cleanDigits(rawMobile);
         if (!rawMobile) {
           errors.push('Mobile number is required');

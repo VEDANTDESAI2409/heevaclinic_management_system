@@ -15,10 +15,10 @@ db.version(1).stores({
   patients: 'id, &uhid, name, mobile, created_at, [name+dob]',
   patient_vitals: 'id, patient_id, recorded_at',
   consultations: 'id, &consultation_no, patient_id, doctor_id, date',
-  prescriptions: 'id, &prescription_no, patient_id, consultation_id, date',
+  prescriptions: 'id, &prescription_no, patient_id, consultation_id, doctor_id, date',
   prescription_items: 'id, prescription_id, medicine_id',
-  appointments: 'id, &appointment_no, patient_id, date, status',
-  medicines: 'id, &medicine_code, name, generic, barcode, category, active',
+  appointments: 'id, &appointment_no, patient_id, doctor_id, date, status',
+  medicines: 'id, &medicine_code, name, generic, category, active',
   medicine_categories: 'id, name',
   batches: 'id, medicine_id',
   inventory_txns: 'id, batch_id, medicine_id, type, at',
@@ -56,6 +56,12 @@ db.version(4).stores({
 db.version(5).stores({
   patients: 'id, &uhid, name, mobile, created_at, [name+age]',
   medicines: 'id, &medicine_code, name, generic, category, active',
+});
+
+// v6: index doctor_id on appointments and prescriptions for safe deletion/history lookups
+db.version(6).stores({
+  appointments: 'id, &appointment_no, patient_id, doctor_id, date, status',
+  prescriptions: 'id, &prescription_no, patient_id, consultation_id, doctor_id, date',
 });
 
 // Keep the existing Dexie API used by the UI while making backend JSON storage persistent.

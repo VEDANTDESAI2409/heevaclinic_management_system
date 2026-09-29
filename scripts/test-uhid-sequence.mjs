@@ -84,18 +84,18 @@ try {
   assert.strictEqual(p5.uhid, 'HC-2026-000005', `Expected HC-2026-000005, got ${p5.uhid}`);
   ok('TEST 4: Deleted patients 001 and 003 (004 remains); next patient receives HC-2026-000005');
 
-  // TEST 5: Delete ALL remaining patients (now database contains zero patients) -> Create new patient -> Expected: HC-2026-000001
+  // TEST 5: Delete ALL remaining patients (now database contains zero patients) -> Next patient must NOT reset sequence; Expected: HC-2026-000006
   await patients.deletePatient(p4.id, 'admin');
   await patients.deletePatient(p5.id, 'admin');
   const remainingZero = await db.patients.count();
   assert.strictEqual(remainingZero, 0, 'Database must now contain zero patients');
 
   const pNew = await patients.registerPatient(
-    { name: 'Patient Fresh Start', age: 22, gender: 'F', mobile: '9666666666' },
+    { name: 'Patient After All Deleted', age: 22, gender: 'F', mobile: '9666666666' },
     'admin'
   );
-  assert.strictEqual(pNew.uhid, 'HC-2026-000001', `Expected HC-2026-000001 after full clear, got ${pNew.uhid}`);
-  ok('TEST 5: All patients deleted (zero remaining) -> Next patient restarts from HC-2026-000001');
+  assert.strictEqual(pNew.uhid, 'HC-2026-000006', `Expected HC-2026-000006 even after deleting all patients, got ${pNew.uhid}`);
+  ok('TEST 5: All patients deleted (zero remaining) -> Monotonic sequence preserved, next patient receives HC-2026-000006');
 
 } catch (err) {
   fail('Part 1 failure', err);
@@ -225,30 +225,30 @@ console.log('\n--- PART 2: Cloudflare D1 Backend Engine Verification ---');
   assert.strictEqual(d1p5.uhid, 'HC-2026-000005', `Expected HC-2026-000005, got ${d1p5.uhid}`);
   ok('D1 TEST 4: Deleting 001 and 003 leaves 004 in DB; next patient is HC-2026-000005');
 
-  // TEST 5 (D1): Delete ALL remaining patients -> create new patient -> Expected HC-2026-000001
+  // TEST 5 (D1): Delete ALL remaining patients -> create new patient -> Expected HC-2026-000006
   await d1Client.remove(mockD1, 'patients', d1p4.id);
   await d1Client.remove(mockD1, 'patients', d1p5.id);
   assert.strictEqual(tables.patients.length, 0, 'D1 now has genuinely 0 patients');
   const prevAfterZero = await d1Client.getNextUhidPreview(mockD1);
-  assert.strictEqual(prevAfterZero.nextUhid, 'HC-2026-000001', 'Preview after zero patients must be HC-2026-000001');
+  assert.strictEqual(prevAfterZero.nextUhid, 'HC-2026-000006', 'Preview after zero patients must be HC-2026-000006 (counter preserved)');
   const d1Fresh = await d1Client.allocatePatient(mockD1, { name: 'D1 Fresh', age: 28, gender: 'F', mobile: '9777777777' });
-  assert.strictEqual(d1Fresh.uhid, 'HC-2026-000001', `Expected HC-2026-000001, got ${d1Fresh.uhid}`);
-  ok('D1 TEST 5: All patients deleted in D1 -> sequence restarts cleanly from HC-2026-000001');
+  assert.strictEqual(d1Fresh.uhid, 'HC-2026-000006', `Expected HC-2026-000006, got ${d1Fresh.uhid}`);
+  ok('D1 TEST 5: All patients deleted in D1 -> sequence continues monotonically with HC-2026-000006');
 
   // TEST 6 (D1): Multi-laptop safety (two laptops allocate sequentially without collision)
   const laptop1Patient = await d1Client.allocatePatient(mockD1, { name: 'Laptop 1 Patient', age: 45, gender: 'M', mobile: '9888888881' });
   const laptop2Patient = await d1Client.allocatePatient(mockD1, { name: 'Laptop 2 Patient', age: 32, gender: 'F', mobile: '9888888882' });
-  assert.strictEqual(laptop1Patient.uhid, 'HC-2026-000002');
-  assert.strictEqual(laptop2Patient.uhid, 'HC-2026-000003');
+  assert.strictEqual(laptop1Patient.uhid, 'HC-2026-000007');
+  assert.strictEqual(laptop2Patient.uhid, 'HC-2026-000008');
   assert.notStrictEqual(laptop1Patient.uhid, laptop2Patient.uhid, 'Multi-laptop UHIDs must be strictly distinct');
-  ok('D1 TEST 6: Multi-laptop simulation: Laptop 1 (000002) & Laptop 2 (000003) receive unique sequential UHIDs');
+  ok('D1 TEST 6: Multi-laptop simulation: Laptop 1 (000007) & Laptop 2 (000008) receive unique sequential UHIDs');
 
   // TEST 7 (D1): Refresh / persistence: counter state persists and advances correctly
   const previewAfterReload = await d1Client.getNextUhidPreview(mockD1);
-  assert.strictEqual(previewAfterReload.nextUhid, 'HC-2026-000004');
-  const nextReloadPatient = await d1Client.allocatePatient(mockD1, { name: 'Post-Reload Patient', age: 29, gender: 'M', mobile: '9888888883' });
-  assert.strictEqual(nextReloadPatient.uhid, 'HC-2026-000004');
-  ok('D1 TEST 7: State persistence: preview and subsequent patient continue sequence to HC-2026-000004');
+  assert.strictEqual(previewAfterReload.nextUhid, 'HC-2026-000009');
+  const nextReloadPatient = await d1Client.allocatePatient(mockD1, { name: 'Post-Reload Patient', age: 29, gender: 'M', mobile: '9888888889' });
+  assert.strictEqual(nextReloadPatient.uhid, 'HC-2026-000009');
+  ok('D1 TEST 7: State persistence: preview and subsequent patient continue sequence to HC-2026-000009');
 }
 
 console.log('\n================================================================');

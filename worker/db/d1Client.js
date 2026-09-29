@@ -4,6 +4,43 @@ function nowISO() {
   return new Date().toISOString();
 }
 
+function parseHistoricalDateTime(val, fallbackISO = new Date().toISOString()) {
+  if (!val) return fallbackISO;
+  if (typeof val !== 'string') return fallbackISO;
+  const s = val.trim();
+  if (!s) return fallbackISO;
+
+  // DD-MM-YYYY or DD-MM-YYYY HH:mm or DD-MM-YYYY HH:mm:ss
+  const dmyMatch = s.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?$/);
+  if (dmyMatch) {
+    const day = parseInt(dmyMatch[1], 10);
+    const month = parseInt(dmyMatch[2], 10) - 1;
+    const year = parseInt(dmyMatch[3], 10);
+    const hours = dmyMatch[4] ? parseInt(dmyMatch[4], 10) : 0;
+    const minutes = dmyMatch[5] ? parseInt(dmyMatch[5], 10) : 0;
+    const seconds = dmyMatch[6] ? parseInt(dmyMatch[6], 10) : 0;
+    const d = new Date(Date.UTC(year, month, day, hours, minutes, seconds));
+    if (!isNaN(d.getTime())) return d.toISOString();
+  }
+
+  // YYYY-MM-DD
+  const ymdMatch = s.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})(?:[T\s](\d{1,2}):(\d{2})(?::(\d{2}))?)?$/);
+  if (ymdMatch) {
+    const year = parseInt(ymdMatch[1], 10);
+    const month = parseInt(ymdMatch[2], 10) - 1;
+    const day = parseInt(ymdMatch[3], 10);
+    const hours = ymdMatch[4] ? parseInt(ymdMatch[4], 10) : 0;
+    const minutes = ymdMatch[5] ? parseInt(ymdMatch[5], 10) : 0;
+    const seconds = ymdMatch[6] ? parseInt(ymdMatch[6], 10) : 0;
+    const d = new Date(Date.UTC(year, month, day, hours, minutes, seconds));
+    if (!isNaN(d.getTime())) return d.toISOString();
+  }
+
+  const parsed = new Date(s);
+  if (!isNaN(parsed.getTime())) return parsed.toISOString();
+  return fallbackISO;
+}
+
 function filterFields(table, obj) {
   const allowed = tableColumns[table];
   if (!allowed) return obj;
@@ -79,13 +116,8 @@ export const d1Client = {
     const countRow = await db.prepare('SELECT COUNT(*) as count FROM patients').first();
     const patientCount = countRow ? Number(countRow.count) : 0;
 
-    let nextNumber;
-    if (patientCount === 0) {
-      nextNumber = start;
-    } else {
-      const counterRow = await db.prepare('SELECT * FROM counters WHERE key = ? OR id = ? LIMIT 1').bind(counterKey, counterKey).first();
-      nextNumber = counterRow ? Number(counterRow.value) + 1 : start;
-    }
+    const counterRow = await db.prepare('SELECT * FROM counters WHERE key = ? OR id = ? LIMIT 1').bind(counterKey, counterKey).first();
+    const nextNumber = counterRow && counterRow.value != null ? Number(counterRow.value) + 1 : start;
 
     const nextUhid = `${prefix}${includeYear ? `-${year}` : ''}-${String(nextNumber).padStart(pad, '0')}`;
     return {
@@ -125,21 +157,10 @@ export const d1Client = {
     const patientCount = countRow ? Number(countRow.count) : 0;
 
     let uhid = item.uhid ? String(item.uhid).trim() : null;
-    let nextVal;
-
-    if (patientCount === 0) {
-      // Intentional exception: When patient database has ZERO patients, sequence starts from uhid_start (default 1)
-      nextVal = start;
-      if (!uhid) {
-        uhid = `${prefix}${includeYear ? `-${year}` : ''}-${String(nextVal).padStart(pad, '0')}`;
-      }
-    } else {
-      // Patients exist: persistent counter MUST NEVER reuse deleted patient numbers
-      const counterRow = await db.prepare('SELECT * FROM counters WHERE key = ? OR id = ? LIMIT 1').bind(counterKey, counterKey).first();
-      nextVal = counterRow ? Number(counterRow.value) + 1 : start;
-      if (!uhid) {
-        uhid = `${prefix}${includeYear ? `-${year}` : ''}-${String(nextVal).padStart(pad, '0')}`;
-      }
+    const counterRow = await db.prepare('SELECT * FROM counters WHERE key = ? OR id = ? LIMIT 1').bind(counterKey, counterKey).first();
+    let nextVal = counterRow && counterRow.value != null ? Number(counterRow.value) + 1 : start;
+    if (!uhid) {
+      uhid = `${prefix}${includeYear ? `-${year}` : ''}-${String(nextVal).padStart(pad, '0')}`;
     }
 
     // If a specific UHID was provided, advance counter to ensure it's not reused
@@ -242,6 +263,21 @@ export const d1Client = {
       record.key = String(item.key || id);
     }
 
+    // Ensure unique service_code if actual === 'services'
+    if (actual === 'services') {
+      if (!record.service_code) {
+        const countRow = await db.prepare('SELECT COUNT(*) as count FROM services').first();
+        const nextNum = (countRow ? Number(countRow.count) : 0) + 1;
+        record.service_code = `SRV-${String(nextNum).padStart(4, '0')}`;
+      }
+      const existingSvc = await db.prepare('SELECT id FROM services WHERE service_code = ?').bind(record.service_code).first();
+      if (existingSvc && existingSvc.id !== id) {
+        const countRow = await db.prepare('SELECT COUNT(*) as count FROM services').first();
+        const nextNum = (countRow ? Number(countRow.count) : 0) + 1;
+        record.service_code = `SRV-${String(nextNum).padStart(4, '0')}-${Date.now().toString().slice(-4)}`;
+      }
+    }
+
     const filtered = filterFields(actual, record);
     const cols = Object.keys(filtered);
     const placeholders = cols.map(() => '?');
@@ -300,6 +336,13 @@ export const d1Client = {
       updated.key = String(patch.key);
     }
 
+    if (actual === 'services' && patch.service_code) {
+      const existingSvc = await db.prepare('SELECT id FROM services WHERE service_code = ? AND id != ?').bind(patch.service_code, strId).first();
+      if (existingSvc) {
+        delete updated.service_code;
+      }
+    }
+
     const filtered = filterFields(actual, updated);
     const cols = Object.keys(filtered).filter((c) => c !== 'id');
     const setClauses = cols.map((c) => `"${c}" = ?`);
@@ -329,15 +372,6 @@ export const d1Client = {
     } else {
       deleteSql = `DELETE FROM "${actual}" WHERE id = ?`;
       await db.prepare(deleteSql).bind(strId).run();
-    }
-
-    if (actual === 'patients') {
-      const countRow = await db.prepare('SELECT COUNT(*) as count FROM patients').first();
-      const remaining = countRow ? Number(countRow.count) : 0;
-      if (remaining === 0) {
-        const now = nowISO();
-        await db.prepare("UPDATE counters SET value = 0, updated_at = ? WHERE key LIKE 'UHID|%' OR id LIKE 'UHID|%'").bind(now).run();
-      }
     }
 
     if (actual === 'returns') {
@@ -397,12 +431,7 @@ export const d1Client = {
       const countRow = await db.prepare('SELECT COUNT(*) as count FROM patients').first();
       const patientCount = countRow ? Number(countRow.count) : 0;
       const counterRow = await db.prepare('SELECT * FROM counters WHERE key = ? OR id = ? LIMIT 1').bind(counterKey, counterKey).first();
-      let counterVal;
-      if (patientCount === 0) {
-        counterVal = (Number(settingsRow.uhid_start) || 1) - 1;
-      } else {
-        counterVal = counterRow ? Number(counterRow.value) : (Number(settingsRow.uhid_start) || 1) - 1;
-      }
+      let counterVal = counterRow && counterRow.value != null ? Number(counterRow.value) : (Number(settingsRow.uhid_start) || 1) - 1;
 
       const newPatients = [];
       const skipped = [];
@@ -417,7 +446,7 @@ export const d1Client = {
         }
         counterVal++;
         const uhid = item.uhid || `${prefix}${settingsRow.uhid_include_year !== 0 && settingsRow.uhid_include_year !== false ? `-${year}` : ''}-${String(counterVal).padStart(pad, '0')}`;
-        const itemCreatedAt = item.created_at || (item.date_time ? new Date(item.date_time).toISOString() : null) || now;
+        const itemCreatedAt = parseHistoricalDateTime(item.created_at || item.date_time, now);
         const itemRegDate = item.reg_date || (itemCreatedAt ? itemCreatedAt.slice(0, 10) : today);
         const p = {
           id: item.id || crypto.randomUUID(),

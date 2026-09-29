@@ -53,11 +53,6 @@ function RegisterModal({ open, onClose, prefill = {} }) {
     const year = new Date().getFullYear();
     const pad = Number(s.uhid_padding) || 6;
     const prefix = (s.uhid_prefix || 'HC').trim().toUpperCase();
-    const count = await db.patients.count();
-    if (count === 0) {
-      const n = Number(s.uhid_start) || 1;
-      return `${prefix}${s.uhid_include_year ? `-${year}` : ''}-${String(n).padStart(pad, '0')}`;
-    }
     const key = s.uhid_include_year ? `UHID|${year}` : 'UHID|ALL';
     const row = await db.counters.get(key);
     const n = row ? row.value + 1 : Number(s.uhid_start) || 1;

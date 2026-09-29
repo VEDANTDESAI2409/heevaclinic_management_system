@@ -17,8 +17,8 @@ export function printInvoiceA4(bill, items = [], payments = [], s = {}) {
     ? [...new Set(paidRows.map((p) => p.method))].join(', ')
     : (bill.payment_method || (bill.payment_status === 'PAID' ? 'Cash' : 'Pending'));
 
-  const docName = bill.doctor_name || s.doctor_name || 'Dr. Mit Nayak';
-  const docPhone = bill.doctor_phone || s.doctor_phone || '9913974000';
+  const docName = bill.doctor_name || s.doctor_name || '';
+  const docPhone = bill.doctor_phone || s.doctor_phone || '';
 
   const ageStr = bill.patient_age != null
     ? (String(bill.patient_age).includes('Y') ? bill.patient_age : `${bill.patient_age} Y`)
@@ -416,8 +416,8 @@ export function downloadReceipt(bill, items = [], payments = [], s = {}) {
     ? [...new Set(paidRows.map((p) => p.method))].join(', ')
     : (bill.payment_method || (bill.payment_status === 'PAID' ? 'Cash' : 'Pending'));
 
-  const docName = bill.doctor_name || s.doctor_name || 'Dr. Mit Nayak';
-  const docPhone = bill.doctor_phone || s.doctor_phone || '9913974000';
+  const docName = bill.doctor_name || s.doctor_name || '';
+  const docPhone = bill.doctor_phone || s.doctor_phone || '';
 
   const sym = s.currency || '₹';
   const fmtM = (v) => `${sym} ${Number(v || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -856,7 +856,7 @@ export function printPrescription(pr, patient) {
             </div>
           </div>
           <div className="prx-doc">
-            <div className="prx-dname">{s.doctor_name}</div>
+            <div className="prx-dname">{pr.doctor_name || s.doctor_name}</div>
             <div className="prx-dqual">{s.doctor_qual}</div>
             <div className="prx-drole">{s.doctor_role}</div>
           </div>
@@ -870,15 +870,25 @@ export function printPrescription(pr, patient) {
         <div className="prx-rx">℞</div>
         <table className="prx-table">
           <thead>
-            <tr><th style={{ width: '30%' }}>Medicine</th><th style={{ width: '16%' }}>Dosage</th><th style={{ width: '20%' }}>Frequency</th><th style={{ width: '14%' }}>Duration</th><th>Instructions</th></tr>
+            <tr>
+              <th style={{ width: '28%' }}>Medicine</th>
+              <th style={{ width: '12%' }}>Dosage</th>
+              <th style={{ width: '14%' }}>Timing</th>
+              <th style={{ width: '15%' }}>Frequency</th>
+              <th style={{ width: '11%' }}>Duration</th>
+              <th style={{ width: '8%' }}>Qty</th>
+              <th>Instructions</th>
+            </tr>
           </thead>
           <tbody>
             {(pr.items || []).map((it, i) => (
-              <tr key={it.id}>
+              <tr key={it.id || i}>
                 <td><b>{i + 1}.</b> {it.name}</td>
                 <td>{it.dosage || '—'}</td>
+                <td>{it.timing || '—'}</td>
                 <td>{it.frequency || '—'}</td>
                 <td>{it.duration || '—'}</td>
+                <td>{it.quantity || '—'}</td>
                 <td>{it.instruction || '—'}</td>
               </tr>
             ))}
@@ -888,7 +898,7 @@ export function printPrescription(pr, patient) {
         {pr.notes && <div className="prx-notes"><b>Notes:</b> {pr.notes}</div>}
         <div className="prx-sign">
           <div className="prx-signline" />
-          <div>{s.doctor_name}<br /><span className="prx-signqual">{s.doctor_qual}</span></div>
+          <div>{pr.doctor_name || s.doctor_name}<br /><span className="prx-signqual">{s.doctor_qual}</span></div>
         </div>
         <div className="prx-foot">{s.receipt_footer || ''} · {s.phone}</div>
       </div>

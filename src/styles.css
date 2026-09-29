@@ -322,18 +322,32 @@ option, optgroup {
   background-color: var(--surface);
   color: var(--text);
 }
+[data-theme='dark'] select,
+[data-theme='dark'] .select,
+[data-theme='dark'] input,
+[data-theme='dark'] textarea,
+[data-theme='dark'] option,
+[data-theme='dark'] optgroup {
+  color-scheme: dark;
+}
+[data-theme='dark'] select,
+[data-theme='dark'] .select,
+[data-theme='dark'] input,
+[data-theme='dark'] textarea {
+  background-color: var(--surface);
+  color: var(--text);
+  border-color: var(--border-2);
+}
 [data-theme='dark'] option,
 [data-theme='dark'] optgroup {
   background-color: #111C2B;
   color: #E8EEF6;
 }
-[data-theme='dark'] input[type="date"] {
-  color-scheme: dark;
-}
 [data-theme='dark'] input[type="date"]::-webkit-calendar-picker-indicator {
   filter: invert(0.85);
   cursor: pointer;
 }
+.theme-opts { display: flex; gap: 8px; }
 .field-error .input { border-color: var(--red); }
 .form-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 13px 14px; }
 .fg-2 { grid-column: span 2; }

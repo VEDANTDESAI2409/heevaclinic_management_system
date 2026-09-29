@@ -80,8 +80,10 @@ export async function createPrescription(data, userId) {
         seq: i + 1,
         name,
         dosage: it.dosage || '',
+        timing: it.timing || '',
         frequency: it.frequency || '',
         duration: it.duration || '',
+        quantity: it.quantity || '',
         instruction: it.instruction || '',
       });
     }

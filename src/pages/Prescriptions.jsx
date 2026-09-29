@@ -26,6 +26,7 @@ function NewPrescriptionModal({ open, onClose, prefillPatient, onDone }) {
   const [advice, setAdvice] = useState('');
   const [notes, setNotes] = useState('');
   const [items, setItems] = useState([]);
+  const [selectedDoctorId, setSelectedDoctorId] = useState('');
   const [pickMed, setPickMed] = useState(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
@@ -40,12 +41,14 @@ function NewPrescriptionModal({ open, onClose, prefillPatient, onDone }) {
     if (open) {
       setPatient(prefillPatient || null);
       setConsult(''); setDiagnosis(''); setAdvice(''); setNotes(''); setItems([]); setPickMed(null); setErr('');
+      setSelectedDoctorId(doctors?.[0]?.id || '');
       if (prefillPatient) {
         db.consultations.where('patient_id').equals(prefillPatient.id).reverse().sortBy('time').then((list) => {
           if (list[0]) {
             setConsult(list[0].id);
             setDiagnosis(list[0].diagnosis || '');
             setAdvice(list[0].advice || '');
+            if (list[0].doctor_id) setSelectedDoctorId(list[0].doctor_id);
           }
         });
       }
@@ -55,7 +58,16 @@ function NewPrescriptionModal({ open, onClose, prefillPatient, onDone }) {
   const addMed = () => {
     if (!pickMed) return;
     if (items.some((i) => i.medicine_id === pickMed.id)) { pushToast('warning', 'Medicine already in the list'); return; }
-    setItems((x) => [...x, { medicine_id: pickMed.id, name: pickMed.name, dosage: '', frequency: 'Once daily', duration: '', instruction: '' }]);
+    setItems((x) => [...x, {
+      medicine_id: pickMed.id,
+      name: pickMed.name,
+      dosage: '',
+      timing: 'After food',
+      frequency: 'Once daily',
+      duration: '',
+      quantity: '',
+      instruction: '',
+    }]);
     setPickMed(null);
   };
 
@@ -65,13 +77,14 @@ function NewPrescriptionModal({ open, onClose, prefillPatient, onDone }) {
     setErr('');
     if (!patient) { setErr('Select a patient'); return; }
     if (!items.length) { setErr('Add at least one medicine'); return; }
+    const chosenDoc = doctors.find((d) => d.id === selectedDoctorId) || doctors?.[0];
     setBusy(true);
     try {
       const pr = await createPrescription({
         patient_id: patient.id,
         consultation_id: consult || null,
-        doctor_id: doctors?.[0]?.id || null,
-        doctor_name: doctors?.[0]?.name || settings.doctor_name,
+        doctor_id: chosenDoc?.id || null,
+        doctor_name: chosenDoc?.name || settings.doctor_name,
         diagnosis, advice, notes,
         items,
       }, user.id);
@@ -97,6 +110,12 @@ function NewPrescriptionModal({ open, onClose, prefillPatient, onDone }) {
           <Select value={patient?.id || ''} onChange={(e) => setPatient(patients.find((p) => p.id === e.target.value) || null)}>
             <option value="">Search patient…</option>
             {patients.map((p) => <option key={p.id} value={p.id}>{p.name} — {p.uhid}</option>)}
+          </Select>
+        </Field>
+        <Field label="Attending Doctor" required>
+          <Select value={selectedDoctorId} onChange={(e) => setSelectedDoctorId(e.target.value)}>
+            <option value="">Select Doctor…</option>
+            {doctors.map((d) => <option key={d.id} value={d.id}>{d.name}{d.qualification ? ` · ${d.qualification}` : ''}</option>)}
           </Select>
         </Field>
         <Field label="Linked Consultation" hint="Optional — prefills diagnosis">
@@ -131,15 +150,23 @@ function NewPrescriptionModal({ open, onClose, prefillPatient, onDone }) {
             <div className="prx-line-name"><b>{i + 1}.</b> {it.name}
               <button type="button" className="prx-rm" title="Remove" onClick={() => setItems((x) => x.filter((_, j) => j !== i))}><Trash2 size={13} /></button>
             </div>
-            <div className="prx-line-grid">
-              <Field label="Dosage"><Input value={it.dosage} onChange={(e) => setItem(i, 'dosage', e.target.value)} placeholder="1 tablet" /></Field>
+            <div className="prx-line-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))' }}>
+              <Field label="Dosage"><Input value={it.dosage} onChange={(e) => setItem(i, 'dosage', e.target.value)} placeholder="e.g. 1 tab" /></Field>
+              <Field label="Timing">
+                <Select value={it.timing || 'After food'} onChange={(e) => setItem(i, 'timing', e.target.value)}>
+                  {['After food', 'Before food', 'With food', 'Empty stomach', 'At bedtime', 'As needed'].map((tm) => (
+                    <option key={tm} value={tm}>{tm}</option>
+                  ))}
+                </Select>
+              </Field>
               <Field label="Frequency">
                 <Select value={it.frequency} onChange={(e) => setItem(i, 'frequency', e.target.value)}>
                   {FREQS.map((fr) => <option key={fr}>{fr}</option>)}
                 </Select>
               </Field>
-              <Field label="Duration"><Input value={it.duration} onChange={(e) => setItem(i, 'duration', e.target.value)} placeholder="5 days" /></Field>
-              <Field label="Instructions"><Input value={it.instruction} onChange={(e) => setItem(i, 'instruction', e.target.value)} placeholder="After food" /></Field>
+              <Field label="Duration"><Input value={it.duration} onChange={(e) => setItem(i, 'duration', e.target.value)} placeholder="e.g. 5 days" /></Field>
+              <Field label="Quantity"><Input value={it.quantity || ''} onChange={(e) => setItem(i, 'quantity', e.target.value)} placeholder="e.g. 10 tabs" /></Field>
+              <Field label="Instructions"><Input value={it.instruction} onChange={(e) => setItem(i, 'instruction', e.target.value)} placeholder="e.g. With warm water" /></Field>
             </div>
           </div>
         ))}

@@ -7,19 +7,16 @@ export const CSV_TEMPLATES = {
     description: 'Bulk register patients. Mandatory columns: name, age, gender (M/F/Other), mobile (10 digits). Historical Date & Time is optional in DD-MM-YYYY HH:mm format.',
     headers: [
       'name', 'date_time', 'age', 'gender', 'marital_status', 'mobile',
-      'address', 'pin',
-      'blood_group', 'allergies', 'conditions', 'current_meds', 'notes'
+      'blood_group', 'address'
     ],
     sampleRows: [
       [
         'Ramesh Sharma', '05-09-2026 10:45', '36', 'M', 'Married', '9825012345',
-        'Flat 402, Shivalik Residency, Pal Gam, Surat', '395009',
-        'B+', 'Penicillin', 'Hypertension', 'Amlodipine 5mg', 'Regular follow up'
+        'B+', 'Flat 402, Shivalik Residency, Pal Gam, Surat'
       ],
       [
         'Priya Patel', '06-09-2026 14:20', '28', 'F', 'Single', '9724012345',
-        'B-12, Green City, Adajan, Surat', '395009',
-        'O+', 'None', 'None', '', 'New patient'
+        'O+', 'B-12, Green City, Adajan, Surat'
       ]
     ],
     columns: [
@@ -29,13 +26,8 @@ export const CSV_TEMPLATES = {
       { key: 'gender', label: 'Gender (M/F/Other)', required: true },
       { key: 'marital_status', label: 'Marital Status (Single/Married/etc)', required: false },
       { key: 'mobile', label: 'Mobile (10 digits)', required: true },
-      { key: 'address', label: 'Address', required: false },
-      { key: 'pin', label: 'Pincode', required: false },
       { key: 'blood_group', label: 'Blood Group', required: false },
-      { key: 'allergies', label: 'Allergies', required: false },
-      { key: 'conditions', label: 'Known Conditions', required: false },
-      { key: 'current_meds', label: 'Current Medications', required: false },
-      { key: 'notes', label: 'Notes', required: false },
+      { key: 'address', label: 'Address', required: false },
     ]
   },
 
