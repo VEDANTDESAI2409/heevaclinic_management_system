@@ -116,6 +116,14 @@ export async function handleReset(request, env) {
       `).bind(now, now, now)
     );
 
+    // Initialize DB_VERSION counter
+    stmts.push(
+      db.prepare(`
+        INSERT INTO counters (id, key, value, created_at, updated_at)
+        VALUES ('DB_VERSION', 'DB_VERSION', 1, ?, ?)
+      `).bind(now, now)
+    );
+
     await db.batch(stmts);
 
     return Response.json({

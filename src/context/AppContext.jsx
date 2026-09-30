@@ -2,7 +2,7 @@
 import React, { createContext, useContext, useEffect, useState, useCallback, useMemo } from 'react';
 import db, { syncFromBackend } from '../db';
 import { getHealth, authApi } from '../services/api';
-import { isBrowserRuntime } from '../lib/remoteSync';
+import { isBrowserRuntime, startRealtimeSync, checkAndSync } from '../lib/remoteSync';
 import { getSettings, DEFAULT_SETTINGS } from '../services/core';
 import { ensureMedicineCategories } from '../services/inventory';
 import { syncAlerts, unreadCount } from '../services/notifications';
@@ -73,7 +73,7 @@ export function AppProvider({ children }) {
       } catch (e) {
         console.error('Backend boot error', e);
         if (mounted) {
-          setDatabaseError(e?.message || 'Unable to connect to the backend server.');
+          setDatabaseError(e?.message || 'Unable to connect to the clinic server. Please check your internet connection.');
         }
       } finally {
         if (mounted) {
@@ -87,7 +87,10 @@ export function AppProvider({ children }) {
     };
     window.addEventListener('heeva:unauthorized', onUnauthorized);
 
-    const on = () => { setOnline(true); syncFromBackend(db).catch(() => {}); };
+    const on = () => {
+      setOnline(true);
+      checkAndSync(db).catch(() => {});
+    };
     const off = () => setOnline(false);
     window.addEventListener('online', on);
     window.addEventListener('offline', off);
@@ -99,35 +102,17 @@ export function AppProvider({ children }) {
     setStandalone(mq.matches);
     if (mq.addEventListener) mq.addEventListener('change', (e) => setStandalone(e.matches));
 
-    const onFocusSync = () => {
-      if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
-        syncFromBackend(db).catch(() => {});
-      }
-    };
-    if (typeof document !== 'undefined') {
-      document.addEventListener('visibilitychange', onFocusSync);
-    }
-    window.addEventListener('focus', onFocusSync);
-
-    // Multi-laptop background sync: poll shared D1 database every 8s while active
-    const pollInterval = setInterval(() => {
-      if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
-        syncFromBackend(db).catch(() => {});
-      }
-    }, 8000);
+    // Multi-device real-time sync (2.5s poll + cross-tab BroadcastChannel + visibility/focus trigger)
+    const stopRealtimeSync = startRealtimeSync(db, 2500);
 
     return () => {
       mounted = false;
-      clearInterval(pollInterval);
+      stopRealtimeSync();
       window.removeEventListener('heeva:unauthorized', onUnauthorized);
       window.removeEventListener('online', on);
       window.removeEventListener('offline', off);
       window.removeEventListener('beforeinstallprompt', bip);
       window.removeEventListener('appinstalled', ai);
-      if (typeof document !== 'undefined') {
-        document.removeEventListener('visibilitychange', onFocusSync);
-      }
-      window.removeEventListener('focus', onFocusSync);
     };
   }, [syncAndInit]);
 

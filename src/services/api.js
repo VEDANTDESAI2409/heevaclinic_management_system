@@ -75,7 +75,7 @@ async function request(path, options = {}) {
     if (typeof window !== 'undefined' && !(typeof process !== 'undefined' && process.versions?.node)) {
       console.error('[API] network error', error);
     }
-    throw new Error('Unable to reach the server. Start the backend with npm run dev.');
+    throw new Error('Unable to connect to the clinic server. Please check your internet connection.');
   }
 
   if (response.status === 401) {
@@ -181,3 +181,7 @@ export const getAppointments = () => getRecords('appointments');
 export const createAppointment = (appointment) => createRecord('appointments', appointment);
 export const updateAppointment = (id, patch) => updateRecord('appointments', id, patch);
 export const deleteAppointment = (id) => deleteRecord('appointments', id);
+
+export const getSyncStatus = () => request('/sync/status');
+export const getSyncBundle = () => request('/sync/bundle');
+

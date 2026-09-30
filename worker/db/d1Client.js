@@ -104,6 +104,95 @@ export const d1Client = {
     return row;
   },
 
+  async getDbVersion(db) {
+    try {
+      const row = await db.prepare('SELECT value, updated_at FROM counters WHERE key = ? OR id = ? LIMIT 1').bind('DB_VERSION', 'DB_VERSION').first();
+      return {
+        version: row && row.value != null ? Number(row.value) : 1,
+        updatedAt: row?.updated_at || nowISO(),
+      };
+    } catch (_) {
+      return { version: 1, updatedAt: nowISO() };
+    }
+  },
+
+  async incrementDbVersion(db, now = nowISO()) {
+    try {
+      await db.prepare(`
+        INSERT INTO counters (id, key, value, created_at, updated_at)
+        VALUES ('DB_VERSION', 'DB_VERSION', 1, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          value = counters.value + 1,
+          updated_at = excluded.updated_at
+      `).bind(now, now).run();
+    } catch (e) {
+      console.warn('[incrementDbVersion] Failed to bump version:', e?.message || e);
+    }
+  },
+
+  async getSyncBundle(db) {
+    const versionStatus = await this.getDbVersion(db);
+
+    const queries = [
+      db.prepare('SELECT * FROM clinic_settings'),
+      db.prepare('SELECT * FROM counters'),
+      db.prepare('SELECT * FROM doctors ORDER BY name ASC'),
+      db.prepare('SELECT * FROM patients ORDER BY updated_at DESC, created_at DESC'),
+      db.prepare('SELECT * FROM patient_vitals ORDER BY recorded_at DESC'),
+      db.prepare('SELECT * FROM medicine_categories ORDER BY name ASC'),
+      db.prepare('SELECT * FROM medicines ORDER BY name ASC'),
+      db.prepare('SELECT * FROM medicine_batches ORDER BY expiry ASC'),
+      db.prepare('SELECT * FROM inventory_transactions ORDER BY at DESC'),
+      db.prepare('SELECT * FROM services ORDER BY name ASC'),
+      db.prepare('SELECT * FROM consultations ORDER BY date DESC, time DESC'),
+      db.prepare('SELECT * FROM prescriptions ORDER BY date DESC, time DESC'),
+      db.prepare('SELECT * FROM prescription_items ORDER BY seq ASC'),
+      db.prepare('SELECT * FROM appointments ORDER BY date DESC, time DESC'),
+      db.prepare('SELECT * FROM bills ORDER BY date DESC, time DESC'),
+      db.prepare('SELECT * FROM bill_items'),
+      db.prepare('SELECT * FROM payments ORDER BY at DESC'),
+      db.prepare('SELECT * FROM returns ORDER BY at DESC'),
+      db.prepare('SELECT * FROM return_items'),
+      db.prepare('SELECT * FROM expenses ORDER BY date DESC'),
+      db.prepare('SELECT * FROM notifications ORDER BY at DESC'),
+      db.prepare('SELECT * FROM activity_logs ORDER BY at DESC LIMIT 150'),
+    ];
+
+    const results = await db.batch(queries);
+
+    const data = {
+      clinic_settings: results[0]?.results || [],
+      counters: results[1]?.results || [],
+      doctors: results[2]?.results || [],
+      patients: results[3]?.results || [],
+      patient_vitals: results[4]?.results || [],
+      medicine_categories: results[5]?.results || [],
+      medicines: results[6]?.results || [],
+      medicine_batches: results[7]?.results || [],
+      inventory_transactions: results[8]?.results || [],
+      services: results[9]?.results || [],
+      consultations: results[10]?.results || [],
+      prescriptions: results[11]?.results || [],
+      prescription_items: results[12]?.results || [],
+      appointments: results[13]?.results || [],
+      bills: results[14]?.results || [],
+      bill_items: results[15]?.results || [],
+      payments: results[16]?.results || [],
+      returns: results[17]?.results || [],
+      return_items: results[18]?.results || [],
+      expenses: results[19]?.results || [],
+      notifications: results[20]?.results || [],
+      activity_logs: results[21]?.results || [],
+    };
+
+    return {
+      ok: true,
+      version: versionStatus.version,
+      updatedAt: versionStatus.updatedAt,
+      data,
+    };
+  },
+
   async getNextUhidPreview(db) {
     const settingsRow = (await db.prepare('SELECT * FROM clinic_settings LIMIT 1').first()) || {};
     const year = new Date().getFullYear();
@@ -152,28 +241,6 @@ export const d1Client = {
     const prefix = (settingsRow.uhid_prefix || 'HC').trim().toUpperCase();
     const start = Number(settingsRow.uhid_start) || 1;
 
-    // Check actual count of patients in D1 database
-    const countRow = await db.prepare('SELECT COUNT(*) as count FROM patients').first();
-    const patientCount = countRow ? Number(countRow.count) : 0;
-
-    let uhid = item.uhid ? String(item.uhid).trim() : null;
-    const counterRow = await db.prepare('SELECT * FROM counters WHERE key = ? OR id = ? LIMIT 1').bind(counterKey, counterKey).first();
-    let nextVal = counterRow && counterRow.value != null ? Number(counterRow.value) + 1 : start;
-    if (!uhid) {
-      uhid = `${prefix}${includeYear ? `-${year}` : ''}-${String(nextVal).padStart(pad, '0')}`;
-    }
-
-    // If a specific UHID was provided, advance counter to ensure it's not reused
-    if (uhid) {
-      const match = uhid.match(/-(\d+)$/);
-      if (match) {
-        const numInUhid = Number(match[1]);
-        if (!isNaN(numInUhid) && numInUhid > nextVal) {
-          nextVal = numInUhid;
-        }
-      }
-    }
-
     const itemAge = item.age !== undefined && item.age !== null && item.age !== ''
       ? Number(item.age)
       : (item.dob ? Math.max(0, Math.floor((Date.now() - new Date(item.dob).getTime()) / (365.25 * 24 * 3600 * 1000))) : null);
@@ -181,48 +248,84 @@ export const d1Client = {
     const itemCreatedAt = item.created_at || now;
     const itemRegDate = item.reg_date || itemCreatedAt.slice(0, 10) || today;
 
-    const patientRecord = {
-      id,
-      uhid,
-      name: String(item.name || '').trim(),
-      age: itemAge,
-      gender: item.gender || '',
-      mobile: String(item.mobile || ''),
-      marital_status: item.marital_status || 'Single',
-      address: item.address || '',
-      pin: item.pin ? String(item.pin) : '',
-      blood_group: item.blood_group || '',
-      allergies: item.allergies || '',
-      conditions: item.conditions || '',
-      current_meds: item.current_meds || '',
-      notes: item.notes || '',
-      active: item.active !== undefined ? item.active : 1,
-      reg_date: itemRegDate,
-      created_by: userId,
-      created_at: itemCreatedAt,
-      updated_at: now,
-    };
+    // Retry loop to guarantee concurrency safety and unique UHID allocation across multiple devices
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const counterRow = await db.prepare('SELECT * FROM counters WHERE key = ? OR id = ? LIMIT 1').bind(counterKey, counterKey).first();
+      let nextVal = counterRow && counterRow.value != null ? Number(counterRow.value) + 1 : start;
+      if (attempt > 0) nextVal += attempt;
 
-    const filtered = filterFields('patients', patientRecord);
-    const cols = Object.keys(filtered);
-    const placeholders = cols.map(() => '?');
-    const values = cols.map((c) => filtered[c]);
+      let uhid = item.uhid ? String(item.uhid).trim() : null;
+      if (!uhid) {
+        uhid = `${prefix}${includeYear ? `-${year}` : ''}-${String(nextVal).padStart(pad, '0')}`;
+      } else {
+        const match = uhid.match(/-(\d+)$/);
+        if (match) {
+          const numInUhid = Number(match[1]);
+          if (!isNaN(numInUhid) && numInUhid > nextVal) {
+            nextVal = numInUhid;
+          }
+        }
+      }
 
-    const batchStmts = [
-      // 1. Atomically update counter
-      db.prepare(`
-        INSERT INTO counters (id, key, value, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?)
-        ON CONFLICT(id) DO UPDATE SET
-          value = excluded.value,
-          updated_at = excluded.updated_at
-      `).bind(counterKey, counterKey, nextVal, now, now),
-      // 2. Insert patient record
-      db.prepare(`INSERT INTO patients ("${cols.join('", "')}") VALUES (${placeholders.join(', ')})`).bind(...values),
-    ];
+      const patientRecord = {
+        id,
+        uhid,
+        name: String(item.name || '').trim(),
+        age: itemAge,
+        gender: item.gender || '',
+        mobile: String(item.mobile || ''),
+        marital_status: item.marital_status || 'Single',
+        address: item.address || '',
+        pin: item.pin ? String(item.pin) : '',
+        blood_group: item.blood_group || '',
+        allergies: item.allergies || '',
+        conditions: item.conditions || '',
+        current_meds: item.current_meds || '',
+        notes: item.notes || '',
+        active: item.active !== undefined ? item.active : 1,
+        reg_date: itemRegDate,
+        created_by: userId,
+        created_at: itemCreatedAt,
+        updated_at: now,
+      };
 
-    await db.batch(batchStmts);
-    return this.getById(db, 'patients', id);
+      const filtered = filterFields('patients', patientRecord);
+      const cols = Object.keys(filtered);
+      const placeholders = cols.map(() => '?');
+      const values = cols.map((c) => filtered[c]);
+
+      const batchStmts = [
+        // 1. Atomically update UHID counter
+        db.prepare(`
+          INSERT INTO counters (id, key, value, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?)
+          ON CONFLICT(id) DO UPDATE SET
+            value = CASE WHEN excluded.value > counters.value THEN excluded.value ELSE counters.value END,
+            updated_at = excluded.updated_at
+        `).bind(counterKey, counterKey, nextVal, now, now),
+        // 2. Insert patient record
+        db.prepare(`INSERT INTO patients ("${cols.join('", "')}") VALUES (${placeholders.join(', ')})`).bind(...values),
+        // 3. Atomically increment DB_VERSION for instant multi-device sync
+        db.prepare(`
+          INSERT INTO counters (id, key, value, created_at, updated_at)
+          VALUES ('DB_VERSION', 'DB_VERSION', 1, ?, ?)
+          ON CONFLICT(id) DO UPDATE SET
+            value = counters.value + 1,
+            updated_at = excluded.updated_at
+        `).bind(now, now),
+      ];
+
+      try {
+        await db.batch(batchStmts);
+        return this.getById(db, 'patients', id);
+      } catch (err) {
+        if (/UNIQUE constraint failed.*patients\.uhid/i.test(err?.message || '') && !item.uhid) {
+          continue; // retry with incremented counter
+        }
+        throw err;
+      }
+    }
+    throw new Error('Could not allocate unique UHID after multiple attempts.');
   },
 
   async create(db, collection, item, options = {}) {
@@ -311,6 +414,7 @@ export const d1Client = {
     }
 
     await db.batch(stmts);
+    await this.incrementDbVersion(db, now);
     return this.getById(db, actual, id);
   },
 
@@ -358,12 +462,14 @@ export const d1Client = {
     }
 
     await db.prepare(updateSql).bind(...values).run();
+    await this.incrementDbVersion(db, now);
     return this.getById(db, actual, strId);
   },
 
   async remove(db, collection, id) {
     const actual = resolveCollection(collection);
     const strId = String(id);
+    const now = nowISO();
 
     let deleteSql;
     if (actual === 'counters') {
@@ -387,6 +493,7 @@ export const d1Client = {
       await db.prepare('DELETE FROM payments WHERE bill_id = ?').bind(strId).run();
     }
 
+    await this.incrementDbVersion(db, now);
     return true;
   },
 
@@ -406,6 +513,7 @@ export const d1Client = {
         .bind(value, now, now)
         .run();
     }
+    await this.incrementDbVersion(db, now);
     return { key, value };
   },
 
@@ -691,6 +799,7 @@ export const d1Client = {
 
       if (batchStmts.length > 0) {
         await db.batch(batchStmts);
+        await this.incrementDbVersion(db, now);
       }
 
       return {
@@ -781,6 +890,7 @@ export const d1Client = {
 
       if (batchStmts.length > 0) {
         await db.batch(batchStmts);
+        await this.incrementDbVersion(db, now);
       }
 
       return {

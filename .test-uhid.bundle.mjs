@@ -29,7 +29,7 @@ async function request(path, options = {}) {
     if (typeof window !== "undefined" && !(typeof process !== "undefined" && process.versions?.node)) {
       console.error("[API] network error", error);
     }
-    throw new Error("Unable to reach the server. Start the backend with npm run dev.");
+    throw new Error("Unable to connect to the clinic server. Please check your internet connection.");
   }
   if (response.status === 401) {
     if (typeof window !== "undefined") {
@@ -48,7 +48,7 @@ async function request(path, options = {}) {
   }
   return response.status === 204 ? null : response.json();
 }
-var TOKEN_KEY, getAuthToken, getBaseUrl, getRecords, createRecord, updateRecord, deleteRecord, createPatient;
+var TOKEN_KEY, getAuthToken, getBaseUrl, getRecords, createRecord, updateRecord, deleteRecord, createPatient, getSyncBundle;
 var init_api = __esm({
   "src/services/api.js"() {
     TOKEN_KEY = "heeva_auth_token";
@@ -95,6 +95,7 @@ var init_api = __esm({
     updateRecord = (table, id, patch) => request(`/${table}/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify(patch) });
     deleteRecord = (table, id) => request(`/${table}/${encodeURIComponent(id)}`, { method: "DELETE" });
     createPatient = (patient) => createRecord("patients", patient);
+    getSyncBundle = () => request("/sync/bundle");
   }
 });
 
@@ -106,24 +107,75 @@ async function pushRecord(name, record) {
   if (!id && name !== "settings") return;
   try {
     await updateRecord(table, id, record);
+    if (typeof BroadcastChannel !== "undefined") {
+      try {
+        const bc = new BroadcastChannel("heeva_sync");
+        bc.postMessage({ type: "DATA_CHANGED", table: name, id });
+        bc.close();
+      } catch (_) {
+      }
+    }
   } catch (error) {
     console.error(`[remoteSync] Failed to persist ${name}:`, error.message);
+    throw new Error("Unable to connect to the clinic server. Please check your internet connection.");
   }
 }
 async function deleteRecord2(name, id) {
   if (!isBrowserRuntime() || !syncedTables.has(name) || !id) return;
   try {
     await deleteRecord(remoteName(name), id);
+    if (typeof BroadcastChannel !== "undefined") {
+      try {
+        const bc = new BroadcastChannel("heeva_sync");
+        bc.postMessage({ type: "DATA_DELETED", table: name, id });
+        bc.close();
+      } catch (_) {
+      }
+    }
   } catch (error) {
     if (!/404|not found/i.test(error.message)) {
       console.error(`[remoteSync] Failed to delete ${name}:`, error.message);
+      throw new Error("Unable to connect to the clinic server. Please check your internet connection.");
     }
   }
 }
 async function syncFromBackend(db3) {
-  if (!isBrowserRuntime()) return;
+  if (!isBrowserRuntime()) return null;
   db3.__hydrating = true;
   try {
+    let bundle = null;
+    try {
+      bundle = await getSyncBundle();
+    } catch (_) {
+    }
+    if (bundle && bundle.ok && bundle.data) {
+      const data = bundle.data;
+      if (Array.isArray(data.clinic_settings) && data.clinic_settings.length > 0) {
+        await db3.settings.clear();
+        const row = data.clinic_settings[0];
+        await db3.settings.bulkPut(
+          Object.entries(row).filter(([key]) => !["id", "created_at", "updated_at"].includes(key)).map(([key, value]) => ({ key, value }))
+        );
+      }
+      for (const name of syncOrder) {
+        if (name === "settings") continue;
+        const remoteKey = remoteName(name);
+        const rows = data[remoteKey] || data[name];
+        if (db3[name] && Array.isArray(rows)) {
+          const keyField = name === "counters" ? "key" : "id";
+          const newKeySet = new Set(rows.map((r) => r[keyField]));
+          const existingKeys = await db3[name].toCollection().primaryKeys();
+          const toDelete = existingKeys.filter((k) => !newKeySet.has(k));
+          if (rows.length > 0) {
+            await db3[name].bulkPut(rows);
+          }
+          if (toDelete.length > 0) {
+            await db3[name].bulkDelete(toDelete);
+          }
+        }
+      }
+      return bundle.version;
+    }
     for (const name of syncOrder) {
       try {
         const rows = await getRecords(remoteName(name));
@@ -153,6 +205,7 @@ async function syncFromBackend(db3) {
         console.error(`[remoteSync] Error syncing ${name} from D1:`, tableErr?.message || tableErr);
       }
     }
+    return null;
   } finally {
     db3.__hydrating = false;
   }
@@ -546,7 +599,8 @@ async function registerPatient(data, userId, { temp = false } = {}) {
         return serverPatient;
       }
     } catch (err) {
-      console.warn("[registerPatient] Server allocation failed or offline, falling back to local transaction:", err.message);
+      console.error("[registerPatient] Server allocation failed or offline:", err.message);
+      throw new Error(err.message || "Unable to connect to the clinic server. Please check your internet connection.");
     }
   }
   return db_default.transaction("rw", [db_default.patients, db_default.counters, db_default.activity_logs], async () => {
@@ -1109,6 +1163,88 @@ var init_d1Client = __esm({
         }
         return row;
       },
+      async getDbVersion(db3) {
+        try {
+          const row = await db3.prepare("SELECT value, updated_at FROM counters WHERE key = ? OR id = ? LIMIT 1").bind("DB_VERSION", "DB_VERSION").first();
+          return {
+            version: row && row.value != null ? Number(row.value) : 1,
+            updatedAt: row?.updated_at || nowISO2()
+          };
+        } catch (_) {
+          return { version: 1, updatedAt: nowISO2() };
+        }
+      },
+      async incrementDbVersion(db3, now = nowISO2()) {
+        try {
+          await db3.prepare(`
+        INSERT INTO counters (id, key, value, created_at, updated_at)
+        VALUES ('DB_VERSION', 'DB_VERSION', 1, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          value = counters.value + 1,
+          updated_at = excluded.updated_at
+      `).bind(now, now).run();
+        } catch (e) {
+          console.warn("[incrementDbVersion] Failed to bump version:", e?.message || e);
+        }
+      },
+      async getSyncBundle(db3) {
+        const versionStatus = await this.getDbVersion(db3);
+        const queries = [
+          db3.prepare("SELECT * FROM clinic_settings"),
+          db3.prepare("SELECT * FROM counters"),
+          db3.prepare("SELECT * FROM doctors ORDER BY name ASC"),
+          db3.prepare("SELECT * FROM patients ORDER BY updated_at DESC, created_at DESC"),
+          db3.prepare("SELECT * FROM patient_vitals ORDER BY recorded_at DESC"),
+          db3.prepare("SELECT * FROM medicine_categories ORDER BY name ASC"),
+          db3.prepare("SELECT * FROM medicines ORDER BY name ASC"),
+          db3.prepare("SELECT * FROM medicine_batches ORDER BY expiry ASC"),
+          db3.prepare("SELECT * FROM inventory_transactions ORDER BY at DESC"),
+          db3.prepare("SELECT * FROM services ORDER BY name ASC"),
+          db3.prepare("SELECT * FROM consultations ORDER BY date DESC, time DESC"),
+          db3.prepare("SELECT * FROM prescriptions ORDER BY date DESC, time DESC"),
+          db3.prepare("SELECT * FROM prescription_items ORDER BY seq ASC"),
+          db3.prepare("SELECT * FROM appointments ORDER BY date DESC, time DESC"),
+          db3.prepare("SELECT * FROM bills ORDER BY date DESC, time DESC"),
+          db3.prepare("SELECT * FROM bill_items"),
+          db3.prepare("SELECT * FROM payments ORDER BY at DESC"),
+          db3.prepare("SELECT * FROM returns ORDER BY at DESC"),
+          db3.prepare("SELECT * FROM return_items"),
+          db3.prepare("SELECT * FROM expenses ORDER BY date DESC"),
+          db3.prepare("SELECT * FROM notifications ORDER BY at DESC"),
+          db3.prepare("SELECT * FROM activity_logs ORDER BY at DESC LIMIT 150")
+        ];
+        const results = await db3.batch(queries);
+        const data = {
+          clinic_settings: results[0]?.results || [],
+          counters: results[1]?.results || [],
+          doctors: results[2]?.results || [],
+          patients: results[3]?.results || [],
+          patient_vitals: results[4]?.results || [],
+          medicine_categories: results[5]?.results || [],
+          medicines: results[6]?.results || [],
+          medicine_batches: results[7]?.results || [],
+          inventory_transactions: results[8]?.results || [],
+          services: results[9]?.results || [],
+          consultations: results[10]?.results || [],
+          prescriptions: results[11]?.results || [],
+          prescription_items: results[12]?.results || [],
+          appointments: results[13]?.results || [],
+          bills: results[14]?.results || [],
+          bill_items: results[15]?.results || [],
+          payments: results[16]?.results || [],
+          returns: results[17]?.results || [],
+          return_items: results[18]?.results || [],
+          expenses: results[19]?.results || [],
+          notifications: results[20]?.results || [],
+          activity_logs: results[21]?.results || []
+        };
+        return {
+          ok: true,
+          version: versionStatus.version,
+          updatedAt: versionStatus.updatedAt,
+          data
+        };
+      },
       async getNextUhidPreview(db3) {
         const settingsRow = await db3.prepare("SELECT * FROM clinic_settings LIMIT 1").first() || {};
         const year = (/* @__PURE__ */ new Date()).getFullYear();
@@ -1149,65 +1285,81 @@ var init_d1Client = __esm({
         const pad = Number(settingsRow.uhid_padding) || 6;
         const prefix = (settingsRow.uhid_prefix || "HC").trim().toUpperCase();
         const start = Number(settingsRow.uhid_start) || 1;
-        const countRow = await db3.prepare("SELECT COUNT(*) as count FROM patients").first();
-        const patientCount = countRow ? Number(countRow.count) : 0;
-        let uhid = item.uhid ? String(item.uhid).trim() : null;
-        const counterRow = await db3.prepare("SELECT * FROM counters WHERE key = ? OR id = ? LIMIT 1").bind(counterKey, counterKey).first();
-        let nextVal = counterRow && counterRow.value != null ? Number(counterRow.value) + 1 : start;
-        if (!uhid) {
-          uhid = `${prefix}${includeYear ? `-${year}` : ""}-${String(nextVal).padStart(pad, "0")}`;
-        }
-        if (uhid) {
-          const match = uhid.match(/-(\d+)$/);
-          if (match) {
-            const numInUhid = Number(match[1]);
-            if (!isNaN(numInUhid) && numInUhid > nextVal) {
-              nextVal = numInUhid;
-            }
-          }
-        }
         const itemAge = item.age !== void 0 && item.age !== null && item.age !== "" ? Number(item.age) : item.dob ? Math.max(0, Math.floor((Date.now() - new Date(item.dob).getTime()) / (365.25 * 24 * 3600 * 1e3))) : null;
         const itemCreatedAt = item.created_at || now;
         const itemRegDate = item.reg_date || itemCreatedAt.slice(0, 10) || today;
-        const patientRecord = {
-          id,
-          uhid,
-          name: String(item.name || "").trim(),
-          age: itemAge,
-          gender: item.gender || "",
-          mobile: String(item.mobile || ""),
-          marital_status: item.marital_status || "Single",
-          address: item.address || "",
-          pin: item.pin ? String(item.pin) : "",
-          blood_group: item.blood_group || "",
-          allergies: item.allergies || "",
-          conditions: item.conditions || "",
-          current_meds: item.current_meds || "",
-          notes: item.notes || "",
-          active: item.active !== void 0 ? item.active : 1,
-          reg_date: itemRegDate,
-          created_by: userId,
-          created_at: itemCreatedAt,
-          updated_at: now
-        };
-        const filtered = filterFields("patients", patientRecord);
-        const cols = Object.keys(filtered);
-        const placeholders = cols.map(() => "?");
-        const values = cols.map((c) => filtered[c]);
-        const batchStmts = [
-          // 1. Atomically update counter
-          db3.prepare(`
-        INSERT INTO counters (id, key, value, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?)
-        ON CONFLICT(id) DO UPDATE SET
-          value = excluded.value,
-          updated_at = excluded.updated_at
-      `).bind(counterKey, counterKey, nextVal, now, now),
-          // 2. Insert patient record
-          db3.prepare(`INSERT INTO patients ("${cols.join('", "')}") VALUES (${placeholders.join(", ")})`).bind(...values)
-        ];
-        await db3.batch(batchStmts);
-        return this.getById(db3, "patients", id);
+        for (let attempt = 0; attempt < 5; attempt++) {
+          const counterRow = await db3.prepare("SELECT * FROM counters WHERE key = ? OR id = ? LIMIT 1").bind(counterKey, counterKey).first();
+          let nextVal = counterRow && counterRow.value != null ? Number(counterRow.value) + 1 : start;
+          if (attempt > 0) nextVal += attempt;
+          let uhid = item.uhid ? String(item.uhid).trim() : null;
+          if (!uhid) {
+            uhid = `${prefix}${includeYear ? `-${year}` : ""}-${String(nextVal).padStart(pad, "0")}`;
+          } else {
+            const match = uhid.match(/-(\d+)$/);
+            if (match) {
+              const numInUhid = Number(match[1]);
+              if (!isNaN(numInUhid) && numInUhid > nextVal) {
+                nextVal = numInUhid;
+              }
+            }
+          }
+          const patientRecord = {
+            id,
+            uhid,
+            name: String(item.name || "").trim(),
+            age: itemAge,
+            gender: item.gender || "",
+            mobile: String(item.mobile || ""),
+            marital_status: item.marital_status || "Single",
+            address: item.address || "",
+            pin: item.pin ? String(item.pin) : "",
+            blood_group: item.blood_group || "",
+            allergies: item.allergies || "",
+            conditions: item.conditions || "",
+            current_meds: item.current_meds || "",
+            notes: item.notes || "",
+            active: item.active !== void 0 ? item.active : 1,
+            reg_date: itemRegDate,
+            created_by: userId,
+            created_at: itemCreatedAt,
+            updated_at: now
+          };
+          const filtered = filterFields("patients", patientRecord);
+          const cols = Object.keys(filtered);
+          const placeholders = cols.map(() => "?");
+          const values = cols.map((c) => filtered[c]);
+          const batchStmts = [
+            // 1. Atomically update UHID counter
+            db3.prepare(`
+          INSERT INTO counters (id, key, value, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?)
+          ON CONFLICT(id) DO UPDATE SET
+            value = CASE WHEN excluded.value > counters.value THEN excluded.value ELSE counters.value END,
+            updated_at = excluded.updated_at
+        `).bind(counterKey, counterKey, nextVal, now, now),
+            // 2. Insert patient record
+            db3.prepare(`INSERT INTO patients ("${cols.join('", "')}") VALUES (${placeholders.join(", ")})`).bind(...values),
+            // 3. Atomically increment DB_VERSION for instant multi-device sync
+            db3.prepare(`
+          INSERT INTO counters (id, key, value, created_at, updated_at)
+          VALUES ('DB_VERSION', 'DB_VERSION', 1, ?, ?)
+          ON CONFLICT(id) DO UPDATE SET
+            value = counters.value + 1,
+            updated_at = excluded.updated_at
+        `).bind(now, now)
+          ];
+          try {
+            await db3.batch(batchStmts);
+            return this.getById(db3, "patients", id);
+          } catch (err) {
+            if (/UNIQUE constraint failed.*patients\.uhid/i.test(err?.message || "") && !item.uhid) {
+              continue;
+            }
+            throw err;
+          }
+        }
+        throw new Error("Could not allocate unique UHID after multiple attempts.");
       },
       async create(db3, collection, item, options = {}) {
         const actual = resolveCollection(collection);
@@ -1277,6 +1429,7 @@ var init_d1Client = __esm({
           }
         }
         await db3.batch(stmts);
+        await this.incrementDbVersion(db3, now);
         return this.getById(db3, actual, id);
       },
       async update(db3, collection, id, patch) {
@@ -1315,11 +1468,13 @@ var init_d1Client = __esm({
           values.push(strId);
         }
         await db3.prepare(updateSql).bind(...values).run();
+        await this.incrementDbVersion(db3, now);
         return this.getById(db3, actual, strId);
       },
       async remove(db3, collection, id) {
         const actual = resolveCollection(collection);
         const strId = String(id);
+        const now = nowISO2();
         let deleteSql;
         if (actual === "counters") {
           deleteSql = "DELETE FROM counters WHERE key = ? OR id = ?";
@@ -1338,6 +1493,7 @@ var init_d1Client = __esm({
           await db3.prepare("DELETE FROM bill_items WHERE bill_id = ?").bind(strId).run();
           await db3.prepare("DELETE FROM payments WHERE bill_id = ?").bind(strId).run();
         }
+        await this.incrementDbVersion(db3, now);
         return true;
       },
       async updateClinicSetting(db3, key, value) {
@@ -1349,6 +1505,7 @@ var init_d1Client = __esm({
         } else if (!settingsRow) {
           await db3.prepare(`INSERT INTO clinic_settings (id, "${key}", created_at, updated_at) VALUES ('1', ?, ?, ?)`).bind(value, now, now).run();
         }
+        await this.incrementDbVersion(db3, now);
         return { key, value };
       },
       async bulkImport(db3, collection, items, options = {}) {
@@ -1600,6 +1757,7 @@ var init_d1Client = __esm({
           }
           if (batchStmts.length > 0) {
             await db3.batch(batchStmts);
+            await this.incrementDbVersion(db3, now);
           }
           return {
             success: true,
@@ -1682,6 +1840,7 @@ var init_d1Client = __esm({
           }
           if (batchStmts.length > 0) {
             await db3.batch(batchStmts);
+            await this.incrementDbVersion(db3, now);
           }
           return {
             success: true,

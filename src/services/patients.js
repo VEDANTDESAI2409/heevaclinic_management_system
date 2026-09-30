@@ -65,11 +65,12 @@ export async function registerPatient(data, userId, { temp = false } = {}) {
         return serverPatient;
       }
     } catch (err) {
-      console.warn('[registerPatient] Server allocation failed or offline, falling back to local transaction:', err.message);
+      console.error('[registerPatient] Server allocation failed or offline:', err.message);
+      throw new Error(err.message || 'Unable to connect to the clinic server. Please check your internet connection.');
     }
   }
 
-  // Fallback for offline / Node.js test environment (fake-indexeddb)
+  // Fallback for Node.js unit test environment (fake-indexeddb)
   return db.transaction('rw', [db.patients, db.counters, db.activity_logs], async () => {
     const uhid = await makeUHID(settings);
     if (await db.patients.where('uhid').equals(uhid).count()) throw new Error('UHID collision detected — please retry');

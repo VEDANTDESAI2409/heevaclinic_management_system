@@ -11,6 +11,7 @@ import { handleBulkImport } from './routes/import.js';
 import { verifyAuthToken } from './auth.js';
 import { handleLogin, handleVerify, handleLogout } from './routes/auth.js';
 import { handleReset } from './routes/reset.js';
+import { handleSyncStatus, handleSyncBundle } from './routes/sync.js';
 
 export async function routeApi(request, env, pathname) {
   const method = request.method;
@@ -68,6 +69,16 @@ export async function routeApi(request, env, pathname) {
   // 5.5. Live UHID preview: GET /api/patients/next-uhid
   if (table === 'patients' && segments.length === 2 && segments[1] === 'next-uhid' && method === 'GET') {
     return handleGetNextUhid(env);
+  }
+
+  // 5.6. Realtime Sync endpoints: /api/sync/status & /api/sync/bundle
+  if (table === 'sync') {
+    if (segments.length === 2 && segments[1] === 'status' && method === 'GET') {
+      return handleSyncStatus(request, env);
+    }
+    if (segments.length === 2 && segments[1] === 'bundle' && method === 'GET') {
+      return handleSyncBundle(request, env);
+    }
   }
 
   // 6. Collection Root: /api/:table

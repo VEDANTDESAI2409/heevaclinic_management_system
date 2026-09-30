@@ -253,7 +253,7 @@ export default function AppShell() {
 
         {!online && (
           <div className="offline-banner">
-            <WifiOff size={14} /> {t('offline', 'Offline — changes are saved on this device')}
+            <WifiOff size={14} /> Unable to connect to the clinic server. Please check your internet connection.
           </div>
         )}
 

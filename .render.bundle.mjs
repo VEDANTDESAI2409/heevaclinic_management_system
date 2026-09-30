@@ -31,6 +31,8 @@ __export(api_exports, {
   getPatients: () => getPatients,
   getRecord: () => getRecord,
   getRecords: () => getRecords,
+  getSyncBundle: () => getSyncBundle,
+  getSyncStatus: () => getSyncStatus,
   setAuthToken: () => setAuthToken,
   updateAppointment: () => updateAppointment,
   updateMedicine: () => updateMedicine,
@@ -57,7 +59,7 @@ async function request(path, options = {}) {
     if (typeof window !== "undefined" && !(typeof process !== "undefined" && process.versions?.node)) {
       console.error("[API] network error", error);
     }
-    throw new Error("Unable to reach the server. Start the backend with npm run dev.");
+    throw new Error("Unable to connect to the clinic server. Please check your internet connection.");
   }
   if (response.status === 401) {
     if (typeof window !== "undefined") {
@@ -76,7 +78,7 @@ async function request(path, options = {}) {
   }
   return response.status === 204 ? null : response.json();
 }
-var TOKEN_KEY, getAuthToken, setAuthToken, clearAuthToken, getBaseUrl, authApi, adminApi, getHealth, getRecords, getRecord, createRecord, updateRecord, deleteRecord, bulkImportRecords, getPatients, getNextUhid, createPatient, updatePatient, deletePatient, getMedicines, createMedicine2, updateMedicine, deleteMedicine, getAppointments, createAppointment, updateAppointment, deleteAppointment;
+var TOKEN_KEY, getAuthToken, setAuthToken, clearAuthToken, getBaseUrl, authApi, adminApi, getHealth, getRecords, getRecord, createRecord, updateRecord, deleteRecord, bulkImportRecords, getPatients, getNextUhid, createPatient, updatePatient, deletePatient, getMedicines, createMedicine2, updateMedicine, deleteMedicine, getAppointments, createAppointment, updateAppointment, deleteAppointment, getSyncStatus, getSyncBundle;
 var init_api = __esm({
   "src/services/api.js"() {
     TOKEN_KEY = "heeva_auth_token";
@@ -201,6 +203,8 @@ var init_api = __esm({
     createAppointment = (appointment) => createRecord("appointments", appointment);
     updateAppointment = (id, patch) => updateRecord("appointments", id, patch);
     deleteAppointment = (id) => deleteRecord("appointments", id);
+    getSyncStatus = () => request("/sync/status");
+    getSyncBundle = () => request("/sync/bundle");
   }
 });
 
@@ -212,24 +216,75 @@ async function pushRecord(name, record) {
   if (!id && name !== "settings") return;
   try {
     await updateRecord(table, id, record);
+    if (typeof BroadcastChannel !== "undefined") {
+      try {
+        const bc = new BroadcastChannel("heeva_sync");
+        bc.postMessage({ type: "DATA_CHANGED", table: name, id });
+        bc.close();
+      } catch (_) {
+      }
+    }
   } catch (error) {
     console.error(`[remoteSync] Failed to persist ${name}:`, error.message);
+    throw new Error("Unable to connect to the clinic server. Please check your internet connection.");
   }
 }
 async function deleteRecord2(name, id) {
   if (!isBrowserRuntime() || !syncedTables.has(name) || !id) return;
   try {
     await deleteRecord(remoteName(name), id);
+    if (typeof BroadcastChannel !== "undefined") {
+      try {
+        const bc = new BroadcastChannel("heeva_sync");
+        bc.postMessage({ type: "DATA_DELETED", table: name, id });
+        bc.close();
+      } catch (_) {
+      }
+    }
   } catch (error) {
     if (!/404|not found/i.test(error.message)) {
       console.error(`[remoteSync] Failed to delete ${name}:`, error.message);
+      throw new Error("Unable to connect to the clinic server. Please check your internet connection.");
     }
   }
 }
 async function syncFromBackend(db3) {
-  if (!isBrowserRuntime()) return;
+  if (!isBrowserRuntime()) return null;
   db3.__hydrating = true;
   try {
+    let bundle = null;
+    try {
+      bundle = await getSyncBundle();
+    } catch (_) {
+    }
+    if (bundle && bundle.ok && bundle.data) {
+      const data = bundle.data;
+      if (Array.isArray(data.clinic_settings) && data.clinic_settings.length > 0) {
+        await db3.settings.clear();
+        const row = data.clinic_settings[0];
+        await db3.settings.bulkPut(
+          Object.entries(row).filter(([key]) => !["id", "created_at", "updated_at"].includes(key)).map(([key, value]) => ({ key, value }))
+        );
+      }
+      for (const name of syncOrder) {
+        if (name === "settings") continue;
+        const remoteKey = remoteName(name);
+        const rows = data[remoteKey] || data[name];
+        if (db3[name] && Array.isArray(rows)) {
+          const keyField = name === "counters" ? "key" : "id";
+          const newKeySet = new Set(rows.map((r) => r[keyField]));
+          const existingKeys = await db3[name].toCollection().primaryKeys();
+          const toDelete = existingKeys.filter((k) => !newKeySet.has(k));
+          if (rows.length > 0) {
+            await db3[name].bulkPut(rows);
+          }
+          if (toDelete.length > 0) {
+            await db3[name].bulkDelete(toDelete);
+          }
+        }
+      }
+      return bundle.version;
+    }
     for (const name of syncOrder) {
       try {
         const rows = await getRecords(remoteName(name));
@@ -259,11 +314,70 @@ async function syncFromBackend(db3) {
         console.error(`[remoteSync] Error syncing ${name} from D1:`, tableErr?.message || tableErr);
       }
     }
+    return null;
   } finally {
     db3.__hydrating = false;
   }
 }
-var syncOrder, syncedTables, remoteNames, remoteName, isBrowserRuntime, syncFromSqlite;
+async function checkAndSync(db3) {
+  if (!isBrowserRuntime() || isSyncing) return;
+  try {
+    const status = await getSyncStatus();
+    if (status && status.ok) {
+      if (status.version !== currentLocalVersion) {
+        isSyncing = true;
+        try {
+          const newVer = await syncFromBackend(db3);
+          currentLocalVersion = newVer || status.version;
+        } finally {
+          isSyncing = false;
+        }
+      }
+    }
+  } catch (_) {
+  }
+}
+function startRealtimeSync(db3, intervalMs = 2500) {
+  if (!isBrowserRuntime()) return () => {
+  };
+  let bc = null;
+  if (typeof BroadcastChannel !== "undefined") {
+    try {
+      bc = new BroadcastChannel("heeva_sync");
+      bc.onmessage = () => {
+        checkAndSync(db3);
+      };
+    } catch (_) {
+    }
+  }
+  const timer = setInterval(() => {
+    if (typeof document !== "undefined" && document.visibilityState === "visible") {
+      checkAndSync(db3);
+    }
+  }, intervalMs);
+  const onVisible = () => {
+    if (typeof document !== "undefined" && document.visibilityState === "visible") {
+      checkAndSync(db3);
+    }
+  };
+  if (typeof document !== "undefined") {
+    document.addEventListener("visibilitychange", onVisible);
+  }
+  if (typeof window !== "undefined") {
+    window.addEventListener("focus", onVisible);
+  }
+  return () => {
+    clearInterval(timer);
+    if (bc) bc.close();
+    if (typeof document !== "undefined") {
+      document.removeEventListener("visibilitychange", onVisible);
+    }
+    if (typeof window !== "undefined") {
+      window.removeEventListener("focus", onVisible);
+    }
+  };
+}
+var syncOrder, syncedTables, remoteNames, remoteName, isBrowserRuntime, currentLocalVersion, isSyncing, syncFromSqlite;
 var init_remoteSync = __esm({
   "src/lib/remoteSync.js"() {
     init_api();
@@ -298,6 +412,8 @@ var init_remoteSync = __esm({
     };
     remoteName = (name) => remoteNames[name] || name;
     isBrowserRuntime = () => typeof window !== "undefined" && (Boolean(globalThis.__FORCE_SYNC__) || !(typeof process !== "undefined" && process.versions?.node));
+    currentLocalVersion = 0;
+    isSyncing = false;
     syncFromSqlite = syncFromBackend;
   }
 });
@@ -325,10 +441,10 @@ var init_db = __esm({
       patients: "id, &uhid, name, mobile, created_at, [name+dob]",
       patient_vitals: "id, patient_id, recorded_at",
       consultations: "id, &consultation_no, patient_id, doctor_id, date",
-      prescriptions: "id, &prescription_no, patient_id, consultation_id, date",
+      prescriptions: "id, &prescription_no, patient_id, consultation_id, doctor_id, date",
       prescription_items: "id, prescription_id, medicine_id",
-      appointments: "id, &appointment_no, patient_id, date, status",
-      medicines: "id, &medicine_code, name, generic, barcode, category, active",
+      appointments: "id, &appointment_no, patient_id, doctor_id, date, status",
+      medicines: "id, &medicine_code, name, generic, category, active",
       medicine_categories: "id, name",
       batches: "id, medicine_id",
       inventory_txns: "id, batch_id, medicine_id, type, at",
@@ -359,6 +475,10 @@ var init_db = __esm({
     db.version(5).stores({
       patients: "id, &uhid, name, mobile, created_at, [name+age]",
       medicines: "id, &medicine_code, name, generic, category, active"
+    });
+    db.version(6).stores({
+      appointments: "id, &appointment_no, patient_id, doctor_id, date, status",
+      prescriptions: "id, &prescription_no, patient_id, consultation_id, doctor_id, date"
     });
     db.transaction = async (_mode, _tables, scope) => scope();
     db.__hydrating = false;
@@ -567,9 +687,9 @@ function download(filename, content, mime = "text/plain") {
 function toCSV(headers, rows) {
   const esc = (v) => {
     const s = v == null ? "" : String(v);
-    return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+    return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
   };
-  return [headers.map(esc).join(","), ...rows.map((r) => r.map(esc).join(","))].join("\n");
+  return "\uFEFF" + [headers.map(esc).join(","), ...rows.map((r) => r.map(esc).join(","))].join("\r\n");
 }
 function monthLabel(key) {
   const [y, m] = key.split("-").map(Number);
@@ -622,15 +742,8 @@ async function nextCounter(key, start = 1) {
 async function makeUHID(settings, year = (/* @__PURE__ */ new Date()).getFullYear()) {
   const s = settings || await getSettings();
   const key = s.uhid_include_year ? `UHID|${year}` : "UHID|ALL";
-  const patientCount = await db_default.patients.count();
   const start = Number(s.uhid_start) || 1;
-  let n;
-  if (patientCount === 0) {
-    n = start;
-    await db_default.counters.put({ key, value: n });
-  } else {
-    n = await nextCounter(key, start);
-  }
+  const n = await nextCounter(key, start);
   const pad = Number(s.uhid_padding) || 6;
   const prefix = (s.uhid_prefix || "HC").trim().toUpperCase();
   return `${prefix}${s.uhid_include_year ? `-${year}` : ""}-${String(n).padStart(pad, "0")}`;
@@ -1330,7 +1443,7 @@ function AppProvider({ children }) {
       } catch (e) {
         console.error("Backend boot error", e);
         if (mounted) {
-          setDatabaseError(e?.message || "Unable to connect to the backend server.");
+          setDatabaseError(e?.message || "Unable to connect to the clinic server. Please check your internet connection.");
         }
       } finally {
         if (mounted) {
@@ -1344,7 +1457,7 @@ function AppProvider({ children }) {
     window.addEventListener("heeva:unauthorized", onUnauthorized);
     const on = () => {
       setOnline(true);
-      syncFromBackend(db_default).catch(() => {
+      checkAndSync(db_default).catch(() => {
       });
     };
     const off = () => setOnline(false);
@@ -1360,34 +1473,15 @@ function AppProvider({ children }) {
     const mq = window.matchMedia("(display-mode: standalone)");
     setStandalone(mq.matches);
     if (mq.addEventListener) mq.addEventListener("change", (e) => setStandalone(e.matches));
-    const onFocusSync = () => {
-      if (typeof document !== "undefined" && document.visibilityState === "visible") {
-        syncFromBackend(db_default).catch(() => {
-        });
-      }
-    };
-    if (typeof document !== "undefined") {
-      document.addEventListener("visibilitychange", onFocusSync);
-    }
-    window.addEventListener("focus", onFocusSync);
-    const pollInterval = setInterval(() => {
-      if (typeof document !== "undefined" && document.visibilityState === "visible") {
-        syncFromBackend(db_default).catch(() => {
-        });
-      }
-    }, 8e3);
+    const stopRealtimeSync = startRealtimeSync(db_default, 2500);
     return () => {
       mounted = false;
-      clearInterval(pollInterval);
+      stopRealtimeSync();
       window.removeEventListener("heeva:unauthorized", onUnauthorized);
       window.removeEventListener("online", on);
       window.removeEventListener("offline", off);
       window.removeEventListener("beforeinstallprompt", bip);
       window.removeEventListener("appinstalled", ai);
-      if (typeof document !== "undefined") {
-        document.removeEventListener("visibilitychange", onFocusSync);
-      }
-      window.removeEventListener("focus", onFocusSync);
     };
   }, [syncAndInit]);
   const login = useCallback(async (password) => {
@@ -1772,8 +1866,8 @@ function printInvoiceA4(bill2, items = [], payments = [], s = {}) {
   const paidRows = (payments || []).filter((p) => p.kind === "payment");
   const paymentStatus = { PAID: "Paid", PARTIAL: "Partially Paid", PENDING: "Pending", CANCELLED: "Cancelled" }[bill2.payment_status] || bill2.payment_status;
   const payMethodDisplay = paidRows.length > 0 ? [...new Set(paidRows.map((p) => p.method))].join(", ") : bill2.payment_method || (bill2.payment_status === "PAID" ? "Cash" : "Pending");
-  const docName = bill2.doctor_name || s.doctor_name || "Dr. Mit Nayak";
-  const docPhone = bill2.doctor_phone || s.doctor_phone || "9913974000";
+  const docName = bill2.doctor_name || s.doctor_name || "";
+  const docPhone = bill2.doctor_phone || s.doctor_phone || "";
   const ageStr = bill2.patient_age != null ? String(bill2.patient_age).includes("Y") ? bill2.patient_age : `${bill2.patient_age} Y` : "";
   const ageSex = [ageStr, bill2.patient_gender].filter(Boolean).join(" / ") || "\u2014";
   printNode(
@@ -2009,8 +2103,8 @@ function downloadReceipt(bill2, items = [], payments = [], s = {}) {
   const paidRows = (payments || []).filter((p) => p.kind === "payment");
   const paymentStatus = { PAID: "Paid", PARTIAL: "Partially Paid", PENDING: "Pending", CANCELLED: "Cancelled" }[bill2.payment_status] || bill2.payment_status;
   const payMethodDisplay = paidRows.length > 0 ? [...new Set(paidRows.map((p) => p.method))].join(", ") : bill2.payment_method || (bill2.payment_status === "PAID" ? "Cash" : "Pending");
-  const docName = bill2.doctor_name || s.doctor_name || "Dr. Mit Nayak";
-  const docPhone = bill2.doctor_phone || s.doctor_phone || "9913974000";
+  const docName = bill2.doctor_name || s.doctor_name || "";
+  const docPhone = bill2.doctor_phone || s.doctor_phone || "";
   const sym = s.currency || "\u20B9";
   const fmtM = (v) => `${sym} ${Number(v || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   const ageStr = bill2.patient_age != null ? String(bill2.patient_age).includes("Y") ? bill2.patient_age : `${bill2.patient_age} Y` : "";
@@ -2425,7 +2519,7 @@ function printPrescription(pr, patient2) {
   const age = patient2 ? ageLabel(patient2) : "";
   const sex = patient2 ? patient2.gender || "" : "";
   printNode(
-    /* @__PURE__ */ React3.createElement("div", { className: "print-job a4" }, /* @__PURE__ */ React3.createElement("style", null, `@page { size: A4; margin: 0 !important; } .prx { padding: 12mm 14mm; box-sizing: border-box; font-family: Inter, system-ui, sans-serif; color: #111; font-size: 12.5px; }`), /* @__PURE__ */ React3.createElement("div", { className: "prx" }, /* @__PURE__ */ React3.createElement("div", { className: "prx-head" }, /* @__PURE__ */ React3.createElement("div", { className: "prx-brand" }, /* @__PURE__ */ React3.createElement(Logo, { size: 54, src: s.logo }), /* @__PURE__ */ React3.createElement("div", null, /* @__PURE__ */ React3.createElement("div", { className: "prx-clinic" }, s.clinic_name), /* @__PURE__ */ React3.createElement("div", { className: "prx-addr" }, s.address), /* @__PURE__ */ React3.createElement("div", { className: "prx-phone" }, "Ph: ", s.phone))), /* @__PURE__ */ React3.createElement("div", { className: "prx-doc" }, /* @__PURE__ */ React3.createElement("div", { className: "prx-dname" }, s.doctor_name), /* @__PURE__ */ React3.createElement("div", { className: "prx-dqual" }, s.doctor_qual), /* @__PURE__ */ React3.createElement("div", { className: "prx-drole" }, s.doctor_role))), /* @__PURE__ */ React3.createElement("div", { className: "prx-pat" }, /* @__PURE__ */ React3.createElement("span", null, /* @__PURE__ */ React3.createElement("b", null, "Patient:"), " ", patient2?.name || "\u2014", " \xA0 ", /* @__PURE__ */ React3.createElement("b", null, "Age/Sex:"), " ", age, " / ", sex), /* @__PURE__ */ React3.createElement("span", null, /* @__PURE__ */ React3.createElement("b", null, "UHID:"), " ", pr.uhid), /* @__PURE__ */ React3.createElement("span", null, /* @__PURE__ */ React3.createElement("b", null, "Date:"), " ", fmtDate(pr.time))), pr.diagnosis && /* @__PURE__ */ React3.createElement("div", { className: "prx-diag" }, /* @__PURE__ */ React3.createElement("b", null, "Diagnosis:"), " ", pr.diagnosis), /* @__PURE__ */ React3.createElement("div", { className: "prx-rx" }, "\u211E"), /* @__PURE__ */ React3.createElement("table", { className: "prx-table" }, /* @__PURE__ */ React3.createElement("thead", null, /* @__PURE__ */ React3.createElement("tr", null, /* @__PURE__ */ React3.createElement("th", { style: { width: "30%" } }, "Medicine"), /* @__PURE__ */ React3.createElement("th", { style: { width: "16%" } }, "Dosage"), /* @__PURE__ */ React3.createElement("th", { style: { width: "20%" } }, "Frequency"), /* @__PURE__ */ React3.createElement("th", { style: { width: "14%" } }, "Duration"), /* @__PURE__ */ React3.createElement("th", null, "Instructions"))), /* @__PURE__ */ React3.createElement("tbody", null, (pr.items || []).map((it, i) => /* @__PURE__ */ React3.createElement("tr", { key: it.id }, /* @__PURE__ */ React3.createElement("td", null, /* @__PURE__ */ React3.createElement("b", null, i + 1, "."), " ", it.name), /* @__PURE__ */ React3.createElement("td", null, it.dosage || "\u2014"), /* @__PURE__ */ React3.createElement("td", null, it.frequency || "\u2014"), /* @__PURE__ */ React3.createElement("td", null, it.duration || "\u2014"), /* @__PURE__ */ React3.createElement("td", null, it.instruction || "\u2014"))))), pr.advice && /* @__PURE__ */ React3.createElement("div", { className: "prx-advice" }, /* @__PURE__ */ React3.createElement("b", null, "Advice:"), " ", pr.advice), pr.notes && /* @__PURE__ */ React3.createElement("div", { className: "prx-notes" }, /* @__PURE__ */ React3.createElement("b", null, "Notes:"), " ", pr.notes), /* @__PURE__ */ React3.createElement("div", { className: "prx-sign" }, /* @__PURE__ */ React3.createElement("div", { className: "prx-signline" }), /* @__PURE__ */ React3.createElement("div", null, s.doctor_name, /* @__PURE__ */ React3.createElement("br", null), /* @__PURE__ */ React3.createElement("span", { className: "prx-signqual" }, s.doctor_qual))), /* @__PURE__ */ React3.createElement("div", { className: "prx-foot" }, s.receipt_footer || "", " \xB7 ", s.phone)))
+    /* @__PURE__ */ React3.createElement("div", { className: "print-job a4" }, /* @__PURE__ */ React3.createElement("style", null, `@page { size: A4; margin: 0 !important; } .prx { padding: 12mm 14mm; box-sizing: border-box; font-family: Inter, system-ui, sans-serif; color: #111; font-size: 12.5px; }`), /* @__PURE__ */ React3.createElement("div", { className: "prx" }, /* @__PURE__ */ React3.createElement("div", { className: "prx-head" }, /* @__PURE__ */ React3.createElement("div", { className: "prx-brand" }, /* @__PURE__ */ React3.createElement(Logo, { size: 54, src: s.logo }), /* @__PURE__ */ React3.createElement("div", null, /* @__PURE__ */ React3.createElement("div", { className: "prx-clinic" }, s.clinic_name), /* @__PURE__ */ React3.createElement("div", { className: "prx-addr" }, s.address), /* @__PURE__ */ React3.createElement("div", { className: "prx-phone" }, "Ph: ", s.phone))), /* @__PURE__ */ React3.createElement("div", { className: "prx-doc" }, /* @__PURE__ */ React3.createElement("div", { className: "prx-dname" }, pr.doctor_name || s.doctor_name), /* @__PURE__ */ React3.createElement("div", { className: "prx-dqual" }, s.doctor_qual), /* @__PURE__ */ React3.createElement("div", { className: "prx-drole" }, s.doctor_role))), /* @__PURE__ */ React3.createElement("div", { className: "prx-pat" }, /* @__PURE__ */ React3.createElement("span", null, /* @__PURE__ */ React3.createElement("b", null, "Patient:"), " ", patient2?.name || "\u2014", " \xA0 ", /* @__PURE__ */ React3.createElement("b", null, "Age/Sex:"), " ", age, " / ", sex), /* @__PURE__ */ React3.createElement("span", null, /* @__PURE__ */ React3.createElement("b", null, "UHID:"), " ", pr.uhid), /* @__PURE__ */ React3.createElement("span", null, /* @__PURE__ */ React3.createElement("b", null, "Date:"), " ", fmtDate(pr.time))), pr.diagnosis && /* @__PURE__ */ React3.createElement("div", { className: "prx-diag" }, /* @__PURE__ */ React3.createElement("b", null, "Diagnosis:"), " ", pr.diagnosis), /* @__PURE__ */ React3.createElement("div", { className: "prx-rx" }, "\u211E"), /* @__PURE__ */ React3.createElement("table", { className: "prx-table" }, /* @__PURE__ */ React3.createElement("thead", null, /* @__PURE__ */ React3.createElement("tr", null, /* @__PURE__ */ React3.createElement("th", { style: { width: "28%" } }, "Medicine"), /* @__PURE__ */ React3.createElement("th", { style: { width: "12%" } }, "Dosage"), /* @__PURE__ */ React3.createElement("th", { style: { width: "14%" } }, "Timing"), /* @__PURE__ */ React3.createElement("th", { style: { width: "15%" } }, "Frequency"), /* @__PURE__ */ React3.createElement("th", { style: { width: "11%" } }, "Duration"), /* @__PURE__ */ React3.createElement("th", { style: { width: "8%" } }, "Qty"), /* @__PURE__ */ React3.createElement("th", null, "Instructions"))), /* @__PURE__ */ React3.createElement("tbody", null, (pr.items || []).map((it, i) => /* @__PURE__ */ React3.createElement("tr", { key: it.id || i }, /* @__PURE__ */ React3.createElement("td", null, /* @__PURE__ */ React3.createElement("b", null, i + 1, "."), " ", it.name), /* @__PURE__ */ React3.createElement("td", null, it.dosage || "\u2014"), /* @__PURE__ */ React3.createElement("td", null, it.timing || "\u2014"), /* @__PURE__ */ React3.createElement("td", null, it.frequency || "\u2014"), /* @__PURE__ */ React3.createElement("td", null, it.duration || "\u2014"), /* @__PURE__ */ React3.createElement("td", null, it.quantity || "\u2014"), /* @__PURE__ */ React3.createElement("td", null, it.instruction || "\u2014"))))), pr.advice && /* @__PURE__ */ React3.createElement("div", { className: "prx-advice" }, /* @__PURE__ */ React3.createElement("b", null, "Advice:"), " ", pr.advice), pr.notes && /* @__PURE__ */ React3.createElement("div", { className: "prx-notes" }, /* @__PURE__ */ React3.createElement("b", null, "Notes:"), " ", pr.notes), /* @__PURE__ */ React3.createElement("div", { className: "prx-sign" }, /* @__PURE__ */ React3.createElement("div", { className: "prx-signline" }), /* @__PURE__ */ React3.createElement("div", null, pr.doctor_name || s.doctor_name, /* @__PURE__ */ React3.createElement("br", null), /* @__PURE__ */ React3.createElement("span", { className: "prx-signqual" }, s.doctor_qual))), /* @__PURE__ */ React3.createElement("div", { className: "prx-foot" }, s.receipt_footer || "", " \xB7 ", s.phone)))
   );
 }
 function printReport({ title, subtitle, columns, rows, totals, s, settings }) {
@@ -2614,7 +2708,7 @@ function AppShell() {
         i.hot && /* @__PURE__ */ React5.createElement("span", { className: "side-hot-dot" })
       );
     }));
-  })), /* @__PURE__ */ React5.createElement("div", { className: "side-foot" }, /* @__PURE__ */ React5.createElement("div", { className: "side-foot-card" }, /* @__PURE__ */ React5.createElement("div", { className: "sfc-name" }, user3?.name || settings.clinic_name), /* @__PURE__ */ React5.createElement("div", { className: "sfc-qual" }, "Administrator")))), /* @__PURE__ */ React5.createElement("div", { className: "main-col" }, /* @__PURE__ */ React5.createElement("header", { className: "topbar" }, /* @__PURE__ */ React5.createElement("div", { className: "topbar-left" }, /* @__PURE__ */ React5.createElement(GlobalSearch, null)), /* @__PURE__ */ React5.createElement("div", { className: "topbar-center" }, /* @__PURE__ */ React5.createElement(Btn, { variant: "accent", icon: Plus, size: "sm", onClick: () => navigate("/patients?new=1"), title: "Register a new patient" }, t("new_patient", "New Patient"))), /* @__PURE__ */ React5.createElement("div", { className: "topbar-right" }, !online && /* @__PURE__ */ React5.createElement("span", { className: "offline-pill", title: t("offline") }, /* @__PURE__ */ React5.createElement(WifiOff, { size: 13 }), " Offline"), /* @__PURE__ */ React5.createElement("span", { className: "topbar-date" }, dateLabel), installEvt && !standalone && /* @__PURE__ */ React5.createElement(Btn, { variant: "ghost", size: "sm", icon: Download, onClick: install, title: "Install HEEVA Clinic as a desktop app" }, t("install_app", "Install")), /* @__PURE__ */ React5.createElement(NotificationBell, null), /* @__PURE__ */ React5.createElement(IconBtn, { title: theme === "light" ? "Switch to dark mode" : "Switch to light mode", icon: theme === "light" ? Moon : Sun, onClick: () => setTheme(theme === "light" ? "dark" : "light") }), /* @__PURE__ */ React5.createElement(IconBtn, { title: "Lock Application", icon: Lock, onClick: logout }))), !online && /* @__PURE__ */ React5.createElement("div", { className: "offline-banner" }, /* @__PURE__ */ React5.createElement(WifiOff, { size: 14 }), " ", t("offline", "Offline \u2014 changes are saved on this device")), /* @__PURE__ */ React5.createElement("main", { className: "content" }, /* @__PURE__ */ React5.createElement(Outlet, null))), /* @__PURE__ */ React5.createElement(ToastStack, { toasts }));
+  })), /* @__PURE__ */ React5.createElement("div", { className: "side-foot" }, /* @__PURE__ */ React5.createElement("div", { className: "side-foot-card" }, /* @__PURE__ */ React5.createElement("div", { className: "sfc-name" }, user3?.name || settings.clinic_name), /* @__PURE__ */ React5.createElement("div", { className: "sfc-qual" }, "Administrator")))), /* @__PURE__ */ React5.createElement("div", { className: "main-col" }, /* @__PURE__ */ React5.createElement("header", { className: "topbar" }, /* @__PURE__ */ React5.createElement("div", { className: "topbar-left" }, /* @__PURE__ */ React5.createElement(GlobalSearch, null)), /* @__PURE__ */ React5.createElement("div", { className: "topbar-center" }, /* @__PURE__ */ React5.createElement(Btn, { variant: "accent", icon: Plus, size: "sm", onClick: () => navigate("/patients?new=1"), title: "Register a new patient" }, t("new_patient", "New Patient"))), /* @__PURE__ */ React5.createElement("div", { className: "topbar-right" }, !online && /* @__PURE__ */ React5.createElement("span", { className: "offline-pill", title: t("offline") }, /* @__PURE__ */ React5.createElement(WifiOff, { size: 13 }), " Offline"), /* @__PURE__ */ React5.createElement("span", { className: "topbar-date" }, dateLabel), installEvt && !standalone && /* @__PURE__ */ React5.createElement(Btn, { variant: "ghost", size: "sm", icon: Download, onClick: install, title: "Install HEEVA Clinic as a desktop app" }, t("install_app", "Install")), /* @__PURE__ */ React5.createElement(NotificationBell, null), /* @__PURE__ */ React5.createElement(IconBtn, { title: theme === "light" ? "Switch to dark mode" : "Switch to light mode", icon: theme === "light" ? Moon : Sun, onClick: () => setTheme(theme === "light" ? "dark" : "light") }), /* @__PURE__ */ React5.createElement(IconBtn, { title: "Lock Application", icon: Lock, onClick: logout }))), !online && /* @__PURE__ */ React5.createElement("div", { className: "offline-banner" }, /* @__PURE__ */ React5.createElement(WifiOff, { size: 14 }), " Unable to connect to the clinic server. Please check your internet connection."), /* @__PURE__ */ React5.createElement("main", { className: "content" }, /* @__PURE__ */ React5.createElement(Outlet, null))), /* @__PURE__ */ React5.createElement(ToastStack, { toasts }));
 }
 var NAV;
 var init_AppShell = __esm({
@@ -3053,7 +3147,8 @@ async function registerPatient(data, userId, { temp = false } = {}) {
         return serverPatient;
       }
     } catch (err) {
-      console.warn("[registerPatient] Server allocation failed or offline, falling back to local transaction:", err.message);
+      console.error("[registerPatient] Server allocation failed or offline:", err.message);
+      throw new Error(err.message || "Unable to connect to the clinic server. Please check your internet connection.");
     }
   }
   return db_default.transaction("rw", [db_default.patients, db_default.counters, db_default.activity_logs], async () => {
@@ -3116,13 +3211,6 @@ async function deletePatient2(id, userId) {
     }
     await db_default.patients.delete(id);
     await audit(userId, "PATIENT_DELETE", "patient", id, `${p.name} \xB7 ${p.uhid}`);
-    const remaining = await db_default.patients.count();
-    if (remaining === 0) {
-      const uhidCounters = await db_default.counters.filter((c) => String(c.key).startsWith("UHID|")).toArray();
-      for (const c of uhidCounters) {
-        await db_default.counters.put({ ...c, value: 0 });
-      }
-    }
   });
 }
 async function addVitals(patientId, v, userId) {
@@ -3300,13 +3388,8 @@ var init_csvTemplates = __esm({
           "gender",
           "marital_status",
           "mobile",
-          "address",
-          "pin",
           "blood_group",
-          "allergies",
-          "conditions",
-          "current_meds",
-          "notes"
+          "address"
         ],
         sampleRows: [
           [
@@ -3316,13 +3399,8 @@ var init_csvTemplates = __esm({
             "M",
             "Married",
             "9825012345",
-            "Flat 402, Shivalik Residency, Pal Gam, Surat",
-            "395009",
             "B+",
-            "Penicillin",
-            "Hypertension",
-            "Amlodipine 5mg",
-            "Regular follow up"
+            "Flat 402, Shivalik Residency, Pal Gam, Surat"
           ],
           [
             "Priya Patel",
@@ -3331,13 +3409,8 @@ var init_csvTemplates = __esm({
             "F",
             "Single",
             "9724012345",
-            "B-12, Green City, Adajan, Surat",
-            "395009",
             "O+",
-            "None",
-            "None",
-            "",
-            "New patient"
+            "B-12, Green City, Adajan, Surat"
           ]
         ],
         columns: [
@@ -3347,13 +3420,8 @@ var init_csvTemplates = __esm({
           { key: "gender", label: "Gender (M/F/Other)", required: true },
           { key: "marital_status", label: "Marital Status (Single/Married/etc)", required: false },
           { key: "mobile", label: "Mobile (10 digits)", required: true },
-          { key: "address", label: "Address", required: false },
-          { key: "pin", label: "Pincode", required: false },
           { key: "blood_group", label: "Blood Group", required: false },
-          { key: "allergies", label: "Allergies", required: false },
-          { key: "conditions", label: "Known Conditions", required: false },
-          { key: "current_meds", label: "Current Medications", required: false },
-          { key: "notes", label: "Notes", required: false }
+          { key: "address", label: "Address", required: false }
         ]
       },
       medicines: {
@@ -3494,7 +3562,7 @@ function validateCSVRows(type, rows, context = {}) {
       for (const row of rows) {
         const rowNum = row.__rowNum;
         const errors2 = [];
-        const name = String(row.name || "").trim();
+        const name = String(row.name || row.full_name || row.patient_name || "").trim();
         if (!name) {
           errors2.push("Full name is required");
         } else if (name.length < 3) {
@@ -3516,7 +3584,7 @@ function validateCSVRows(type, rows, context = {}) {
         } else {
           gender = rawGender === "m" || rawGender === "male" ? "M" : rawGender === "f" || rawGender === "female" ? "F" : "Other";
         }
-        const rawMobile = String(row.mobile || "").trim();
+        const rawMobile = String(row.mobile || row.mobile_number || row.phone || row.contact || "").trim();
         const mobile = cleanDigits(rawMobile);
         if (!rawMobile) {
           errors2.push("Mobile number is required");
@@ -4262,11 +4330,6 @@ function RegisterModal({ open, onClose, prefill = {} }) {
     const year = (/* @__PURE__ */ new Date()).getFullYear();
     const pad = Number(s.uhid_padding) || 6;
     const prefix = (s.uhid_prefix || "HC").trim().toUpperCase();
-    const count = await db_default.patients.count();
-    if (count === 0) {
-      const n2 = Number(s.uhid_start) || 1;
-      return `${prefix}${s.uhid_include_year ? `-${year}` : ""}-${String(n2).padStart(pad, "0")}`;
-    }
     const key = s.uhid_include_year ? `UHID|${year}` : "UHID|ALL";
     const row = await db_default.counters.get(key);
     const n = row ? row.value + 1 : Number(s.uhid_start) || 1;
@@ -4611,8 +4674,8 @@ async function createBill({ patient_id, items, discount_mode = "amt", discount_v
       patient_gender: patient2.gender || "",
       date: dkey(new Date(now)),
       time: now,
-      doctor_name: doctor_name || settings.doctor_name || "Dr. Mit Nayak",
-      doctor_phone: doctor_phone || settings.doctor_phone || "9913974000",
+      doctor_name: doctor_name || settings.doctor_name || "",
+      doctor_phone: doctor_phone || settings.doctor_phone || "",
       diagnosis: diagnosis ? diagnosis.trim() : null,
       advice: advice ? advice.trim() : null,
       next_visit: next_visit ? next_visit.trim() : null,
@@ -5323,8 +5386,10 @@ async function createPrescription(data, userId) {
         seq: i + 1,
         name,
         dosage: it.dosage || "",
+        timing: it.timing || "",
         frequency: it.frequency || "",
         duration: it.duration || "",
+        quantity: it.quantity || "",
         instruction: it.instruction || ""
       });
     }
@@ -5918,6 +5983,7 @@ function NewPrescriptionModal({ open, onClose, prefillPatient, onDone }) {
   const [advice, setAdvice] = useState10("");
   const [notes, setNotes] = useState10("");
   const [items, setItems] = useState10([]);
+  const [selectedDoctorId, setSelectedDoctorId] = useState10("");
   const [pickMed, setPickMed] = useState10(null);
   const [busy, setBusy] = useState10(false);
   const [err, setErr] = useState10("");
@@ -5936,12 +6002,14 @@ function NewPrescriptionModal({ open, onClose, prefillPatient, onDone }) {
       setItems([]);
       setPickMed(null);
       setErr("");
+      setSelectedDoctorId(doctors?.[0]?.id || "");
       if (prefillPatient) {
         db_default.consultations.where("patient_id").equals(prefillPatient.id).reverse().sortBy("time").then((list) => {
           if (list[0]) {
             setConsult(list[0].id);
             setDiagnosis(list[0].diagnosis || "");
             setAdvice(list[0].advice || "");
+            if (list[0].doctor_id) setSelectedDoctorId(list[0].doctor_id);
           }
         });
       }
@@ -5953,7 +6021,16 @@ function NewPrescriptionModal({ open, onClose, prefillPatient, onDone }) {
       pushToast("warning", "Medicine already in the list");
       return;
     }
-    setItems((x) => [...x, { medicine_id: pickMed.id, name: pickMed.name, dosage: "", frequency: "Once daily", duration: "", instruction: "" }]);
+    setItems((x) => [...x, {
+      medicine_id: pickMed.id,
+      name: pickMed.name,
+      dosage: "",
+      timing: "After food",
+      frequency: "Once daily",
+      duration: "",
+      quantity: "",
+      instruction: ""
+    }]);
     setPickMed(null);
   };
   const setItem = (idx, k, v) => setItems((x) => x.map((it, i) => i === idx ? { ...it, [k]: v } : it));
@@ -5967,13 +6044,14 @@ function NewPrescriptionModal({ open, onClose, prefillPatient, onDone }) {
       setErr("Add at least one medicine");
       return;
     }
+    const chosenDoc = doctors.find((d) => d.id === selectedDoctorId) || doctors?.[0];
     setBusy(true);
     try {
       const pr = await createPrescription({
         patient_id: patient2.id,
         consultation_id: consult || null,
-        doctor_id: doctors?.[0]?.id || null,
-        doctor_name: doctors?.[0]?.name || settings.doctor_name,
+        doctor_id: chosenDoc?.id || null,
+        doctor_name: chosenDoc?.name || settings.doctor_name,
         diagnosis,
         advice,
         notes,
@@ -5998,7 +6076,7 @@ function NewPrescriptionModal({ open, onClose, prefillPatient, onDone }) {
       footer: /* @__PURE__ */ React13.createElement(React13.Fragment, null, /* @__PURE__ */ React13.createElement(Btn, { variant: "ghost", onClick: onClose }, "Cancel"), /* @__PURE__ */ React13.createElement(Btn, { variant: "accent", onClick: save, disabled: busy }, busy ? "Saving\u2026" : "Save prescription"))
     },
     err && /* @__PURE__ */ React13.createElement("div", { className: "form-alert" }, err),
-    /* @__PURE__ */ React13.createElement("div", { className: "form-grid" }, /* @__PURE__ */ React13.createElement(Field, { label: "Patient", required: true, className: "fg-2" }, /* @__PURE__ */ React13.createElement(Select, { value: patient2?.id || "", onChange: (e) => setPatient(patients.find((p) => p.id === e.target.value) || null) }, /* @__PURE__ */ React13.createElement("option", { value: "" }, "Search patient\u2026"), patients.map((p) => /* @__PURE__ */ React13.createElement("option", { key: p.id, value: p.id }, p.name, " \u2014 ", p.uhid)))), /* @__PURE__ */ React13.createElement(Field, { label: "Linked Consultation", hint: "Optional \u2014 prefills diagnosis" }, /* @__PURE__ */ React13.createElement(Select, { value: consult, onChange: (e) => setConsult(e.target.value) }, /* @__PURE__ */ React13.createElement("option", { value: "" }, "None"), (consults || []).map((c) => /* @__PURE__ */ React13.createElement("option", { key: c.id, value: c.id }, c.consultation_no, " \xB7 ", fmtDate(c.time), " \xB7 ", c.diagnosis || c.chief)))), /* @__PURE__ */ React13.createElement(Field, { label: "Diagnosis", className: "fg-2" }, /* @__PURE__ */ React13.createElement(Input, { value: diagnosis, onChange: (e) => setDiagnosis(e.target.value) })), /* @__PURE__ */ React13.createElement(Field, { label: "Advice / Counselling", className: "fg-2" }, /* @__PURE__ */ React13.createElement(Input, { value: advice, onChange: (e) => setAdvice(e.target.value), placeholder: "e.g. Complete full course, avoid driving" }))),
+    /* @__PURE__ */ React13.createElement("div", { className: "form-grid" }, /* @__PURE__ */ React13.createElement(Field, { label: "Patient", required: true, className: "fg-2" }, /* @__PURE__ */ React13.createElement(Select, { value: patient2?.id || "", onChange: (e) => setPatient(patients.find((p) => p.id === e.target.value) || null) }, /* @__PURE__ */ React13.createElement("option", { value: "" }, "Search patient\u2026"), patients.map((p) => /* @__PURE__ */ React13.createElement("option", { key: p.id, value: p.id }, p.name, " \u2014 ", p.uhid)))), /* @__PURE__ */ React13.createElement(Field, { label: "Attending Doctor", required: true }, /* @__PURE__ */ React13.createElement(Select, { value: selectedDoctorId, onChange: (e) => setSelectedDoctorId(e.target.value) }, /* @__PURE__ */ React13.createElement("option", { value: "" }, "Select Doctor\u2026"), doctors.map((d) => /* @__PURE__ */ React13.createElement("option", { key: d.id, value: d.id }, d.name, d.qualification ? ` \xB7 ${d.qualification}` : "")))), /* @__PURE__ */ React13.createElement(Field, { label: "Linked Consultation", hint: "Optional \u2014 prefills diagnosis" }, /* @__PURE__ */ React13.createElement(Select, { value: consult, onChange: (e) => setConsult(e.target.value) }, /* @__PURE__ */ React13.createElement("option", { value: "" }, "None"), (consults || []).map((c) => /* @__PURE__ */ React13.createElement("option", { key: c.id, value: c.id }, c.consultation_no, " \xB7 ", fmtDate(c.time), " \xB7 ", c.diagnosis || c.chief)))), /* @__PURE__ */ React13.createElement(Field, { label: "Diagnosis", className: "fg-2" }, /* @__PURE__ */ React13.createElement(Input, { value: diagnosis, onChange: (e) => setDiagnosis(e.target.value) })), /* @__PURE__ */ React13.createElement(Field, { label: "Advice / Counselling", className: "fg-2" }, /* @__PURE__ */ React13.createElement(Input, { value: advice, onChange: (e) => setAdvice(e.target.value), placeholder: "e.g. Complete full course, avoid driving" }))),
     /* @__PURE__ */ React13.createElement("div", { className: "prx-builder" }, /* @__PURE__ */ React13.createElement("div", { className: "prx-add" }, /* @__PURE__ */ React13.createElement(
       SearchSelect,
       {
@@ -6009,7 +6087,7 @@ function NewPrescriptionModal({ open, onClose, prefillPatient, onDone }) {
         getSearch: (m) => `${m.name} ${m.generic} ${m.medicine_code || ""}`,
         placeholder: "Search medicine by name or generic\u2026"
       }
-    ), /* @__PURE__ */ React13.createElement(Btn, { variant: "primary", icon: Plus4, onClick: addMed, disabled: !pickMed }, "Add")), !items.length && /* @__PURE__ */ React13.createElement(EmptyState, { compact: true, icon: "\u{1F48A}", title: "No medicines added yet", message: "Search and add medicines above." }), items.map((it, i) => /* @__PURE__ */ React13.createElement("div", { className: "prx-line", key: it.medicine_id }, /* @__PURE__ */ React13.createElement("div", { className: "prx-line-name" }, /* @__PURE__ */ React13.createElement("b", null, i + 1, "."), " ", it.name, /* @__PURE__ */ React13.createElement("button", { type: "button", className: "prx-rm", title: "Remove", onClick: () => setItems((x) => x.filter((_, j) => j !== i)) }, /* @__PURE__ */ React13.createElement(Trash25, { size: 13 }))), /* @__PURE__ */ React13.createElement("div", { className: "prx-line-grid" }, /* @__PURE__ */ React13.createElement(Field, { label: "Dosage" }, /* @__PURE__ */ React13.createElement(Input, { value: it.dosage, onChange: (e) => setItem(i, "dosage", e.target.value), placeholder: "1 tablet" })), /* @__PURE__ */ React13.createElement(Field, { label: "Frequency" }, /* @__PURE__ */ React13.createElement(Select, { value: it.frequency, onChange: (e) => setItem(i, "frequency", e.target.value) }, FREQS.map((fr) => /* @__PURE__ */ React13.createElement("option", { key: fr }, fr)))), /* @__PURE__ */ React13.createElement(Field, { label: "Duration" }, /* @__PURE__ */ React13.createElement(Input, { value: it.duration, onChange: (e) => setItem(i, "duration", e.target.value), placeholder: "5 days" })), /* @__PURE__ */ React13.createElement(Field, { label: "Instructions" }, /* @__PURE__ */ React13.createElement(Input, { value: it.instruction, onChange: (e) => setItem(i, "instruction", e.target.value), placeholder: "After food" }))))), /* @__PURE__ */ React13.createElement(Field, { label: "Additional notes", className: "prx-notes-field" }, /* @__PURE__ */ React13.createElement(Textarea, { rows: 2, value: notes, onChange: (e) => setNotes(e.target.value) })))
+    ), /* @__PURE__ */ React13.createElement(Btn, { variant: "primary", icon: Plus4, onClick: addMed, disabled: !pickMed }, "Add")), !items.length && /* @__PURE__ */ React13.createElement(EmptyState, { compact: true, icon: "\u{1F48A}", title: "No medicines added yet", message: "Search and add medicines above." }), items.map((it, i) => /* @__PURE__ */ React13.createElement("div", { className: "prx-line", key: it.medicine_id }, /* @__PURE__ */ React13.createElement("div", { className: "prx-line-name" }, /* @__PURE__ */ React13.createElement("b", null, i + 1, "."), " ", it.name, /* @__PURE__ */ React13.createElement("button", { type: "button", className: "prx-rm", title: "Remove", onClick: () => setItems((x) => x.filter((_, j) => j !== i)) }, /* @__PURE__ */ React13.createElement(Trash25, { size: 13 }))), /* @__PURE__ */ React13.createElement("div", { className: "prx-line-grid", style: { gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))" } }, /* @__PURE__ */ React13.createElement(Field, { label: "Dosage" }, /* @__PURE__ */ React13.createElement(Input, { value: it.dosage, onChange: (e) => setItem(i, "dosage", e.target.value), placeholder: "e.g. 1 tab" })), /* @__PURE__ */ React13.createElement(Field, { label: "Timing" }, /* @__PURE__ */ React13.createElement(Select, { value: it.timing || "After food", onChange: (e) => setItem(i, "timing", e.target.value) }, ["After food", "Before food", "With food", "Empty stomach", "At bedtime", "As needed"].map((tm) => /* @__PURE__ */ React13.createElement("option", { key: tm, value: tm }, tm)))), /* @__PURE__ */ React13.createElement(Field, { label: "Frequency" }, /* @__PURE__ */ React13.createElement(Select, { value: it.frequency, onChange: (e) => setItem(i, "frequency", e.target.value) }, FREQS.map((fr) => /* @__PURE__ */ React13.createElement("option", { key: fr }, fr)))), /* @__PURE__ */ React13.createElement(Field, { label: "Duration" }, /* @__PURE__ */ React13.createElement(Input, { value: it.duration, onChange: (e) => setItem(i, "duration", e.target.value), placeholder: "e.g. 5 days" })), /* @__PURE__ */ React13.createElement(Field, { label: "Quantity" }, /* @__PURE__ */ React13.createElement(Input, { value: it.quantity || "", onChange: (e) => setItem(i, "quantity", e.target.value), placeholder: "e.g. 10 tabs" })), /* @__PURE__ */ React13.createElement(Field, { label: "Instructions" }, /* @__PURE__ */ React13.createElement(Input, { value: it.instruction, onChange: (e) => setItem(i, "instruction", e.target.value), placeholder: "e.g. With warm water" }))))), /* @__PURE__ */ React13.createElement(Field, { label: "Additional notes", className: "prx-notes-field" }, /* @__PURE__ */ React13.createElement(Textarea, { rows: 2, value: notes, onChange: (e) => setNotes(e.target.value) })))
   );
 }
 function Prescriptions() {
@@ -6331,6 +6409,8 @@ function Billing() {
   const [diagnosis, setDiagnosis] = useState12("");
   const [advice, setAdvice] = useState12("");
   const [nextVisit, setNextVisit] = useState12("");
+  const doctors = useLiveQuery8(() => db_default.doctors.filter((d) => d.active).toArray(), []) || [];
+  const [selectedDoctorId, setSelectedDoctorId] = useState12("");
   const stock = useLiveQuery8(() => stockMap(), []);
   const services = useLiveQuery8(() => db_default.services.where("active").equals(1).toArray(), []);
   const [tab, setTab] = useState12("medicines");
@@ -6423,6 +6503,7 @@ function Billing() {
           setDiagnosis((cur) => cur || list[0].diagnosis || "");
           setAdvice((cur) => cur || list[0].advice || "");
           setNextVisit((cur) => cur || list[0].follow_up || "");
+          if (list[0].doctor_id) setSelectedDoctorId(list[0].doctor_id);
         }
       }).catch(() => {
       });
@@ -6430,6 +6511,7 @@ function Billing() {
       setDiagnosis("");
       setAdvice("");
       setNextVisit("");
+      setSelectedDoctorId("");
     }
   }, [patient2?.id]);
   const complete = async (payments) => {
@@ -6437,9 +6519,13 @@ function Billing() {
     if (!cart.length) throw new Error("Bill has no items");
     setBusy(true);
     setPayOpen(false);
+    const selectedDoc = doctors.find((d) => d.id === selectedDoctorId);
     try {
       const { bill: bill2, items, payments: createdPayments } = await createBill({
         patient_id: patient2.id,
+        doctor_id: selectedDoc?.id || null,
+        doctor_name: selectedDoc?.name || settings.doctor_name || "",
+        doctor_phone: selectedDoc?.phone || settings.doctor_phone || "",
         items: cart,
         discount_mode: discMode,
         discount_value: Number(discVal) || 0,
@@ -6458,6 +6544,7 @@ function Billing() {
       setDiagnosis("");
       setAdvice("");
       setNextVisit("");
+      setSelectedDoctorId("");
     } finally {
       setBusy(false);
     }
@@ -6487,7 +6574,7 @@ function Billing() {
       getSearch: (p) => `${p.name} ${p.uhid} ${p.mobile}`,
       placeholder: "Search by UHID, name or mobile\u2026"
     }
-  ), /* @__PURE__ */ React15.createElement(Btn, { variant: "ghost", size: "sm", icon: UserPlus4, onClick: () => navigate("/patients?new=1") }, "New")), patient2 && /* @__PURE__ */ React15.createElement("div", { className: "pos-patient-info" }, /* @__PURE__ */ React15.createElement("span", { className: "ppi-name" }, patient2.name), /* @__PURE__ */ React15.createElement(UhidChip, { uhid: patient2.uhid, size: "sm" }), /* @__PURE__ */ React15.createElement("span", null, patient2.gender, patient2.age != null ? ` \xB7 Age ${patient2.age} Y` : patient2.dob ? ` \xB7 Age ${ageLabel(patient2)}` : "", patient2.blood_group ? ` \xB7 ${patient2.blood_group}` : ""), patient2.allergies && /* @__PURE__ */ React15.createElement("span", { className: "allergy-warn" }, /* @__PURE__ */ React15.createElement(AlertTriangle4, { size: 13 }), " ", patient2.allergies))), /* @__PURE__ */ React15.createElement(Card, { title: "Clinical Details", sub: "Diagnosis, advice & follow-up", pad: true, className: "pos-clinical-card" }, /* @__PURE__ */ React15.createElement(Field, { label: "Diagnosis" }, /* @__PURE__ */ React15.createElement(
+  ), /* @__PURE__ */ React15.createElement(Btn, { variant: "ghost", size: "sm", icon: UserPlus4, onClick: () => navigate("/patients?new=1") }, "New")), patient2 && /* @__PURE__ */ React15.createElement("div", { className: "pos-patient-info" }, /* @__PURE__ */ React15.createElement("span", { className: "ppi-name" }, patient2.name), /* @__PURE__ */ React15.createElement(UhidChip, { uhid: patient2.uhid, size: "sm" }), /* @__PURE__ */ React15.createElement("span", null, patient2.gender, patient2.age != null ? ` \xB7 Age ${patient2.age} Y` : patient2.dob ? ` \xB7 Age ${ageLabel(patient2)}` : "", patient2.blood_group ? ` \xB7 ${patient2.blood_group}` : ""), patient2.allergies && /* @__PURE__ */ React15.createElement("span", { className: "allergy-warn" }, /* @__PURE__ */ React15.createElement(AlertTriangle4, { size: 13 }), " ", patient2.allergies))), /* @__PURE__ */ React15.createElement(Card, { title: "Clinical Details", sub: "Diagnosis, advice & follow-up", pad: true, className: "pos-clinical-card" }, /* @__PURE__ */ React15.createElement(Field, { label: "Attending Doctor", style: { marginBottom: "8px" } }, /* @__PURE__ */ React15.createElement(Select, { value: selectedDoctorId, onChange: (e) => setSelectedDoctorId(e.target.value) }, /* @__PURE__ */ React15.createElement("option", { value: "" }, settings.doctor_name ? `${settings.doctor_name} (Clinic Default)` : "Select Doctor\u2026"), doctors.map((d) => /* @__PURE__ */ React15.createElement("option", { key: d.id, value: d.id }, d.name, d.qualification ? ` \xB7 ${d.qualification}` : "")))), /* @__PURE__ */ React15.createElement(Field, { label: "Diagnosis" }, /* @__PURE__ */ React15.createElement(
     Input,
     {
       value: diagnosis,
