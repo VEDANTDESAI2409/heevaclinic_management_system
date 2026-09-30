@@ -8,9 +8,8 @@ import {
   Tabs, Modal, Confirm,
 } from '../components/ui';
 import { stockMap, expiryBuckets, lowStockList, markBatchExpired, adjustStock, createBatch, updateBatch, deleteBatch, TXN_TYPES } from '../services/inventory';
-import { syncAlerts } from '../services/notifications';
-import { fmtMoney, fmtQty, daysUntil, fmtDateTime, fmtDate, dkey, addDays } from '../utils';
-import { Boxes, PackagePlus, AlertTriangle, Hourglass, ScrollText, Wrench, Plus, Pencil, Trash2, Upload } from 'lucide-react';
+import { fmtMoney, fmtQty, daysUntil, fmtDateTime, fmtDate, dkey, addDays, download, toCSV } from '../utils';
+import { Boxes, PackagePlus, AlertTriangle, Hourglass, ScrollText, Wrench, Plus, Pencil, Trash2, Upload, Download } from 'lucide-react';
 import CsvImportModal from '../components/csv/CsvImportModal';
 
 const TXN_TONE = {
@@ -322,6 +321,20 @@ export default function Inventory() {
           actions={
             <div style={{ display: 'flex', gap: '8px' }}>
               <Btn size="sm" variant="ghost" icon={Upload} onClick={() => setImportBatchOpen(true)}>Import Batches</Btn>
+              <Btn
+                size="sm"
+                variant="ghost"
+                icon={Download}
+                onClick={() => {
+                  const list = batches || [];
+                  download(`heeva-inventory-batches-${dkey()}.csv`, toCSV(
+                    ['Medicine Name', 'Batch Number', 'Mfg Date', 'Expiry Date', 'Received Quantity', 'Purchase Price'],
+                    list.map((b) => [b.medicine?.name || '', b.batch_no, b.mfg_date || '', b.expiry || '', b.quantity, b.purchase_price || 0])
+                  ), 'text/csv');
+                }}
+              >
+                Export
+              </Btn>
               <Btn size="sm" variant="accent" icon={Plus} onClick={() => { setEditingBatch(null); setBatchModalOpen(true); }}>+ Add Batch</Btn>
             </div>
           }

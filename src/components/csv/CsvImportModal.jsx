@@ -14,6 +14,7 @@ const TABLE_MAP = {
   medicine_categories: { endpoint: 'medicine_categories', dexie: 'medicine_categories' },
   doctors: { endpoint: 'doctors', dexie: 'doctors' },
   inventory_batches: { endpoint: 'medicine_batches', dexie: 'batches' },
+  services: { endpoint: 'services', dexie: 'services' },
 };
 
 export default function CsvImportModal({
@@ -74,10 +75,13 @@ export default function CsvImportModal({
         return;
       }
 
-      const res = validateCSVRows(type, parsed.rows, context);
+      const res = validateCSVRows(type, parsed.rows, {
+        ...context,
+        headers: parsed.rawHeaders || parsed.headers,
+      });
       setValidationResult(res);
 
-      if (res.summary.validCount === 0 && res.summary.invalidCount > 0) {
+      if (res.mappingError || (res.summary.validCount === 0 && res.summary.invalidCount > 0)) {
         setActiveTab('errors');
       } else {
         setActiveTab('all');
@@ -384,8 +388,36 @@ export default function CsvImportModal({
             </div>
           </div>
 
+          {/* Global Header Mapping Error Banner */}
+          {validationResult.mappingError && (
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'flex-start',
+                gap: '10px',
+                background: 'var(--red-bg)',
+                color: 'var(--red)',
+                border: '1px solid var(--border)',
+                borderRadius: '8px',
+                padding: '12px 14px',
+                fontSize: '13px',
+                lineHeight: '1.4',
+                fontWeight: 600,
+                marginBottom: '14px',
+              }}
+            >
+              <AlertTriangle size={18} style={{ flexShrink: 0, marginTop: '2px' }} />
+              <div>
+                <div style={{ fontWeight: 700, marginBottom: '3px' }}>CSV Header Mapping Error</div>
+                <div style={{ fontSize: '12.5px', fontWeight: 500, color: 'var(--text)' }}>
+                  {validationResult.mappingError}
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Partial Import Advisory */}
-          {validationResult.summary.invalidCount > 0 && validationResult.summary.validCount > 0 && (
+          {!validationResult.mappingError && validationResult.summary.invalidCount > 0 && validationResult.summary.validCount > 0 && (
             <div
               style={{
                 display: 'flex',
@@ -410,7 +442,7 @@ export default function CsvImportModal({
           )}
 
           {/* All records invalid warning */}
-          {validationResult.summary.validCount === 0 && (
+          {!validationResult.mappingError && validationResult.summary.validCount === 0 && (
             <div
               style={{
                 display: 'flex',
@@ -473,7 +505,15 @@ export default function CsvImportModal({
           {/* Tab 3: Errors */}
           {activeTab === 'errors' && (
             <div style={{ maxHeight: '360px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              {validationResult.invalidRows.length === 0 ? (
+              {validationResult.mappingError ? (
+                <div style={{ textAlign: 'center', padding: '28px 16px', color: 'var(--red)', background: 'var(--surface-2)', borderRadius: '8px', border: '1px solid var(--border)' }}>
+                  <AlertTriangle size={28} style={{ display: 'inline-block', marginBottom: '8px' }} />
+                  <div style={{ fontWeight: 700, fontSize: '14px', marginBottom: '6px' }}>Header Mapping Configuration Error</div>
+                  <div style={{ fontSize: '12.5px', color: 'var(--text-2)', maxWidth: '540px', margin: '0 auto' }}>
+                    {validationResult.mappingError}
+                  </div>
+                </div>
+              ) : validationResult.invalidRows.length === 0 ? (
                 <div style={{ textAlign: 'center', padding: '30px', color: 'var(--green)', fontWeight: 600 }}>
                   <CheckCircle2 size={24} style={{ display: 'inline-block', marginBottom: '6px' }} />
                   <div>All rows passed validation! Zero errors found.</div>

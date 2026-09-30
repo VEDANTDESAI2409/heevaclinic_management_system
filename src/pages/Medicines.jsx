@@ -234,6 +234,14 @@ export default function Medicines() {
   };
 
 
+  const exportCategoriesCSV = () => {
+    const list = cats || [];
+    download(`heeva-categories-${dkey()}.csv`, toCSV(
+      ['Category Name'],
+      list.map((c) => [c.name])
+    ), 'text/csv');
+  };
+
   return (
     <div className="page">
       <PageHeader
@@ -250,6 +258,7 @@ export default function Medicines() {
           {activeTab === 'categories' && (
             <div style={{ display: 'flex', gap: '8px' }}>
               <Btn variant="ghost" icon={Upload} onClick={() => setImportCatOpen(true)}>Import CSV</Btn>
+              <Btn variant="ghost" icon={Download} onClick={exportCategoriesCSV}>Export</Btn>
               <Btn variant="accent" icon={Plus} onClick={() => { setEditingCat(null); setCatModalOpen(true); }}>+ Add Category</Btn>
             </div>
           )}

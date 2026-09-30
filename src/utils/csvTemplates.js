@@ -4,7 +4,7 @@ export const CSV_TEMPLATES = {
   patients: {
     title: 'Patients',
     filename: 'heeva-patients-template.csv',
-    description: 'Bulk register patients. Mandatory columns: name, age, gender (M/F/Other), mobile (10 digits). Historical Date & Time is optional in DD-MM-YYYY HH:mm format.',
+    description: 'Bulk register patients. Mandatory columns: Full Name, Age, Gender (M/F/Other), Mobile Number (10 digits). Historical Date & Time is optional in DD-MM-YYYY HH:mm format.',
     headers: [
       'name', 'date_time', 'age', 'gender', 'marital_status', 'mobile',
       'blood_group', 'address'
@@ -34,7 +34,7 @@ export const CSV_TEMPLATES = {
   medicines: {
     title: 'Medicines',
     filename: 'heeva-medicines-template.csv',
-    description: 'Bulk catalog pharmaceutical products. Mandatory columns: name, selling_price. Medicine codes (MD-XXXX) are assigned automatically if omitted.',
+    description: 'Bulk catalog pharmaceutical products. Mandatory columns: Medicine Name, Selling Price. Medicine codes (MD-XXXX) are assigned automatically if omitted.',
     headers: [
       'name', 'generic', 'category', 'type', 'strength', 'unit',
       'purchase_price', 'selling_price', 'min_stock',
@@ -70,7 +70,7 @@ export const CSV_TEMPLATES = {
   medicine_categories: {
     title: 'Medicine Categories',
     filename: 'heeva-categories-template.csv',
-    description: 'Bulk create pharmacological / therapeutic categories. Mandatory: name (must be unique).',
+    description: 'Bulk create pharmacological / therapeutic categories. Mandatory: Category Name (must be unique).',
     headers: ['name'],
     sampleRows: [
       ['Pediatric'],
@@ -85,7 +85,7 @@ export const CSV_TEMPLATES = {
   doctors: {
     title: 'Doctors',
     filename: 'heeva-doctors-template.csv',
-    description: 'Bulk add consulting physicians and specialists. Mandatory: name.',
+    description: 'Bulk add consulting physicians and specialists. Mandatory: Doctor Full Name.',
     headers: ['name', 'qualification', 'specialization', 'phone', 'email'],
     sampleRows: [
       ['Dr. Rajesh Verma', 'MBBS, MD (Medicine)', 'Consulting Physician', '9898012345', 'dr.verma@example.com'],
@@ -103,19 +103,36 @@ export const CSV_TEMPLATES = {
   inventory_batches: {
     title: 'Inventory Batches',
     filename: 'heeva-inventory-batches-template.csv',
-    description: 'Bulk intake stock batches. Mandatory: medicine_name, batch_no, expiry (YYYY-MM-DD), quantity. Generates audit stock ledger entries.',
+    description: 'Bulk intake stock batches. Mandatory: Medicine Name, Batch Number, Expiry Date (DD-MM-YYYY or YYYY-MM-DD), Received Quantity. Generates audit stock ledger entries.',
     headers: ['medicine_name', 'batch_no', 'mfg_date', 'expiry', 'quantity', 'purchase_price'],
     sampleRows: [
-      ['Paracetamol 650', 'B-2026-01', '2026-01-01', '2028-12-31', '100', '8.50'],
-      ['Amoxicillin 500', 'B-2026-02', '2026-02-15', '2027-08-31', '50', '45.00']
+      ['Paracetamol 650', 'B-2026-01', '01-01-2026', '31-12-2028', '100', '8.50'],
+      ['Amoxicillin 500', 'B-2026-02', '15-02-2026', '31-08-2027', '50', '45.00']
     ],
     columns: [
       { key: 'medicine_name', label: 'Medicine Name (Existing)', required: true },
       { key: 'batch_no', label: 'Batch Number', required: true },
-      { key: 'mfg_date', label: 'Mfg Date (YYYY-MM-DD)', required: false },
-      { key: 'expiry', label: 'Expiry Date (YYYY-MM-DD)', required: true },
+      { key: 'mfg_date', label: 'Mfg Date (DD-MM-YYYY or YYYY-MM-DD)', required: false },
+      { key: 'expiry', label: 'Expiry Date (DD-MM-YYYY or YYYY-MM-DD)', required: true },
       { key: 'quantity', label: 'Received Quantity', required: true },
       { key: 'purchase_price', label: 'Purchase Price (₹)', required: false }
+    ]
+  },
+
+  services: {
+    title: 'Services',
+    filename: 'heeva-services-template.csv',
+    description: 'Bulk catalog clinical services, procedures, and test fees. Mandatory: Service Name, Price.',
+    headers: ['name', 'price', 'type', 'description'],
+    sampleRows: [
+      ['General Consultation', '500.00', 'Consultation', 'Standard physician consultation'],
+      ['Blood Sugar Test', '150.00', 'Investigation', 'Fasting blood glucose check']
+    ],
+    columns: [
+      { key: 'name', label: 'Service Name', required: true },
+      { key: 'price', label: 'Fee / Price (₹)', required: true },
+      { key: 'type', label: 'Service Type', required: false },
+      { key: 'description', label: 'Description', required: false }
     ]
   }
 };

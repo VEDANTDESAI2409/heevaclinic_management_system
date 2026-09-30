@@ -1230,7 +1230,7 @@ var init_inventory = __esm({
 });
 
 // src/services/notifications.js
-async function syncAlerts(userId = null) {
+async function syncAlerts2(userId = null) {
   const active = [];
   const { low, out } = await lowStockList();
   for (const r of out) active.push({ type: "out_of_stock", ref: `out:${r.medicine.id}`, severity: "danger", title: "Out of stock", message: `${r.medicine.name} is out of stock` });
@@ -1459,7 +1459,7 @@ function AppProvider({ children }) {
       setLangState(s.lang || "en");
       globalThis.__heevaUser = LOCAL_USER;
       try {
-        await syncAlerts(LOCAL_USER.id);
+        await syncAlerts2(LOCAL_USER.id);
       } catch (e) {
       }
       refreshNotifs();
@@ -3300,14 +3300,63 @@ var init_patients = __esm({
 });
 
 // src/utils/csvParser.js
+function stripBOM(str) {
+  if (!str) return "";
+  return String(str).replace(/^[\uFEFF\uFFFE\u200B\u200C\u200D]+/, "").replace(/[\uFEFF\uFFFE]/g, "");
+}
+function detectDelimiter(text) {
+  if (!text) return ",";
+  let inQuotes = false;
+  let line = "";
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === '"') {
+      inQuotes = !inQuotes;
+    } else if ((ch === "\n" || ch === "\r") && !inQuotes) {
+      if (line.trim()) break;
+      line = "";
+      continue;
+    }
+    line += ch;
+  }
+  if (!line.trim()) return ",";
+  let commaCount = 0;
+  let semiCount = 0;
+  let tabCount = 0;
+  inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '"') {
+      if (inQuotes && line[i + 1] === '"') {
+        i++;
+      } else {
+        inQuotes = !inQuotes;
+      }
+    } else if (!inQuotes) {
+      if (ch === ",") commaCount++;
+      else if (ch === ";") semiCount++;
+      else if (ch === "	") tabCount++;
+    }
+  }
+  if (semiCount > commaCount && semiCount > tabCount) return ";";
+  if (tabCount > commaCount && tabCount > semiCount) return "	";
+  return ",";
+}
+function normalizeHeader(h2) {
+  if (!h2) return "";
+  const cleaned = stripBOM(h2).trim();
+  const lower = cleaned.toLowerCase();
+  if (/^date\s*(&|and)?\s*time/i.test(lower)) {
+    return "date_time";
+  }
+  return lower.replace(/&/g, "and").replace(/[\s\-\/]+/g, "_").replace(/[^a-z0-9_]/g, "").replace(/_+/g, "_").replace(/^_|_$/g, "");
+}
 function parseCSV(text) {
   if (!text || typeof text !== "string") {
-    return { headers: [], rows: [], rawRows: [], errors: ["File is empty"] };
+    return { headers: [], rawHeaders: [], rows: [], rawRows: [], errors: ["File is empty"], delimiter: "," };
   }
-  let cleanText = text;
-  if (cleanText.charCodeAt(0) === 65279) {
-    cleanText = cleanText.slice(1);
-  }
+  const cleanText = stripBOM(text);
+  const delimiter = detectDelimiter(cleanText);
   const rawRows = [];
   let currentRow = [];
   let currentField = "";
@@ -3339,8 +3388,8 @@ function parseCSV(text) {
         i++;
         continue;
       }
-      if (char === ",") {
-        currentRow.push(currentField.trim());
+      if (char === delimiter) {
+        currentRow.push(stripBOM(currentField).trim());
         currentField = "";
         i++;
         continue;
@@ -3349,7 +3398,7 @@ function parseCSV(text) {
         if (nextChar === "\n") {
           i++;
         }
-        currentRow.push(currentField.trim());
+        currentRow.push(stripBOM(currentField).trim());
         rawRows.push(currentRow);
         currentRow = [];
         currentField = "";
@@ -3357,7 +3406,7 @@ function parseCSV(text) {
         continue;
       }
       if (char === "\n") {
-        currentRow.push(currentField.trim());
+        currentRow.push(stripBOM(currentField).trim());
         rawRows.push(currentRow);
         currentRow = [];
         currentField = "";
@@ -3369,28 +3418,23 @@ function parseCSV(text) {
     }
   }
   if (currentField || currentRow.length > 0) {
-    currentRow.push(currentField.trim());
+    currentRow.push(stripBOM(currentField).trim());
     rawRows.push(currentRow);
   }
   const nonEmptyRows = rawRows.filter((row) => row.some((cell) => cell.trim() !== ""));
   if (nonEmptyRows.length === 0) {
-    return { headers: [], rows: [], rawRows: [], errors: ["No data rows found in CSV file"] };
+    return { headers: [], rawHeaders: [], rows: [], rawRows: [], errors: ["No data rows found in CSV file"], delimiter };
   }
-  const rawHeaders = nonEmptyRows[0];
-  const headers = rawHeaders.map((h2) => {
-    const s = h2.toLowerCase().trim();
-    if (s === "date & time" || s === "date &time" || s === "date&time" || s === "date and time" || s === "date_time") {
-      return "date_time";
-    }
-    return s.replace(/&/g, "and").replace(/[\s\-\/]+/g, "_").replace(/[^a-z0-9_]/g, "").replace(/_+/g, "_").replace(/^_|_$/g, "");
-  });
+  const rawHeaders = nonEmptyRows[0].map((h2) => stripBOM(h2).trim());
+  const headers = rawHeaders.map(normalizeHeader);
   const rows = [];
   for (let r = 1; r < nonEmptyRows.length; r++) {
     const rawRow = nonEmptyRows[r];
     const rowObj = { __rowNum: r + 1 };
     headers.forEach((header, colIdx) => {
       if (header) {
-        rowObj[header] = rawRow[colIdx] !== void 0 ? rawRow[colIdx].trim() : "";
+        const cellVal = rawRow[colIdx] !== void 0 ? stripBOM(rawRow[colIdx]).trim() : "";
+        rowObj[header] = cellVal;
       }
     });
     rows.push(rowObj);
@@ -3400,6 +3444,7 @@ function parseCSV(text) {
     rawHeaders,
     rows,
     rawRows: nonEmptyRows,
+    delimiter,
     errors: []
   };
 }
@@ -3425,7 +3470,7 @@ var init_csvTemplates = __esm({
       patients: {
         title: "Patients",
         filename: "heeva-patients-template.csv",
-        description: "Bulk register patients. Mandatory columns: name, age, gender (M/F/Other), mobile (10 digits). Historical Date & Time is optional in DD-MM-YYYY HH:mm format.",
+        description: "Bulk register patients. Mandatory columns: Full Name, Age, Gender (M/F/Other), Mobile Number (10 digits). Historical Date & Time is optional in DD-MM-YYYY HH:mm format.",
         headers: [
           "name",
           "date_time",
@@ -3472,7 +3517,7 @@ var init_csvTemplates = __esm({
       medicines: {
         title: "Medicines",
         filename: "heeva-medicines-template.csv",
-        description: "Bulk catalog pharmaceutical products. Mandatory columns: name, selling_price. Medicine codes (MD-XXXX) are assigned automatically if omitted.",
+        description: "Bulk catalog pharmaceutical products. Mandatory columns: Medicine Name, Selling Price. Medicine codes (MD-XXXX) are assigned automatically if omitted.",
         headers: [
           "name",
           "generic",
@@ -3531,7 +3576,7 @@ var init_csvTemplates = __esm({
       medicine_categories: {
         title: "Medicine Categories",
         filename: "heeva-categories-template.csv",
-        description: "Bulk create pharmacological / therapeutic categories. Mandatory: name (must be unique).",
+        description: "Bulk create pharmacological / therapeutic categories. Mandatory: Category Name (must be unique).",
         headers: ["name"],
         sampleRows: [
           ["Pediatric"],
@@ -3545,7 +3590,7 @@ var init_csvTemplates = __esm({
       doctors: {
         title: "Doctors",
         filename: "heeva-doctors-template.csv",
-        description: "Bulk add consulting physicians and specialists. Mandatory: name.",
+        description: "Bulk add consulting physicians and specialists. Mandatory: Doctor Full Name.",
         headers: ["name", "qualification", "specialization", "phone", "email"],
         sampleRows: [
           ["Dr. Rajesh Verma", "MBBS, MD (Medicine)", "Consulting Physician", "9898012345", "dr.verma@example.com"],
@@ -3562,21 +3607,570 @@ var init_csvTemplates = __esm({
       inventory_batches: {
         title: "Inventory Batches",
         filename: "heeva-inventory-batches-template.csv",
-        description: "Bulk intake stock batches. Mandatory: medicine_name, batch_no, expiry (YYYY-MM-DD), quantity. Generates audit stock ledger entries.",
+        description: "Bulk intake stock batches. Mandatory: Medicine Name, Batch Number, Expiry Date (DD-MM-YYYY or YYYY-MM-DD), Received Quantity. Generates audit stock ledger entries.",
         headers: ["medicine_name", "batch_no", "mfg_date", "expiry", "quantity", "purchase_price"],
         sampleRows: [
-          ["Paracetamol 650", "B-2026-01", "2026-01-01", "2028-12-31", "100", "8.50"],
-          ["Amoxicillin 500", "B-2026-02", "2026-02-15", "2027-08-31", "50", "45.00"]
+          ["Paracetamol 650", "B-2026-01", "01-01-2026", "31-12-2028", "100", "8.50"],
+          ["Amoxicillin 500", "B-2026-02", "15-02-2026", "31-08-2027", "50", "45.00"]
         ],
         columns: [
           { key: "medicine_name", label: "Medicine Name (Existing)", required: true },
           { key: "batch_no", label: "Batch Number", required: true },
-          { key: "mfg_date", label: "Mfg Date (YYYY-MM-DD)", required: false },
-          { key: "expiry", label: "Expiry Date (YYYY-MM-DD)", required: true },
+          { key: "mfg_date", label: "Mfg Date (DD-MM-YYYY or YYYY-MM-DD)", required: false },
+          { key: "expiry", label: "Expiry Date (DD-MM-YYYY or YYYY-MM-DD)", required: true },
           { key: "quantity", label: "Received Quantity", required: true },
           { key: "purchase_price", label: "Purchase Price (\u20B9)", required: false }
         ]
+      },
+      services: {
+        title: "Services",
+        filename: "heeva-services-template.csv",
+        description: "Bulk catalog clinical services, procedures, and test fees. Mandatory: Service Name, Price.",
+        headers: ["name", "price", "type", "description"],
+        sampleRows: [
+          ["General Consultation", "500.00", "Consultation", "Standard physician consultation"],
+          ["Blood Sugar Test", "150.00", "Investigation", "Fasting blood glucose check"]
+        ],
+        columns: [
+          { key: "name", label: "Service Name", required: true },
+          { key: "price", label: "Fee / Price (\u20B9)", required: true },
+          { key: "type", label: "Service Type", required: false },
+          { key: "description", label: "Description", required: false }
+        ]
       }
+    };
+  }
+});
+
+// src/utils/csvMapping.js
+function normalizeValue(val) {
+  if (val === null || val === void 0) return "";
+  let s = stripBOM(val).trim();
+  const lower = s.toLowerCase();
+  if (s === "\u2014" || // Em dash (\u2014)
+  s === "\u2013" || // En dash (\u2013)
+  s === "-" || // Hyphen
+  lower === "n/a" || lower === "na" || lower === "null" || lower === "undefined" || lower === "none") {
+    return "";
+  }
+  return s;
+}
+function cleanCurrency(val) {
+  if (val === null || val === void 0) return "";
+  let s = normalizeValue(val);
+  if (!s) return "";
+  s = s.replace(/[₹$€£\s]/g, "");
+  if (s.includes(",") && s.includes(".")) {
+    s = s.replace(/,/g, "");
+  } else if (s.includes(",")) {
+    s = s.replace(",", ".");
+  }
+  return s;
+}
+function inspectHeaders(type, headers) {
+  const aliasesMap = MODULE_FIELD_ALIASES[type];
+  const requiredFields = MODULE_REQUIRED_FIELDS[type] || [];
+  if (!aliasesMap || requiredFields.length === 0) return null;
+  const normalizedHeaders = (headers || []).map(normalizeHeader);
+  const headerSet = new Set(normalizedHeaders);
+  const missingFields = [];
+  for (const field of requiredFields) {
+    const aliases = aliasesMap[field] || [field];
+    const isMapped = aliases.some((alias) => headerSet.has(alias));
+    if (!isMapped) {
+      const label = MODULE_FIELD_LABELS[field] || field;
+      missingFields.push(label);
+    }
+  }
+  if (missingFields.length > 0) {
+    return `CSV file is missing mandatory column(s): ${missingFields.join(", ")}. Found headers in uploaded file: [${headers.join(", ")}]. Please verify your column headers or download the official template.`;
+  }
+  return null;
+}
+function mapParsedRow(type, rawRow) {
+  const aliasesMap = MODULE_FIELD_ALIASES[type] || {};
+  const canonicalRow = {
+    __rowNum: rawRow.__rowNum,
+    __raw: rawRow
+  };
+  for (const [canonicalKey, aliases] of Object.entries(aliasesMap)) {
+    let foundValue = "";
+    for (const alias of aliases) {
+      if (rawRow[alias] !== void 0 && rawRow[alias] !== "") {
+        foundValue = rawRow[alias];
+        break;
+      }
+    }
+    canonicalRow[canonicalKey] = normalizeValue(foundValue);
+  }
+  for (const [key, value] of Object.entries(rawRow)) {
+    if (key !== "__rowNum" && key !== "__raw" && canonicalRow[key] === void 0) {
+      canonicalRow[key] = normalizeValue(value);
+    }
+  }
+  return canonicalRow;
+}
+function mapCSVRows(type, parsedRows) {
+  if (!Array.isArray(parsedRows)) return [];
+  return parsedRows.map((r) => mapParsedRow(type, r));
+}
+var MODULE_FIELD_ALIASES, MODULE_REQUIRED_FIELDS, MODULE_FIELD_LABELS;
+var init_csvMapping = __esm({
+  "src/utils/csvMapping.js"() {
+    init_csvParser();
+    MODULE_FIELD_ALIASES = {
+      patients: {
+        name: [
+          "name",
+          "full_name",
+          "fullname",
+          "patient_name",
+          "patient_full_name",
+          "patientname",
+          "first_and_last_name",
+          "client_name",
+          "patient"
+        ],
+        date_time: [
+          "date_time",
+          "date_and_time",
+          "datetime",
+          "registered_date_and_time",
+          "registered_date_time",
+          "registered_datetime",
+          "registration_date_and_time",
+          "registration_date_time",
+          "registration_date",
+          "reg_date_and_time",
+          "reg_date_time",
+          "reg_date",
+          "reg_datetime",
+          "created_at",
+          "created_date",
+          "created_date_time",
+          "date_and_time_dd_mm_yyyy_hh_mm",
+          "date_time_dd_mm_yyyy_hh_mm",
+          "registration_time",
+          "entry_date",
+          "registered_at"
+        ],
+        age: [
+          "age",
+          "age_years",
+          "age_in_years",
+          "age_yrs",
+          "age_year",
+          "years",
+          "patient_age",
+          "age_yr",
+          "yrs",
+          "patient_age_years"
+        ],
+        gender: [
+          "gender",
+          "sex",
+          "gender_m_f_other",
+          "patient_gender",
+          "gender_mfother",
+          "gender_m_f",
+          "gender_male_female_other"
+        ],
+        marital_status: [
+          "marital_status",
+          "maritalstatus",
+          "marital",
+          "marital_status_singlemarriedetc",
+          "marital_status_single_married_etc",
+          "marriage_status",
+          "marital_state"
+        ],
+        mobile: [
+          "mobile",
+          "mobile_number",
+          "mobilenumber",
+          "mobile_10_digits",
+          "mobile_10digits",
+          "phone",
+          "phone_number",
+          "phonenumber",
+          "contact",
+          "contact_number",
+          "contact_no",
+          "cell",
+          "cell_number",
+          "cellphone",
+          "whatsapp",
+          "patient_mobile",
+          "mobile_no",
+          "primary_mobile",
+          "phone_no"
+        ],
+        blood_group: [
+          "blood_group",
+          "bloodgroup",
+          "blood_type",
+          "bloodtype",
+          "blood",
+          "bg"
+        ],
+        address: [
+          "address",
+          "residential_address",
+          "home_address",
+          "street_address",
+          "patient_address",
+          "full_address",
+          "addr",
+          "residence"
+        ],
+        pin: [
+          "pin",
+          "pin_code",
+          "pincode",
+          "postal_code",
+          "postalcode",
+          "zip",
+          "zip_code",
+          "zipcode"
+        ],
+        uhid: [
+          "uhid",
+          "uhid_no",
+          "uhid_number",
+          "patient_id",
+          "patient_uhid"
+        ],
+        allergies: [
+          "allergies",
+          "allergy",
+          "known_allergies"
+        ],
+        conditions: [
+          "conditions",
+          "medical_conditions",
+          "known_conditions",
+          "important_medical_conditions",
+          "history",
+          "medical_history"
+        ],
+        current_meds: [
+          "current_meds",
+          "current_medications",
+          "medications",
+          "meds",
+          "active_medications"
+        ],
+        notes: [
+          "notes",
+          "remarks",
+          "comments",
+          "note",
+          "patient_status",
+          "status"
+        ]
+      },
+      medicines: {
+        name: [
+          "name",
+          "medicine_name",
+          "brand_name",
+          "brand",
+          "medicine",
+          "product_name",
+          "drug_name",
+          "item_name",
+          "medicine_name_brand",
+          "medicine_title"
+        ],
+        generic: [
+          "generic",
+          "generic_name",
+          "composition",
+          "salt",
+          "salt_name",
+          "formula",
+          "active_ingredient"
+        ],
+        category: [
+          "category",
+          "category_name",
+          "med_category",
+          "group",
+          "class",
+          "therapeutic_class"
+        ],
+        type: [
+          "type",
+          "dosage_form",
+          "form",
+          "type_tabletcapsulesyrupetc",
+          "type_tablet_capsule_syrup_etc",
+          "item_type"
+        ],
+        strength: [
+          "strength",
+          "dosage",
+          "potency",
+          "dose",
+          "concentration"
+        ],
+        unit: [
+          "unit",
+          "packaging",
+          "uom",
+          "pack_unit",
+          "unit_stripbottlevial",
+          "unit_strip_bottle_vial",
+          "pack",
+          "package_unit"
+        ],
+        purchase_price: [
+          "purchase_price",
+          "purchase_price_inr",
+          "purchase_price_rs",
+          "buy_price",
+          "cost_price",
+          "cost",
+          "buy_rate",
+          "purchase_rate",
+          "buying_price",
+          "cp",
+          "purchase_price_approx"
+        ],
+        selling_price: [
+          "selling_price",
+          "selling_price_inr",
+          "selling_price_rs",
+          "sell_price",
+          "sale_price",
+          "mrp",
+          "retail_price",
+          "price",
+          "rate",
+          "selling_rate",
+          "sp",
+          "unit_price"
+        ],
+        min_stock: [
+          "min_stock",
+          "minimum_stock",
+          "min_stock_level",
+          "minimum_stock_level",
+          "reorder_level",
+          "threshold",
+          "low_stock_threshold",
+          "alert_stock"
+        ],
+        location: [
+          "location",
+          "storage_location",
+          "shelf",
+          "rack",
+          "bin",
+          "box",
+          "rack_no"
+        ],
+        description: [
+          "description",
+          "desc",
+          "notes",
+          "details",
+          "instruction"
+        ],
+        medicine_code: [
+          "medicine_code",
+          "code",
+          "item_code",
+          "med_code",
+          "drug_code"
+        ]
+      },
+      medicine_categories: {
+        name: [
+          "name",
+          "category_name",
+          "category",
+          "category_title",
+          "title",
+          "group_name"
+        ]
+      },
+      doctors: {
+        name: [
+          "name",
+          "doctor_name",
+          "doctor_full_name",
+          "full_name",
+          "doctor",
+          "physician_name",
+          "doc_name",
+          "consultant_name",
+          "dr_name"
+        ],
+        qualification: [
+          "qualification",
+          "qualifications",
+          "degree",
+          "degrees",
+          "edu",
+          "education"
+        ],
+        specialization: [
+          "specialization",
+          "specialty",
+          "speciality",
+          "department",
+          "dept"
+        ],
+        phone: [
+          "phone",
+          "phone_mobile",
+          "phone_number",
+          "mobile",
+          "mobile_number",
+          "contact",
+          "contact_number",
+          "cell",
+          "cell_number",
+          "doc_phone"
+        ],
+        email: [
+          "email",
+          "email_address",
+          "email_id",
+          "mail"
+        ]
+      },
+      inventory_batches: {
+        medicine_name: [
+          "medicine_name",
+          "medicine_name_existing",
+          "medicine",
+          "brand_name",
+          "brand",
+          "drug_name",
+          "item_name",
+          "product_name",
+          "product"
+        ],
+        medicine_id: [
+          "medicine_id",
+          "med_id"
+        ],
+        batch_no: [
+          "batch_no",
+          "batch_number",
+          "batch",
+          "lot_no",
+          "lot_number",
+          "batch_num",
+          "lot",
+          "batch_id"
+        ],
+        mfg_date: [
+          "mfg_date",
+          "mfg_date_yyyy_mm_dd",
+          "mfg_date_dd_mm_yyyy_or_yyyy_mm_dd",
+          "manufacturing_date",
+          "mfg",
+          "mfgdate",
+          "manufacture_date"
+        ],
+        expiry: [
+          "expiry",
+          "expiry_date",
+          "expiry_date_yyyy_mm_dd",
+          "expiry_date_dd_mm_yyyy_or_yyyy_mm_dd",
+          "exp_date",
+          "exp",
+          "expiration_date",
+          "expire_date"
+        ],
+        quantity: [
+          "quantity",
+          "received_quantity",
+          "qty",
+          "units",
+          "stock",
+          "count",
+          "received_qty",
+          "amount_received",
+          "pack_qty"
+        ],
+        purchase_price: [
+          "purchase_price",
+          "purchase_price_inr",
+          "purchase_price_rs",
+          "buy_price",
+          "cost_price",
+          "cost",
+          "buy_rate",
+          "rate",
+          "price"
+        ]
+      },
+      services: {
+        name: [
+          "name",
+          "service_name",
+          "title",
+          "procedure",
+          "test_name"
+        ],
+        service_code: [
+          "service_code",
+          "code",
+          "id"
+        ],
+        type: [
+          "type",
+          "category",
+          "service_type"
+        ],
+        price: [
+          "price",
+          "cost",
+          "fee",
+          "charge",
+          "amount",
+          "rate"
+        ],
+        description: [
+          "description",
+          "notes",
+          "details"
+        ]
+      }
+    };
+    MODULE_REQUIRED_FIELDS = {
+      patients: ["name", "age", "gender", "mobile"],
+      medicines: ["name", "selling_price"],
+      medicine_categories: ["name"],
+      doctors: ["name"],
+      inventory_batches: ["medicine_name", "batch_no", "expiry", "quantity"],
+      services: ["name", "price"]
+    };
+    MODULE_FIELD_LABELS = {
+      name: "Full Name / Name",
+      date_time: "Date & Time",
+      age: "Age",
+      gender: "Gender",
+      marital_status: "Marital Status",
+      mobile: "Mobile Number",
+      blood_group: "Blood Group",
+      address: "Address",
+      pin: "PIN Code",
+      selling_price: "Selling Price",
+      purchase_price: "Purchase Price",
+      medicine_name: "Medicine Name",
+      batch_no: "Batch Number",
+      expiry: "Expiry Date",
+      quantity: "Quantity",
+      phone: "Phone / Mobile",
+      email: "Email Address",
+      qualification: "Qualification",
+      specialization: "Specialization",
+      price: "Service Fee / Price"
     };
   }
 });
@@ -3597,17 +4191,85 @@ function cleanDigits(val) {
 function isValidEmail(email) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 }
+function parseHistoricalDateTime(rawDateTime, today) {
+  let itemCreatedAt = (/* @__PURE__ */ new Date()).toISOString();
+  let regDate = today;
+  if (!rawDateTime) return { itemCreatedAt, regDate, error: null };
+  const s = String(rawDateTime).trim();
+  const dmyMatch = s.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})(?:[\sT](\d{1,2}):(\d{2})(?::(\d{2}))?)?$/);
+  if (dmyMatch) {
+    const day = parseInt(dmyMatch[1], 10);
+    const month = parseInt(dmyMatch[2], 10);
+    const year = parseInt(dmyMatch[3], 10);
+    const hour = dmyMatch[4] !== void 0 ? parseInt(dmyMatch[4], 10) : 0;
+    const minute = dmyMatch[5] !== void 0 ? parseInt(dmyMatch[5], 10) : 0;
+    const second = dmyMatch[6] !== void 0 ? parseInt(dmyMatch[6], 10) : 0;
+    if (month < 1 || month > 12) return { error: "Invalid month in Date & Time (must be 01\u201312)" };
+    if (year < 1900 || year > 2100) return { error: "Invalid year in Date & Time (1900\u20132100)" };
+    const daysInMonth = new Date(year, month, 0).getDate();
+    if (day < 1 || day > daysInMonth) return { error: `Invalid day in Date & Time for month ${month} (must be 01\u2013${daysInMonth})` };
+    if (hour < 0 || hour > 23) return { error: "Invalid hour in Date & Time (must be 00\u201323)" };
+    if (minute < 0 || minute > 59) return { error: "Invalid minute in Date & Time (must be 00\u201359)" };
+    if (second < 0 || second > 59) return { error: "Invalid second in Date & Time (must be 00\u201359)" };
+    const p22 = (n) => String(n).padStart(2, "0");
+    itemCreatedAt = `${year}-${p22(month)}-${p22(day)}T${p22(hour)}:${p22(minute)}:${p22(second)}.000Z`;
+    regDate = `${year}-${p22(month)}-${p22(day)}`;
+    return { itemCreatedAt, regDate, error: null };
+  }
+  const ymdMatch = s.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})(?:[\sT](\d{1,2}):(\d{2})(?::(\d{2}))?)?$/);
+  if (ymdMatch) {
+    const year = parseInt(ymdMatch[1], 10);
+    const month = parseInt(ymdMatch[2], 10);
+    const day = parseInt(ymdMatch[3], 10);
+    const hour = ymdMatch[4] !== void 0 ? parseInt(ymdMatch[4], 10) : 0;
+    const minute = ymdMatch[5] !== void 0 ? parseInt(ymdMatch[5], 10) : 0;
+    const second = ymdMatch[6] !== void 0 ? parseInt(ymdMatch[6], 10) : 0;
+    if (month < 1 || month > 12) return { error: "Invalid month in Date & Time (must be 01\u201312)" };
+    const daysInMonth = new Date(year, month, 0).getDate();
+    if (day < 1 || day > daysInMonth) return { error: `Invalid day in Date & Time for month ${month} (must be 01\u2013${daysInMonth})` };
+    const p22 = (n) => String(n).padStart(2, "0");
+    itemCreatedAt = `${year}-${p22(month)}-${p22(day)}T${p22(hour)}:${p22(minute)}:${p22(second)}.000Z`;
+    regDate = `${year}-${p22(month)}-${p22(day)}`;
+    return { itemCreatedAt, regDate, error: null };
+  }
+  return { error: "Date & Time must use DD-MM-YYYY HH:mm format (e.g. 05-09-2026 10:45)" };
+}
+function parseFlexibleDate(val, defaultVal = "") {
+  if (!val) return defaultVal;
+  const s = String(val).trim();
+  if (isValidDDMMYYYY(s)) return parseDDMMYYYY(s);
+  if (isValidDate(s)) return s;
+  return null;
+}
 function validateCSVRows(type, rows, context = {}) {
+  if (context.headers && Array.isArray(context.headers)) {
+    const mappingErr = inspectHeaders(type, context.headers);
+    if (mappingErr) {
+      return {
+        total: rows.length,
+        validRows: [],
+        invalidRows: [],
+        mappingError: mappingErr,
+        summary: {
+          total: rows.length,
+          validCount: 0,
+          invalidCount: rows.length,
+          mappingError: true
+        }
+      };
+    }
+  }
+  const canonicalRows = mapCSVRows(type, rows);
   const validRows = [];
   const invalidRows = [];
   const today = dkey(/* @__PURE__ */ new Date());
   switch (type) {
     case "patients": {
       const seenMobileName = /* @__PURE__ */ new Set();
-      for (const row of rows) {
+      for (const row of canonicalRows) {
         const rowNum = row.__rowNum;
         const errors2 = [];
-        const name = String(row.name || row.full_name || row.patient_name || "").trim();
+        const name = String(row.name || "").trim();
         if (!name) {
           errors2.push("Full name is required");
         } else if (name.length < 3) {
@@ -3629,7 +4291,7 @@ function validateCSVRows(type, rows, context = {}) {
         } else {
           gender = rawGender === "m" || rawGender === "male" ? "M" : rawGender === "f" || rawGender === "female" ? "F" : "Other";
         }
-        const rawMobile = String(row.mobile || row.mobile_number || row.phone || row.contact || "").trim();
+        const rawMobile = String(row.mobile || "").trim();
         const mobile = cleanDigits(rawMobile);
         if (!rawMobile) {
           errors2.push("Mobile number is required");
@@ -3640,40 +4302,16 @@ function validateCSVRows(type, rows, context = {}) {
         if (bloodGroup && !BLOOD_GROUPS.has(bloodGroup)) {
           errors2.push("Blood group must be one of A+, A-, B+, B-, AB+, AB-, O+, O-");
         }
-        const rawDateTime = String(row.date_time || row.date_and_time || row.datetime || row.created_at || row.reg_date || "").trim();
+        const rawDateTime = String(row.date_time || "").trim();
         let itemCreatedAt = (/* @__PURE__ */ new Date()).toISOString();
         let regDate = today;
         if (rawDateTime) {
-          const dtMatch = rawDateTime.match(/^(\d{2})-(\d{2})-(\d{4})(?:[\sT](\d{1,2}):(\d{2})(?::(\d{2}))?)?$/);
-          if (!dtMatch) {
-            errors2.push("Date & Time must use DD-MM-YYYY HH:mm format (e.g. 05-09-2026 10:45)");
+          const parsedDT = parseHistoricalDateTime(rawDateTime, today);
+          if (parsedDT.error) {
+            errors2.push(parsedDT.error);
           } else {
-            const day = parseInt(dtMatch[1], 10);
-            const month = parseInt(dtMatch[2], 10);
-            const year = parseInt(dtMatch[3], 10);
-            const hour = dtMatch[4] !== void 0 ? parseInt(dtMatch[4], 10) : 0;
-            const minute = dtMatch[5] !== void 0 ? parseInt(dtMatch[5], 10) : 0;
-            const second = dtMatch[6] !== void 0 ? parseInt(dtMatch[6], 10) : 0;
-            if (month < 1 || month > 12) {
-              errors2.push("Invalid month in Date & Time (must be 01\u201312)");
-            } else if (year < 1900 || year > 2100) {
-              errors2.push("Invalid year in Date & Time (1900\u20132100)");
-            } else {
-              const daysInMonth = new Date(year, month, 0).getDate();
-              if (day < 1 || day > daysInMonth) {
-                errors2.push(`Invalid day in Date & Time for month ${month} (must be 01\u2013${daysInMonth})`);
-              } else if (hour < 0 || hour > 23) {
-                errors2.push("Invalid hour in Date & Time (must be 00\u201323)");
-              } else if (minute < 0 || minute > 59) {
-                errors2.push("Invalid minute in Date & Time (must be 00\u201359)");
-              } else if (second < 0 || second > 59) {
-                errors2.push("Invalid second in Date & Time (must be 00\u201359)");
-              } else {
-                const p22 = (n) => String(n).padStart(2, "0");
-                itemCreatedAt = `${year}-${p22(month)}-${p22(day)}T${p22(hour)}:${p22(minute)}:${p22(second)}.000Z`;
-                regDate = `${year}-${p22(month)}-${p22(day)}`;
-              }
-            }
+            itemCreatedAt = parsedDT.itemCreatedAt;
+            regDate = parsedDT.regDate;
           }
         }
         const dedupKey = `${name.toLowerCase()}||${mobile}`;
@@ -3687,6 +4325,7 @@ function validateCSVRows(type, rows, context = {}) {
         } else {
           validRows.push({
             __rowNum: rowNum,
+            uhid: row.uhid || void 0,
             name,
             age,
             gender,
@@ -3712,7 +4351,7 @@ function validateCSVRows(type, rows, context = {}) {
         (context.existingMedicines || []).map((m) => String(m.name || "").trim().toLowerCase())
       );
       const seenNames = /* @__PURE__ */ new Set();
-      for (const row of rows) {
+      for (const row of canonicalRows) {
         const rowNum = row.__rowNum;
         const errors2 = [];
         const name = String(row.name || "").trim();
@@ -3729,23 +4368,25 @@ function validateCSVRows(type, rows, context = {}) {
         } else if (name) {
           seenNames.add(nameKey);
         }
-        const sellingPriceStr = String(row.selling_price || "").trim();
-        const sellingPrice = Number(sellingPriceStr);
-        if (!sellingPriceStr) {
+        const rawSelling = cleanCurrency(row.selling_price);
+        const sellingPrice = Number(rawSelling);
+        if (!rawSelling) {
           errors2.push("Selling price is required");
         } else if (isNaN(sellingPrice) || sellingPrice < 0) {
           errors2.push("Selling price must be a valid positive number");
         }
         let purchasePrice = 0;
-        if (row.purchase_price !== void 0 && String(row.purchase_price).trim() !== "") {
-          purchasePrice = Number(row.purchase_price);
+        const rawPurchase = cleanCurrency(row.purchase_price);
+        if (rawPurchase) {
+          purchasePrice = Number(rawPurchase);
           if (isNaN(purchasePrice) || purchasePrice < 0) {
             errors2.push("Purchase price must be a valid positive number");
           }
         }
         let minStock = 0;
-        if (row.min_stock !== void 0 && String(row.min_stock).trim() !== "") {
-          minStock = parseInt(row.min_stock, 10);
+        const rawMinStock = String(row.min_stock ?? "").trim();
+        if (rawMinStock) {
+          minStock = parseInt(rawMinStock, 10);
           if (isNaN(minStock) || minStock < 0) {
             errors2.push("Min stock must be a non-negative integer");
           }
@@ -3755,6 +4396,7 @@ function validateCSVRows(type, rows, context = {}) {
         } else {
           validRows.push({
             __rowNum: rowNum,
+            medicine_code: row.medicine_code || void 0,
             name,
             generic: String(row.generic || "").trim(),
             category: String(row.category || "Other").trim(),
@@ -3776,7 +4418,7 @@ function validateCSVRows(type, rows, context = {}) {
         (context.existingCategories || []).map((c) => String(c.name || "").trim().toLowerCase())
       );
       const seenNames = /* @__PURE__ */ new Set();
-      for (const row of rows) {
+      for (const row of canonicalRows) {
         const rowNum = row.__rowNum;
         const errors2 = [];
         const name = String(row.name || "").trim();
@@ -3809,7 +4451,7 @@ function validateCSVRows(type, rows, context = {}) {
         (context.existingDoctors || []).map((d) => String(d.name || "").trim().toLowerCase())
       );
       const seenNames = /* @__PURE__ */ new Set();
-      for (const row of rows) {
+      for (const row of canonicalRows) {
         const rowNum = row.__rowNum;
         const errors2 = [];
         const name = String(row.name || "").trim();
@@ -3857,12 +4499,13 @@ function validateCSVRows(type, rows, context = {}) {
       const medMap = /* @__PURE__ */ new Map();
       medicines.forEach((m) => {
         medMap.set(String(m.name || "").trim().toLowerCase(), m);
+        if (m.id) medMap.set(String(m.id).trim().toLowerCase(), m);
       });
       const seenBatchKey = /* @__PURE__ */ new Set();
-      for (const row of rows) {
+      for (const row of canonicalRows) {
         const rowNum = row.__rowNum;
         const errors2 = [];
-        const medName = String(row.medicine_name || "").trim();
+        const medName = String(row.medicine_name || row.medicine_id || "").trim();
         let matchedMed = null;
         if (!medName) {
           errors2.push("Medicine name is required");
@@ -3876,26 +4519,25 @@ function validateCSVRows(type, rows, context = {}) {
         if (!batchNo) {
           errors2.push("Batch number is required");
         }
-        let expiry = String(row.expiry || "").trim();
-        if (!expiry) {
+        const rawExpiry = String(row.expiry || "").trim();
+        const expiry = parseFlexibleDate(rawExpiry);
+        if (!rawExpiry) {
           errors2.push("Expiry date is required");
-        } else if (isValidDDMMYYYY(expiry)) {
-          expiry = parseDDMMYYYY(expiry);
-        } else if (!isValidDate(expiry)) {
-          errors2.push("Expiry must be valid DD-MM-YYYY format");
+        } else if (!expiry) {
+          errors2.push("Expiry must be valid DD-MM-YYYY or YYYY-MM-DD format");
         }
-        let mfgDate = String(row.mfg_date || "").trim();
-        if (mfgDate) {
-          if (isValidDDMMYYYY(mfgDate)) {
-            mfgDate = parseDDMMYYYY(mfgDate);
-          } else if (!isValidDate(mfgDate)) {
-            errors2.push("Mfg date must be valid DD-MM-YYYY format");
+        const rawMfg = String(row.mfg_date || "").trim();
+        let mfgDate = today;
+        if (rawMfg) {
+          const parsedMfg = parseFlexibleDate(rawMfg);
+          if (!parsedMfg) {
+            errors2.push("Mfg date must be valid DD-MM-YYYY or YYYY-MM-DD format");
+          } else {
+            mfgDate = parsedMfg;
           }
           if (expiry && mfgDate > expiry) {
             errors2.push("Mfg date cannot be after expiry date");
           }
-        } else {
-          mfgDate = today;
         }
         const qtyStr = String(row.quantity || "").trim();
         const quantity = parseInt(qtyStr, 10);
@@ -3905,8 +4547,9 @@ function validateCSVRows(type, rows, context = {}) {
           errors2.push("Quantity must be a positive integer");
         }
         let purchasePrice = matchedMed?.purchase_price || 0;
-        if (row.purchase_price !== void 0 && String(row.purchase_price).trim() !== "") {
-          const p = Number(row.purchase_price);
+        const rawPrice = cleanCurrency(row.purchase_price);
+        if (rawPrice) {
+          const p = Number(rawPrice);
           if (isNaN(p) || p < 0) {
             errors2.push("Purchase price must be a valid positive number");
           } else {
@@ -3916,7 +4559,7 @@ function validateCSVRows(type, rows, context = {}) {
         if (matchedMed && batchNo) {
           const bKey = `${matchedMed.id}||${batchNo}`;
           if (seenBatchKey.has(bKey)) {
-            errors2.push(`Duplicate batch "${batchNo}" for medicine "${medName}" in this CSV`);
+            errors2.push(`Duplicate batch "${batchNo}" for medicine "${matchedMed.name}" in this CSV`);
           } else {
             seenBatchKey.add(bKey);
           }
@@ -3938,17 +4581,51 @@ function validateCSVRows(type, rows, context = {}) {
       }
       break;
     }
+    case "services": {
+      for (const row of canonicalRows) {
+        const rowNum = row.__rowNum;
+        const errors2 = [];
+        const name = String(row.name || "").trim();
+        if (!name) {
+          errors2.push("Service name is required");
+        } else if (name.length < 2) {
+          errors2.push("Service name must be at least 2 characters");
+        }
+        const rawPrice = cleanCurrency(row.price);
+        const price = Number(rawPrice);
+        if (!rawPrice) {
+          errors2.push("Service price is required");
+        } else if (isNaN(price) || price < 0) {
+          errors2.push("Price must be a valid positive number");
+        }
+        if (errors2.length > 0) {
+          invalidRows.push({ rowNum, row, errors: errors2 });
+        } else {
+          validRows.push({
+            __rowNum: rowNum,
+            service_code: row.service_code || void 0,
+            name,
+            type: String(row.type || "Consultation").trim(),
+            price: Math.round(price * 100) / 100,
+            description: String(row.description || "").trim()
+          });
+        }
+      }
+      break;
+    }
     default:
       throw new Error(`Unsupported validation type: ${type}`);
   }
   return {
-    total: rows.length,
+    total: canonicalRows.length,
     validRows,
     invalidRows,
+    mappingError: null,
     summary: {
-      total: rows.length,
+      total: canonicalRows.length,
       validCount: validRows.length,
-      invalidCount: invalidRows.length
+      invalidCount: invalidRows.length,
+      mappingError: false
     }
   };
 }
@@ -3956,6 +4633,7 @@ var BLOOD_GROUPS, GENDERS;
 var init_csvValidation = __esm({
   "src/utils/csvValidation.js"() {
     init_utils();
+    init_csvMapping();
     BLOOD_GROUPS = /* @__PURE__ */ new Set(["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"]);
     GENDERS = /* @__PURE__ */ new Set(["m", "f", "other", "male", "female"]);
   }
@@ -4013,9 +4691,12 @@ function CsvImportModal({
         setParseError("No data rows found in CSV file.");
         return;
       }
-      const res = validateCSVRows(type, parsed.rows, context);
+      const res = validateCSVRows(type, parsed.rows, {
+        ...context,
+        headers: parsed.rawHeaders || parsed.headers
+      });
       setValidationResult(res);
-      if (res.summary.validCount === 0 && res.summary.invalidCount > 0) {
+      if (res.mappingError || res.summary.validCount === 0 && res.summary.invalidCount > 0) {
         setActiveTab("errors");
       } else {
         setActiveTab("all");
@@ -4229,7 +4910,27 @@ function CsvImportModal({
       },
       /* @__PURE__ */ React8.createElement("div", { style: { display: "flex", alignItems: "center", gap: "8px" } }, /* @__PURE__ */ React8.createElement(FileSpreadsheet, { size: 18, style: { color: "var(--teal-600)" } }), /* @__PURE__ */ React8.createElement("div", null, /* @__PURE__ */ React8.createElement("span", { style: { fontWeight: 650, fontSize: "13.5px" } }, file.name), /* @__PURE__ */ React8.createElement("span", { style: { fontSize: "11.5px", color: "var(--text-3)", marginLeft: "8px" } }, "(", Math.round(file.size / 1024), " KB)"))),
       /* @__PURE__ */ React8.createElement("div", { style: { display: "flex", gap: "8px" } }, /* @__PURE__ */ React8.createElement(Badge, { tone: "gray" }, "Total: ", validationResult.summary.total), /* @__PURE__ */ React8.createElement(Badge, { tone: "green" }, "Ready: ", validationResult.summary.validCount), validationResult.summary.invalidCount > 0 && /* @__PURE__ */ React8.createElement(Badge, { tone: "red" }, "Errors: ", validationResult.summary.invalidCount))
-    ), validationResult.summary.invalidCount > 0 && validationResult.summary.validCount > 0 && /* @__PURE__ */ React8.createElement(
+    ), validationResult.mappingError && /* @__PURE__ */ React8.createElement(
+      "div",
+      {
+        style: {
+          display: "flex",
+          alignItems: "flex-start",
+          gap: "10px",
+          background: "var(--red-bg)",
+          color: "var(--red)",
+          border: "1px solid var(--border)",
+          borderRadius: "8px",
+          padding: "12px 14px",
+          fontSize: "13px",
+          lineHeight: "1.4",
+          fontWeight: 600,
+          marginBottom: "14px"
+        }
+      },
+      /* @__PURE__ */ React8.createElement(AlertTriangle3, { size: 18, style: { flexShrink: 0, marginTop: "2px" } }),
+      /* @__PURE__ */ React8.createElement("div", null, /* @__PURE__ */ React8.createElement("div", { style: { fontWeight: 700, marginBottom: "3px" } }, "CSV Header Mapping Error"), /* @__PURE__ */ React8.createElement("div", { style: { fontSize: "12.5px", fontWeight: 500, color: "var(--text)" } }, validationResult.mappingError))
+    ), !validationResult.mappingError && validationResult.summary.invalidCount > 0 && validationResult.summary.validCount > 0 && /* @__PURE__ */ React8.createElement(
       "div",
       {
         style: {
@@ -4248,7 +4949,7 @@ function CsvImportModal({
       },
       /* @__PURE__ */ React8.createElement(AlertTriangle3, { size: 16, style: { flexShrink: 0 } }),
       /* @__PURE__ */ React8.createElement("span", null, "Partial import enabled: ", /* @__PURE__ */ React8.createElement("strong", null, validationResult.summary.validCount, " valid record(s)"), " will be imported, while", " ", /* @__PURE__ */ React8.createElement("strong", null, validationResult.summary.invalidCount, " invalid row(s)"), " will be safely skipped.")
-    ), validationResult.summary.validCount === 0 && /* @__PURE__ */ React8.createElement(
+    ), !validationResult.mappingError && validationResult.summary.validCount === 0 && /* @__PURE__ */ React8.createElement(
       "div",
       {
         style: {
@@ -4296,7 +4997,7 @@ function CsvImportModal({
         rowKey: "__rowNum",
         empty: /* @__PURE__ */ React8.createElement("div", { style: { textAlign: "center", padding: "24px", color: "var(--text-3)" } }, "No valid rows ready for import.")
       }
-    )), activeTab === "errors" && /* @__PURE__ */ React8.createElement("div", { style: { maxHeight: "360px", overflowY: "auto", display: "flex", flexDirection: "column", gap: "8px" } }, validationResult.invalidRows.length === 0 ? /* @__PURE__ */ React8.createElement("div", { style: { textAlign: "center", padding: "30px", color: "var(--green)", fontWeight: 600 } }, /* @__PURE__ */ React8.createElement(CheckCircle22, { size: 24, style: { display: "inline-block", marginBottom: "6px" } }), /* @__PURE__ */ React8.createElement("div", null, "All rows passed validation! Zero errors found.")) : validationResult.invalidRows.map(({ rowNum, errors: errors2, row }) => /* @__PURE__ */ React8.createElement(
+    )), activeTab === "errors" && /* @__PURE__ */ React8.createElement("div", { style: { maxHeight: "360px", overflowY: "auto", display: "flex", flexDirection: "column", gap: "8px" } }, validationResult.mappingError ? /* @__PURE__ */ React8.createElement("div", { style: { textAlign: "center", padding: "28px 16px", color: "var(--red)", background: "var(--surface-2)", borderRadius: "8px", border: "1px solid var(--border)" } }, /* @__PURE__ */ React8.createElement(AlertTriangle3, { size: 28, style: { display: "inline-block", marginBottom: "8px" } }), /* @__PURE__ */ React8.createElement("div", { style: { fontWeight: 700, fontSize: "14px", marginBottom: "6px" } }, "Header Mapping Configuration Error"), /* @__PURE__ */ React8.createElement("div", { style: { fontSize: "12.5px", color: "var(--text-2)", maxWidth: "540px", margin: "0 auto" } }, validationResult.mappingError)) : validationResult.invalidRows.length === 0 ? /* @__PURE__ */ React8.createElement("div", { style: { textAlign: "center", padding: "30px", color: "var(--green)", fontWeight: 600 } }, /* @__PURE__ */ React8.createElement(CheckCircle22, { size: 24, style: { display: "inline-block", marginBottom: "6px" } }), /* @__PURE__ */ React8.createElement("div", null, "All rows passed validation! Zero errors found.")) : validationResult.invalidRows.map(({ rowNum, errors: errors2, row }) => /* @__PURE__ */ React8.createElement(
       "div",
       {
         key: rowNum,
@@ -4328,7 +5029,8 @@ var init_CsvImportModal = __esm({
       medicines: { endpoint: "medicines", dexie: "medicines" },
       medicine_categories: { endpoint: "medicine_categories", dexie: "medicine_categories" },
       doctors: { endpoint: "doctors", dexie: "doctors" },
-      inventory_batches: { endpoint: "medicine_batches", dexie: "batches" }
+      inventory_batches: { endpoint: "medicine_batches", dexie: "batches" },
+      services: { endpoint: "services", dexie: "services" }
     };
   }
 });
@@ -6299,7 +7001,7 @@ function BillViewer2({ full, onClose, allowCancel = true, allowPayment = true })
     try {
       await recordPayment(bill2.id, { amount: Number(amount), method }, user3.id);
       pushToast("success", `Payment of ${money2(Number(amount))} recorded`);
-      await syncAlerts(user3.id).catch(() => {
+      await syncAlerts2(user3.id).catch(() => {
       });
       onClose();
     } catch (e) {
@@ -6314,7 +7016,7 @@ function BillViewer2({ full, onClose, allowCancel = true, allowPayment = true })
       await cancelBill(bill2.id, reason, user3.id);
       pushToast("success", "Bill cancelled \u2014 medicine stock restored to original batches");
       setCancelOpen(false);
-      await syncAlerts(user3.id).catch(() => {
+      await syncAlerts2(user3.id).catch(() => {
       });
       onClose();
     } catch (e) {
@@ -6580,7 +7282,7 @@ function Billing() {
         next_visit: nextVisit
       }, user3.id);
       pushToast("success", `Bill ${bill2.bill_no} completed \u2014 inventory updated automatically`);
-      await syncAlerts(user3.id).catch(() => {
+      await syncAlerts2(user3.id).catch(() => {
       });
       setDone({ bill: bill2, items, payments: createdPayments || payments });
       setCart([]);
@@ -6788,7 +7490,7 @@ function PayModal({ bill: bill2, onClose }) {
     try {
       await recordPayment(bill2.bill.id, { amount: Number(amount), method, note }, user3.id);
       pushToast("success", `Payment of ${money2(Number(amount))} recorded against ${bill2.bill.bill_no}`);
-      await syncAlerts(user3.id).catch(() => {
+      await syncAlerts2(user3.id).catch(() => {
       });
       onClose();
     } catch (e) {
@@ -7140,6 +7842,13 @@ function Medicines() {
       list.map((m) => [m.medicine_code, m.name, m.generic, m.category, m.type, m.strength, m.unit, m.purchase_price, m.selling_price, m.min_stock, m.available, m.active ? "yes" : "no"])
     ), "text/csv");
   };
+  const exportCategoriesCSV = () => {
+    const list = cats || [];
+    download(`heeva-categories-${dkey()}.csv`, toCSV(
+      ["Category Name"],
+      list.map((c) => [c.name])
+    ), "text/csv");
+  };
   return /* @__PURE__ */ React17.createElement("div", { className: "page" }, /* @__PURE__ */ React17.createElement(
     PageHeader,
     {
@@ -7148,7 +7857,7 @@ function Medicines() {
       actions: /* @__PURE__ */ React17.createElement(React17.Fragment, null, activeTab === "medicines" && /* @__PURE__ */ React17.createElement(React17.Fragment, null, /* @__PURE__ */ React17.createElement(Btn, { variant: "ghost", icon: Upload3, onClick: () => setImportOpen(true) }, "Import CSV"), /* @__PURE__ */ React17.createElement(Btn, { variant: "ghost", icon: Download8, onClick: exportCSV }, "Export"), /* @__PURE__ */ React17.createElement(Btn, { variant: "accent", icon: Plus7, onClick: () => {
         setEditing(null);
         setFormOpen(true);
-      } }, "+ Add Medicine")), activeTab === "categories" && /* @__PURE__ */ React17.createElement("div", { style: { display: "flex", gap: "8px" } }, /* @__PURE__ */ React17.createElement(Btn, { variant: "ghost", icon: Upload3, onClick: () => setImportCatOpen(true) }, "Import CSV"), /* @__PURE__ */ React17.createElement(Btn, { variant: "accent", icon: Plus7, onClick: () => {
+      } }, "+ Add Medicine")), activeTab === "categories" && /* @__PURE__ */ React17.createElement("div", { style: { display: "flex", gap: "8px" } }, /* @__PURE__ */ React17.createElement(Btn, { variant: "ghost", icon: Upload3, onClick: () => setImportCatOpen(true) }, "Import CSV"), /* @__PURE__ */ React17.createElement(Btn, { variant: "ghost", icon: Download8, onClick: exportCategoriesCSV }, "Export"), /* @__PURE__ */ React17.createElement(Btn, { variant: "accent", icon: Plus7, onClick: () => {
         setEditingCat(null);
         setCatModalOpen(true);
       } }, "+ Add Category")))
@@ -7356,7 +8065,7 @@ var init_Medicines = __esm({
 // src/pages/Inventory.jsx
 import React18, { useState as useState15 } from "react";
 import { useLiveQuery as useLiveQuery11 } from "dexie-react-hooks";
-import { Boxes as Boxes2, PackagePlus as PackagePlus2, AlertTriangle as AlertTriangle5, Hourglass as Hourglass2, ScrollText, Wrench, Plus as Plus8, Pencil as Pencil4, Trash2 as Trash28, Upload as Upload4 } from "lucide-react";
+import { Boxes as Boxes2, PackagePlus as PackagePlus2, AlertTriangle as AlertTriangle5, Hourglass as Hourglass2, ScrollText, Wrench, Plus as Plus8, Pencil as Pencil4, Trash2 as Trash28, Upload as Upload4, Download as Download9 } from "lucide-react";
 function AdjustModal({ open, onClose }) {
   const { user: user3, pushToast } = useApp();
   const meds = useLiveQuery11(async () => (await db_default.medicines.where("active").equals(1).toArray()).sort((a, b) => a.name.localeCompare(b.name)), []);
@@ -7597,7 +8306,22 @@ function Inventory() {
     Card,
     {
       sub: "Batches are selected automatically at billing time \u2014 earliest expiry goes out first (FEFO)",
-      actions: /* @__PURE__ */ React18.createElement("div", { style: { display: "flex", gap: "8px" } }, /* @__PURE__ */ React18.createElement(Btn, { size: "sm", variant: "ghost", icon: Upload4, onClick: () => setImportBatchOpen(true) }, "Import Batches"), /* @__PURE__ */ React18.createElement(Btn, { size: "sm", variant: "accent", icon: Plus8, onClick: () => {
+      actions: /* @__PURE__ */ React18.createElement("div", { style: { display: "flex", gap: "8px" } }, /* @__PURE__ */ React18.createElement(Btn, { size: "sm", variant: "ghost", icon: Upload4, onClick: () => setImportBatchOpen(true) }, "Import Batches"), /* @__PURE__ */ React18.createElement(
+        Btn,
+        {
+          size: "sm",
+          variant: "ghost",
+          icon: Download9,
+          onClick: () => {
+            const list = batches || [];
+            download(`heeva-inventory-batches-${dkey()}.csv`, toCSV(
+              ["Medicine Name", "Batch Number", "Mfg Date", "Expiry Date", "Received Quantity", "Purchase Price"],
+              list.map((b) => [b.medicine?.name || "", b.batch_no, b.mfg_date || "", b.expiry || "", b.quantity, b.purchase_price || 0])
+            ), "text/csv");
+          }
+        },
+        "Export"
+      ), /* @__PURE__ */ React18.createElement(Btn, { size: "sm", variant: "accent", icon: Plus8, onClick: () => {
         setEditingBatch(null);
         setBatchModalOpen(true);
       } }, "+ Add Batch"))
@@ -7719,7 +8443,6 @@ var init_Inventory = __esm({
     init_AppContext();
     init_ui();
     init_inventory();
-    init_notifications();
     init_utils();
     init_CsvImportModal();
     TXN_TONE = {
@@ -7787,7 +8510,7 @@ function ReturnModal({ open, onClose }) {
     try {
       const r = await createReturn({ bill_id: bill2.bill.id, items, reason, refund_method: refundMethod, refund_amount: Number(refundAmt) || 0 }, user3.id);
       pushToast("success", `Return ${r.return_no} processed \u2014 stock restored to batches`);
-      await syncAlerts(user3.id).catch(() => {
+      await syncAlerts2(user3.id).catch(() => {
       });
       onClose();
     } catch (e) {
@@ -7938,7 +8661,7 @@ var init_expenses = __esm({
 // src/pages/Expenses.jsx
 import React20, { useState as useState17 } from "react";
 import { useLiveQuery as useLiveQuery13 } from "dexie-react-hooks";
-import { Wallet as Wallet3, Plus as Plus10, Download as Download9, CircleSlash, Trash2 as Trash29 } from "lucide-react";
+import { Wallet as Wallet3, Plus as Plus10, Download as Download10, CircleSlash, Trash2 as Trash29 } from "lucide-react";
 function Expenses() {
   const { user: user3, settings, pushToast } = useApp();
   const [modal, setModal] = useState17(false);
@@ -7990,7 +8713,7 @@ function Expenses() {
     {
       title: "Expenses",
       sub: `This month (MTD): ${fmtMoney(totals?.total || 0, settings.currency)} \xB7 financial records are never deleted, only voided`,
-      actions: /* @__PURE__ */ React20.createElement(React20.Fragment, null, /* @__PURE__ */ React20.createElement(Btn, { variant: "ghost", icon: Download9, onClick: exportCSV }, "Export"), /* @__PURE__ */ React20.createElement(Btn, { variant: "accent", icon: Plus10, onClick: () => setModal(true) }, "+ Record Expense"))
+      actions: /* @__PURE__ */ React20.createElement(React20.Fragment, null, /* @__PURE__ */ React20.createElement(Btn, { variant: "ghost", icon: Download10, onClick: exportCSV }, "Export"), /* @__PURE__ */ React20.createElement(Btn, { variant: "accent", icon: Plus10, onClick: () => setModal(true) }, "+ Record Expense"))
     }
   ), totals && Object.keys(totals.byCat).length > 0 && /* @__PURE__ */ React20.createElement("div", { className: "cat-chips" }, Object.entries(totals.byCat).map(([c, v]) => /* @__PURE__ */ React20.createElement("span", { key: c, className: "cat-chip" }, c, ": ", /* @__PURE__ */ React20.createElement("b", null, fmtMoney(v, settings.currency))))), /* @__PURE__ */ React20.createElement(Card, null, /* @__PURE__ */ React20.createElement("div", { className: "toolbar" }, /* @__PURE__ */ React20.createElement(Select, { value: statusF, onChange: (e) => setStatusF(e.target.value), className: "toolbar-select" }, /* @__PURE__ */ React20.createElement("option", { value: "active" }, "Active"), /* @__PURE__ */ React20.createElement("option", { value: "void" }, "Voided"), /* @__PURE__ */ React20.createElement("option", { value: "all" }, "All")), /* @__PURE__ */ React20.createElement(Select, { value: catF, onChange: (e) => setCatF(e.target.value), className: "toolbar-select" }, /* @__PURE__ */ React20.createElement("option", { value: "" }, "All categories"), EXPENSE_CATEGORIES.map((c) => /* @__PURE__ */ React20.createElement("option", { key: c }, c)))), /* @__PURE__ */ React20.createElement(
     DataTable,
@@ -8091,7 +8814,7 @@ var init_Expenses = __esm({
 // src/pages/Reports.jsx
 import React21, { useState as useState18, useMemo as useMemo7 } from "react";
 import { useLiveQuery as useLiveQuery14 } from "dexie-react-hooks";
-import { BarChart3 as BarChart32, Download as Download10, Printer as Printer6, Users as Users3, TrendingUp as TrendingUp2, Pill as Pill5, Wallet as Wallet4, UserPlus as UserPlus5, RotateCcw, Search as Search8 } from "lucide-react";
+import { BarChart3 as BarChart32, Download as Download11, Printer as Printer6, Users as Users3, TrendingUp as TrendingUp2, Pill as Pill5, Wallet as Wallet4, UserPlus as UserPlus5, RotateCcw, Search as Search8 } from "lucide-react";
 function RangeBar({ from, to, setFrom, setTo }) {
   return /* @__PURE__ */ React21.createElement("div", { className: "toolbar" }, PRESETS.map((p) => /* @__PURE__ */ React21.createElement(Btn, { key: p.label, size: "sm", variant: from === p.get()[0] && to === p.get()[1] ? "primary" : "ghost", onClick: () => {
     const [f, t] = p.get();
@@ -8117,7 +8840,7 @@ function SalesTab({ from, to, setFrom, setTo, settings }) {
     Card,
     {
       title: "Sales Report",
-      actions: /* @__PURE__ */ React21.createElement(React21.Fragment, null, /* @__PURE__ */ React21.createElement(Seg, { size: "sm", value: group, onChange: setGroup, options: [{ value: "day", label: "Daily" }, { value: "week", label: "Weekly" }, { value: "month", label: "Monthly" }] }), /* @__PURE__ */ React21.createElement(Btn, { size: "sm", variant: "ghost", icon: Download10, onClick: () => download(`heeva-sales-${from}-${to}.csv`, toCSV(cols.map((c) => c.label), data?.rows.map((r) => [label(r.key), r.bills, r.revenue, r.paid, r.pending, r.expenses, r.profit])), "text/csv") }, "Export"), /* @__PURE__ */ React21.createElement(Btn, { size: "sm", variant: "ghost", icon: Printer6, onClick: () => printReport({ title: `Sales Report \u2014 ${group}`, subtitle: `${fmtDate(from)} to ${fmtDate(to)}`, columns: cols, rows: data?.rows, totals: { bills: data?.totals.bills, revenue: money2(data?.totals.revenue), paid: money2(data?.totals.paid), pending: money2(data?.totals.pending), expenses: money2(data?.totals.expenses), profit: money2(data?.totals.profit) }, settings }) }, "Print"))
+      actions: /* @__PURE__ */ React21.createElement(React21.Fragment, null, /* @__PURE__ */ React21.createElement(Seg, { size: "sm", value: group, onChange: setGroup, options: [{ value: "day", label: "Daily" }, { value: "week", label: "Weekly" }, { value: "month", label: "Monthly" }] }), /* @__PURE__ */ React21.createElement(Btn, { size: "sm", variant: "ghost", icon: Download11, onClick: () => download(`heeva-sales-${from}-${to}.csv`, toCSV(cols.map((c) => c.label), data?.rows.map((r) => [label(r.key), r.bills, r.revenue, r.paid, r.pending, r.expenses, r.profit])), "text/csv") }, "Export"), /* @__PURE__ */ React21.createElement(Btn, { size: "sm", variant: "ghost", icon: Printer6, onClick: () => printReport({ title: `Sales Report \u2014 ${group}`, subtitle: `${fmtDate(from)} to ${fmtDate(to)}`, columns: cols, rows: data?.rows, totals: { bills: data?.totals.bills, revenue: money2(data?.totals.revenue), paid: money2(data?.totals.paid), pending: money2(data?.totals.pending), expenses: money2(data?.totals.expenses), profit: money2(data?.totals.profit) }, settings }) }, "Print"))
     },
     /* @__PURE__ */ React21.createElement(RangeBar, { from, to, setFrom, setTo }),
     data && /* @__PURE__ */ React21.createElement("div", { className: "rep-summary" }, /* @__PURE__ */ React21.createElement("span", { className: "cat-chip" }, "Bills: ", /* @__PURE__ */ React21.createElement("b", null, data.totals.bills)), /* @__PURE__ */ React21.createElement("span", { className: "cat-chip" }, "Revenue: ", /* @__PURE__ */ React21.createElement("b", null, money2(data.totals.revenue))), /* @__PURE__ */ React21.createElement("span", { className: "cat-chip" }, "Collected: ", /* @__PURE__ */ React21.createElement("b", null, money2(data.totals.paid))), /* @__PURE__ */ React21.createElement("span", { className: "cat-chip" }, "Pending: ", /* @__PURE__ */ React21.createElement("b", null, money2(data.totals.pending))), /* @__PURE__ */ React21.createElement("span", { className: "cat-chip" }, "Expenses: ", /* @__PURE__ */ React21.createElement("b", null, money2(data.totals.expenses))), /* @__PURE__ */ React21.createElement("span", { className: "cat-chip" }, "Est. Profit: ", /* @__PURE__ */ React21.createElement("b", { className: data.totals.profit < 0 ? "val-red" : "val-green" }, money2(data.totals.profit)))),
@@ -8180,7 +8903,7 @@ function PatientsTab({ from, to, setFrom, setTo, settings }) {
     {
       title: "Patient Report",
       sub: `New & returning patients between ${fmtDate(from)} and ${fmtDate(to)}`,
-      actions: /* @__PURE__ */ React21.createElement(React21.Fragment, null, /* @__PURE__ */ React21.createElement(Btn, { size: "sm", variant: "ghost", icon: Download10, onClick: exportPatients }, "Export"), /* @__PURE__ */ React21.createElement(Btn, { size: "sm", variant: "ghost", icon: Printer6, onClick: printPatients }, "Print"))
+      actions: /* @__PURE__ */ React21.createElement(React21.Fragment, null, /* @__PURE__ */ React21.createElement(Btn, { size: "sm", variant: "ghost", icon: Download11, onClick: exportPatients }, "Export"), /* @__PURE__ */ React21.createElement(Btn, { size: "sm", variant: "ghost", icon: Printer6, onClick: printPatients }, "Print"))
     },
     /* @__PURE__ */ React21.createElement(RangeBar, { from, to, setFrom, setTo }),
     data && /* @__PURE__ */ React21.createElement("div", { className: "rep-summary" }, /* @__PURE__ */ React21.createElement("span", { className: "cat-chip" }, /* @__PURE__ */ React21.createElement(UserPlus5, { size: 13 }), " New patients: ", /* @__PURE__ */ React21.createElement("b", null, data.new_patients.length)), /* @__PURE__ */ React21.createElement("span", { className: "cat-chip" }, /* @__PURE__ */ React21.createElement(Users3, { size: 13 }), " Unique patients visited: ", /* @__PURE__ */ React21.createElement("b", null, data.unique_visits)), /* @__PURE__ */ React21.createElement("span", { className: "cat-chip" }, "Total visits: ", /* @__PURE__ */ React21.createElement("b", null, data.total_visits)), /* @__PURE__ */ React21.createElement("span", { className: "cat-chip" }, /* @__PURE__ */ React21.createElement(RotateCcw, { size: 13 }), " Returning: ", /* @__PURE__ */ React21.createElement("b", null, data.returning.length))),
@@ -8340,7 +9063,7 @@ function MedicinesTab({ from, to, setFrom, setTo, settings }) {
     {
       title: "Top Selling Medicines",
       sub: `Quantity & revenue \xB7 ${fmtDate(from)} to ${fmtDate(to)}`,
-      actions: /* @__PURE__ */ React21.createElement(React21.Fragment, null, /* @__PURE__ */ React21.createElement(Btn, { size: "sm", variant: "ghost", icon: Download10, onClick: exportTop }, "Export"), /* @__PURE__ */ React21.createElement(Btn, { size: "sm", variant: "ghost", icon: Printer6, onClick: printTop }, "Print"))
+      actions: /* @__PURE__ */ React21.createElement(React21.Fragment, null, /* @__PURE__ */ React21.createElement(Btn, { size: "sm", variant: "ghost", icon: Download11, onClick: exportTop }, "Export"), /* @__PURE__ */ React21.createElement(Btn, { size: "sm", variant: "ghost", icon: Printer6, onClick: printTop }, "Print"))
     },
     /* @__PURE__ */ React21.createElement(RangeBar, { from, to, setFrom, setTo }),
     /* @__PURE__ */ React21.createElement(
@@ -8362,7 +9085,7 @@ function MedicinesTab({ from, to, setFrom, setTo, settings }) {
     {
       title: "Low & Out of Stock",
       sub: `Minimum level per medicine \xB7 default ${settings.low_stock_default}`,
-      actions: /* @__PURE__ */ React21.createElement(React21.Fragment, null, /* @__PURE__ */ React21.createElement(Btn, { size: "sm", variant: "ghost", icon: Download10, onClick: exportLow }, "Export"), /* @__PURE__ */ React21.createElement(Btn, { size: "sm", variant: "ghost", icon: Printer6, onClick: printLow }, "Print"))
+      actions: /* @__PURE__ */ React21.createElement(React21.Fragment, null, /* @__PURE__ */ React21.createElement(Btn, { size: "sm", variant: "ghost", icon: Download11, onClick: exportLow }, "Export"), /* @__PURE__ */ React21.createElement(Btn, { size: "sm", variant: "ghost", icon: Printer6, onClick: printLow }, "Print"))
     },
     /* @__PURE__ */ React21.createElement(
       DataTable,
@@ -8384,7 +9107,7 @@ function MedicinesTab({ from, to, setFrom, setTo, settings }) {
     {
       title: "Expiry Report",
       sub: "Expired stock and near-expiry batches with on-hand value",
-      actions: /* @__PURE__ */ React21.createElement(React21.Fragment, null, /* @__PURE__ */ React21.createElement(Btn, { size: "sm", variant: "ghost", icon: Download10, onClick: exportExp }, "Export"), /* @__PURE__ */ React21.createElement(Btn, { size: "sm", variant: "ghost", icon: Printer6, onClick: printExp }, "Print"))
+      actions: /* @__PURE__ */ React21.createElement(React21.Fragment, null, /* @__PURE__ */ React21.createElement(Btn, { size: "sm", variant: "ghost", icon: Download11, onClick: exportExp }, "Export"), /* @__PURE__ */ React21.createElement(Btn, { size: "sm", variant: "ghost", icon: Printer6, onClick: printExp }, "Print"))
     },
     /* @__PURE__ */ React21.createElement(
       DataTable,
@@ -8473,7 +9196,7 @@ function FinancialTab({ from, to, setFrom, setTo, settings }) {
     Card,
     {
       title: "Financial Summary",
-      actions: /* @__PURE__ */ React21.createElement(React21.Fragment, null, /* @__PURE__ */ React21.createElement(Btn, { size: "sm", variant: "ghost", icon: Download10, onClick: exportFinancial }, "Export"), /* @__PURE__ */ React21.createElement(Btn, { size: "sm", variant: "ghost", icon: Printer6, onClick: printFinancial }, "Print"))
+      actions: /* @__PURE__ */ React21.createElement(React21.Fragment, null, /* @__PURE__ */ React21.createElement(Btn, { size: "sm", variant: "ghost", icon: Download11, onClick: exportFinancial }, "Export"), /* @__PURE__ */ React21.createElement(Btn, { size: "sm", variant: "ghost", icon: Printer6, onClick: printFinancial }, "Print"))
     },
     /* @__PURE__ */ React21.createElement(RangeBar, { from, to, setFrom, setTo }),
     data && /* @__PURE__ */ React21.createElement("div", { className: "rep-summary" }, /* @__PURE__ */ React21.createElement("span", { className: "cat-chip" }, /* @__PURE__ */ React21.createElement(TrendingUp2, { size: 13 }), " Revenue: ", /* @__PURE__ */ React21.createElement("b", null, money2(data.revenue))), /* @__PURE__ */ React21.createElement("span", { className: "cat-chip" }, /* @__PURE__ */ React21.createElement(Wallet4, { size: 13 }), " Expenses: ", /* @__PURE__ */ React21.createElement("b", null, money2(data.expenses))), /* @__PURE__ */ React21.createElement("span", { className: "cat-chip" }, "Est. Profit: ", /* @__PURE__ */ React21.createElement("b", { className: data.profit < 0 ? "val-red" : "val-green" }, money2(data.profit))), /* @__PURE__ */ React21.createElement("span", { className: "cat-chip" }, "Pending receivables: ", /* @__PURE__ */ React21.createElement("b", null, money2(filteredPending.reduce((s, p) => s + p.due, 0))), " (", filteredPending.length, " bills)")),
@@ -8633,7 +9356,7 @@ var init_Alerts = __esm({
 // src/pages/Staff.jsx
 import React23, { useState as useState20, useEffect as useEffect13 } from "react";
 import { useLiveQuery as useLiveQuery16 } from "dexie-react-hooks";
-import { Pencil as Pencil5, Archive as Archive2, Trash2 as Trash210, Plus as Plus11, Upload as Upload5 } from "lucide-react";
+import { Pencil as Pencil5, Archive as Archive2, Trash2 as Trash210, Plus as Plus11, Upload as Upload5, Download as Download12 } from "lucide-react";
 function DoctorModal({ open, onClose, editing }) {
   const { user: me, pushToast } = useApp();
   const [form, setForm] = useState20({ name: "", qualification: "", specialization: "", phone: "", email: "" });
@@ -8689,7 +9412,14 @@ function Staff() {
     return list.sort((a, b) => a.name.localeCompare(b.name));
   }, []);
   const logs = useLiveQuery16(() => db_default.activity_logs.orderBy("at").reverse().limit(100).toArray(), []);
-  return /* @__PURE__ */ React23.createElement("div", { className: "page" }, /* @__PURE__ */ React23.createElement(PageHeader, { title: "Staff & Users", sub: "Doctors directory \xB7 audit logging", actions: tab === "doctors" && /* @__PURE__ */ React23.createElement("div", { style: { display: "flex", gap: "8px" } }, /* @__PURE__ */ React23.createElement(Btn, { variant: "ghost", icon: Upload5, onClick: () => setImportModal(true) }, "Import CSV"), /* @__PURE__ */ React23.createElement(Btn, { variant: "accent", icon: Plus11, onClick: () => {
+  const exportCSV = () => {
+    const list = doctors || [];
+    download(`heeva-doctors-${dkey()}.csv`, toCSV(
+      ["Doctor Full Name", "Qualification", "Specialization", "Phone / Mobile", "Email Address", "Status"],
+      list.map((d) => [d.name, d.qualification || "", d.specialization || "", d.phone || "", d.email || "", d.active ? "Active" : "Archived"])
+    ), "text/csv");
+  };
+  return /* @__PURE__ */ React23.createElement("div", { className: "page" }, /* @__PURE__ */ React23.createElement(PageHeader, { title: "Staff & Users", sub: "Doctors directory \xB7 audit logging", actions: tab === "doctors" && /* @__PURE__ */ React23.createElement("div", { style: { display: "flex", gap: "8px" } }, /* @__PURE__ */ React23.createElement(Btn, { variant: "ghost", icon: Upload5, onClick: () => setImportModal(true) }, "Import CSV"), /* @__PURE__ */ React23.createElement(Btn, { variant: "ghost", icon: Download12, onClick: exportCSV }, "Export"), /* @__PURE__ */ React23.createElement(Btn, { variant: "accent", icon: Plus11, onClick: () => {
     setEditingDoctor(null);
     setDoctorModal(true);
   } }, "+ Add Doctor")) }), /* @__PURE__ */ React23.createElement(Tabs, { active: tab, onChange: setTab, tabs: [{ key: "doctors", label: "Doctors", badge: doctors?.length }, { key: "audit", label: "Activity Log", badge: "recent" }] }), tab === "doctors" && /* @__PURE__ */ React23.createElement(Card, { title: "Doctors Directory", sub: "Consulting doctors, qualifications & specialties" }, /* @__PURE__ */ React23.createElement(DataTable, { columns: [
@@ -8743,7 +9473,7 @@ import {
   Database,
   ShieldCheck,
   Upload as Upload6,
-  Download as Download11,
+  Download as Download13,
   RotateCcw as RotateCcw2,
   AlertTriangle as AlertTriangle7,
   KeyRound,
@@ -8956,7 +9686,7 @@ function SettingsPage() {
       pageSize: 8,
       empty: /* @__PURE__ */ React24.createElement(EmptyState, { compact: true, title: "No clinic services configured", message: "Add consultation fees or medical services to include in patient bills." })
     }
-  ))), tab === "uhid" && /* @__PURE__ */ React24.createElement(Section, { icon: Fingerprint, title: "UHID Configuration", sub: "Unique Health Identification format \u2014 applied to NEW registrations only; existing UHIDs never change" }, /* @__PURE__ */ React24.createElement("div", { className: "form-grid" }, /* @__PURE__ */ React24.createElement(Field, { label: "UHID Prefix" }, /* @__PURE__ */ React24.createElement(Input, { value: f.uhid_prefix, onChange: set("uhid_prefix"), placeholder: "HC" })), /* @__PURE__ */ React24.createElement(Field, { label: "Include Registration Year" }, /* @__PURE__ */ React24.createElement(Toggle, { checked: !!f.uhid_include_year, onChange: setBool("uhid_include_year"), label: f.uhid_include_year ? "Yes \u2014 HC-2026-000001" : "No \u2014 HC-000001" })), /* @__PURE__ */ React24.createElement(Field, { label: "Number Padding (digits)" }, /* @__PURE__ */ React24.createElement(Input, { type: "number", min: "3", max: "10", value: f.uhid_padding, onChange: set("uhid_padding") })), /* @__PURE__ */ React24.createElement(Field, { label: "Starting Number", hint: "Applies to the first UHID of a new year/scope" }, /* @__PURE__ */ React24.createElement(Input, { type: "number", min: "1", value: f.uhid_start, onChange: set("uhid_start") })), /* @__PURE__ */ React24.createElement("div", { className: "set-preview fg-2" }, /* @__PURE__ */ React24.createElement("span", { className: "set-preview-label" }, "Next UHID preview"), /* @__PURE__ */ React24.createElement(Badge, { tone: "teal", className: "set-preview-badge" }, uhidPreview))), /* @__PURE__ */ React24.createElement("div", { className: "uhid-rules" }, /* @__PURE__ */ React24.createElement(ShieldCheck, { size: 16 }), /* @__PURE__ */ React24.createElement("span", null, "UHID is assigned once, permanently linked to the patient, stored with a unique database constraint, and appears on bills, prescriptions, receipts and history.")), /* @__PURE__ */ React24.createElement("div", { className: "set-save" }, /* @__PURE__ */ React24.createElement(Btn, { variant: "accent", disabled: busy, onClick: () => save(["uhid_prefix", "uhid_include_year", "uhid_padding", "uhid_start"]) }, busy ? "Saving\u2026" : "Save UHID settings"))), tab === "inventory" && /* @__PURE__ */ React24.createElement(Section, { icon: Boxes3, title: "Inventory Rules", sub: "Low-stock thresholds, expiry alert windows and batch selection" }, /* @__PURE__ */ React24.createElement("div", { className: "form-grid" }, /* @__PURE__ */ React24.createElement(Field, { label: "Default Low-Stock Level" }, /* @__PURE__ */ React24.createElement(Input, { type: "number", min: "0", value: f.low_stock_default, onChange: set("low_stock_default") })), /* @__PURE__ */ React24.createElement(Field, { label: "Expiry Alert Window 1 (days)" }, /* @__PURE__ */ React24.createElement(Input, { type: "number", min: "1", value: f.expiry_30, onChange: set("expiry_30") })), /* @__PURE__ */ React24.createElement(Field, { label: "Expiry Alert Window 2 (days)" }, /* @__PURE__ */ React24.createElement(Input, { type: "number", min: "1", value: f.expiry_60, onChange: set("expiry_60") })), /* @__PURE__ */ React24.createElement(Field, { label: "Expiry Alert Window 3 (days)" }, /* @__PURE__ */ React24.createElement(Input, { type: "number", min: "1", value: f.expiry_90, onChange: set("expiry_90") })), /* @__PURE__ */ React24.createElement(Field, { label: "FEFO (First Expired First Out)" }, /* @__PURE__ */ React24.createElement(Toggle, { checked: !!f.fefo, onChange: setBool("fefo"), label: f.fefo ? "Enabled \u2014 billing picks earliest-expiry batch" : "Disabled \u2014 FIFO by manufacturing date" }))), /* @__PURE__ */ React24.createElement("div", { className: "set-save" }, /* @__PURE__ */ React24.createElement(Btn, { variant: "accent", disabled: busy, onClick: () => save(["low_stock_default", "expiry_30", "expiry_60", "expiry_90", "fefo"]) }, busy ? "Saving\u2026" : "Save inventory rules"))), tab === "print" && /* @__PURE__ */ React24.createElement(Section, { icon: Printer7, title: "Print Settings", sub: "A4 landscape payment receipt with clinic and patient copies" }, /* @__PURE__ */ React24.createElement("div", { className: "set-preview" }, /* @__PURE__ */ React24.createElement("span", { className: "set-preview-label" }, "Available format"), /* @__PURE__ */ React24.createElement("div", { className: "set-chips" }, /* @__PURE__ */ React24.createElement(Badge, { tone: "teal" }, "A4 landscape \xB7 2 copies"), /* @__PURE__ */ React24.createElement(Badge, { tone: "gray" }, "Clinic copy"), /* @__PURE__ */ React24.createElement(Badge, { tone: "gray" }, "Patient copy")))), tab === "appearance" && /* @__PURE__ */ React24.createElement(Section, { icon: Palette, title: "Appearance", sub: "Theme and language" }, /* @__PURE__ */ React24.createElement("div", { className: "form-grid" }, /* @__PURE__ */ React24.createElement(Field, { label: "Theme" }, /* @__PURE__ */ React24.createElement("div", { className: "theme-opts" }, /* @__PURE__ */ React24.createElement(Btn, { variant: theme === "light" ? "primary" : "ghost", onClick: () => setTheme("light") }, "\u2600\uFE0F Light"), /* @__PURE__ */ React24.createElement(Btn, { variant: theme === "dark" ? "primary" : "ghost", onClick: () => setTheme("dark") }, "\u{1F319} Dark"))), /* @__PURE__ */ React24.createElement(Field, { label: "Language", hint: "Gujarati UI is in progress \u2014 English labels are used as fallback" }, /* @__PURE__ */ React24.createElement(Select, { value: lang, onChange: (e) => setLang(e.target.value) }, /* @__PURE__ */ React24.createElement("option", { value: "en" }, "English"), /* @__PURE__ */ React24.createElement("option", { value: "gu" }, "\u0A97\u0AC1\u0A9C\u0AB0\u0ABE\u0AA4\u0AC0 (Gujarati)"))))), tab === "data" && /* @__PURE__ */ React24.createElement(Section, { icon: Database, title: "Data, Backup & Maintenance", sub: "All data is stored locally on this device (offline-first). Export regular backups." }, /* @__PURE__ */ React24.createElement("div", { className: "data-grid" }, /* @__PURE__ */ React24.createElement("div", { className: "data-tile" }, /* @__PURE__ */ React24.createElement("span", null, "Patients"), /* @__PURE__ */ React24.createElement("b", null, counts?.patients ?? "\u2014")), /* @__PURE__ */ React24.createElement("div", { className: "data-tile" }, /* @__PURE__ */ React24.createElement("span", null, "Bills"), /* @__PURE__ */ React24.createElement("b", null, counts?.bills ?? "\u2014")), /* @__PURE__ */ React24.createElement("div", { className: "data-tile" }, /* @__PURE__ */ React24.createElement("span", null, "Medicines"), /* @__PURE__ */ React24.createElement("b", null, counts?.meds ?? "\u2014"))), /* @__PURE__ */ React24.createElement("div", { className: "data-actions" }, /* @__PURE__ */ React24.createElement(Btn, { variant: "outline", icon: Download11, onClick: exportBackup }, "Export Full Backup (JSON)"), /* @__PURE__ */ React24.createElement(Btn, { variant: "outline", icon: Upload6, onClick: () => importRef.current?.click() }, "Import Backup"), /* @__PURE__ */ React24.createElement("input", { type: "file", accept: "application/json", hidden: true, ref: importRef, onChange: (e) => {
+  ))), tab === "uhid" && /* @__PURE__ */ React24.createElement(Section, { icon: Fingerprint, title: "UHID Configuration", sub: "Unique Health Identification format \u2014 applied to NEW registrations only; existing UHIDs never change" }, /* @__PURE__ */ React24.createElement("div", { className: "form-grid" }, /* @__PURE__ */ React24.createElement(Field, { label: "UHID Prefix" }, /* @__PURE__ */ React24.createElement(Input, { value: f.uhid_prefix, onChange: set("uhid_prefix"), placeholder: "HC" })), /* @__PURE__ */ React24.createElement(Field, { label: "Include Registration Year" }, /* @__PURE__ */ React24.createElement(Toggle, { checked: !!f.uhid_include_year, onChange: setBool("uhid_include_year"), label: f.uhid_include_year ? "Yes \u2014 HC-2026-000001" : "No \u2014 HC-000001" })), /* @__PURE__ */ React24.createElement(Field, { label: "Number Padding (digits)" }, /* @__PURE__ */ React24.createElement(Input, { type: "number", min: "3", max: "10", value: f.uhid_padding, onChange: set("uhid_padding") })), /* @__PURE__ */ React24.createElement(Field, { label: "Starting Number", hint: "Applies to the first UHID of a new year/scope" }, /* @__PURE__ */ React24.createElement(Input, { type: "number", min: "1", value: f.uhid_start, onChange: set("uhid_start") })), /* @__PURE__ */ React24.createElement("div", { className: "set-preview fg-2" }, /* @__PURE__ */ React24.createElement("span", { className: "set-preview-label" }, "Next UHID preview"), /* @__PURE__ */ React24.createElement(Badge, { tone: "teal", className: "set-preview-badge" }, uhidPreview))), /* @__PURE__ */ React24.createElement("div", { className: "uhid-rules" }, /* @__PURE__ */ React24.createElement(ShieldCheck, { size: 16 }), /* @__PURE__ */ React24.createElement("span", null, "UHID is assigned once, permanently linked to the patient, stored with a unique database constraint, and appears on bills, prescriptions, receipts and history.")), /* @__PURE__ */ React24.createElement("div", { className: "set-save" }, /* @__PURE__ */ React24.createElement(Btn, { variant: "accent", disabled: busy, onClick: () => save(["uhid_prefix", "uhid_include_year", "uhid_padding", "uhid_start"]) }, busy ? "Saving\u2026" : "Save UHID settings"))), tab === "inventory" && /* @__PURE__ */ React24.createElement(Section, { icon: Boxes3, title: "Inventory Rules", sub: "Low-stock thresholds, expiry alert windows and batch selection" }, /* @__PURE__ */ React24.createElement("div", { className: "form-grid" }, /* @__PURE__ */ React24.createElement(Field, { label: "Default Low-Stock Level" }, /* @__PURE__ */ React24.createElement(Input, { type: "number", min: "0", value: f.low_stock_default, onChange: set("low_stock_default") })), /* @__PURE__ */ React24.createElement(Field, { label: "Expiry Alert Window 1 (days)" }, /* @__PURE__ */ React24.createElement(Input, { type: "number", min: "1", value: f.expiry_30, onChange: set("expiry_30") })), /* @__PURE__ */ React24.createElement(Field, { label: "Expiry Alert Window 2 (days)" }, /* @__PURE__ */ React24.createElement(Input, { type: "number", min: "1", value: f.expiry_60, onChange: set("expiry_60") })), /* @__PURE__ */ React24.createElement(Field, { label: "Expiry Alert Window 3 (days)" }, /* @__PURE__ */ React24.createElement(Input, { type: "number", min: "1", value: f.expiry_90, onChange: set("expiry_90") })), /* @__PURE__ */ React24.createElement(Field, { label: "FEFO (First Expired First Out)" }, /* @__PURE__ */ React24.createElement(Toggle, { checked: !!f.fefo, onChange: setBool("fefo"), label: f.fefo ? "Enabled \u2014 billing picks earliest-expiry batch" : "Disabled \u2014 FIFO by manufacturing date" }))), /* @__PURE__ */ React24.createElement("div", { className: "set-save" }, /* @__PURE__ */ React24.createElement(Btn, { variant: "accent", disabled: busy, onClick: () => save(["low_stock_default", "expiry_30", "expiry_60", "expiry_90", "fefo"]) }, busy ? "Saving\u2026" : "Save inventory rules"))), tab === "print" && /* @__PURE__ */ React24.createElement(Section, { icon: Printer7, title: "Print Settings", sub: "A4 landscape payment receipt with clinic and patient copies" }, /* @__PURE__ */ React24.createElement("div", { className: "set-preview" }, /* @__PURE__ */ React24.createElement("span", { className: "set-preview-label" }, "Available format"), /* @__PURE__ */ React24.createElement("div", { className: "set-chips" }, /* @__PURE__ */ React24.createElement(Badge, { tone: "teal" }, "A4 landscape \xB7 2 copies"), /* @__PURE__ */ React24.createElement(Badge, { tone: "gray" }, "Clinic copy"), /* @__PURE__ */ React24.createElement(Badge, { tone: "gray" }, "Patient copy")))), tab === "appearance" && /* @__PURE__ */ React24.createElement(Section, { icon: Palette, title: "Appearance", sub: "Theme and language" }, /* @__PURE__ */ React24.createElement("div", { className: "form-grid" }, /* @__PURE__ */ React24.createElement(Field, { label: "Theme" }, /* @__PURE__ */ React24.createElement("div", { className: "theme-opts" }, /* @__PURE__ */ React24.createElement(Btn, { variant: theme === "light" ? "primary" : "ghost", onClick: () => setTheme("light") }, "\u2600\uFE0F Light"), /* @__PURE__ */ React24.createElement(Btn, { variant: theme === "dark" ? "primary" : "ghost", onClick: () => setTheme("dark") }, "\u{1F319} Dark"))), /* @__PURE__ */ React24.createElement(Field, { label: "Language", hint: "Gujarati UI is in progress \u2014 English labels are used as fallback" }, /* @__PURE__ */ React24.createElement(Select, { value: lang, onChange: (e) => setLang(e.target.value) }, /* @__PURE__ */ React24.createElement("option", { value: "en" }, "English"), /* @__PURE__ */ React24.createElement("option", { value: "gu" }, "\u0A97\u0AC1\u0A9C\u0AB0\u0ABE\u0AA4\u0AC0 (Gujarati)"))))), tab === "data" && /* @__PURE__ */ React24.createElement(Section, { icon: Database, title: "Data, Backup & Maintenance", sub: "All data is stored locally on this device (offline-first). Export regular backups." }, /* @__PURE__ */ React24.createElement("div", { className: "data-grid" }, /* @__PURE__ */ React24.createElement("div", { className: "data-tile" }, /* @__PURE__ */ React24.createElement("span", null, "Patients"), /* @__PURE__ */ React24.createElement("b", null, counts?.patients ?? "\u2014")), /* @__PURE__ */ React24.createElement("div", { className: "data-tile" }, /* @__PURE__ */ React24.createElement("span", null, "Bills"), /* @__PURE__ */ React24.createElement("b", null, counts?.bills ?? "\u2014")), /* @__PURE__ */ React24.createElement("div", { className: "data-tile" }, /* @__PURE__ */ React24.createElement("span", null, "Medicines"), /* @__PURE__ */ React24.createElement("b", null, counts?.meds ?? "\u2014"))), /* @__PURE__ */ React24.createElement("div", { className: "data-actions" }, /* @__PURE__ */ React24.createElement(Btn, { variant: "outline", icon: Download13, onClick: exportBackup }, "Export Full Backup (JSON)"), /* @__PURE__ */ React24.createElement(Btn, { variant: "outline", icon: Upload6, onClick: () => importRef.current?.click() }, "Import Backup"), /* @__PURE__ */ React24.createElement("input", { type: "file", accept: "application/json", hidden: true, ref: importRef, onChange: (e) => {
     const f2 = e.target.files?.[0];
     if (f2) importBackup(f2);
     e.target.value = "";

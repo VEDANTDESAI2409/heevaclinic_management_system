@@ -1,4 +1,5 @@
 import { validMobile, dkey, isValidDDMMYYYY, parseDDMMYYYY } from '../utils.js';
+import { mapCSVRows, inspectHeaders, cleanCurrency, normalizeValue } from './csvMapping.js';
 
 const BLOOD_GROUPS = new Set(['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-']);
 const GENDERS = new Set(['m', 'f', 'other', 'male', 'female']);
@@ -21,11 +22,95 @@ function isValidEmail(email) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 }
 
+function parseHistoricalDateTime(rawDateTime, today) {
+  let itemCreatedAt = new Date().toISOString();
+  let regDate = today;
+  if (!rawDateTime) return { itemCreatedAt, regDate, error: null };
+
+  const s = String(rawDateTime).trim();
+
+  // 1. DD-MM-YYYY or DD/MM/YYYY with optional time
+  const dmyMatch = s.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})(?:[\sT](\d{1,2}):(\d{2})(?::(\d{2}))?)?$/);
+  if (dmyMatch) {
+    const day = parseInt(dmyMatch[1], 10);
+    const month = parseInt(dmyMatch[2], 10);
+    const year = parseInt(dmyMatch[3], 10);
+    const hour = dmyMatch[4] !== undefined ? parseInt(dmyMatch[4], 10) : 0;
+    const minute = dmyMatch[5] !== undefined ? parseInt(dmyMatch[5], 10) : 0;
+    const second = dmyMatch[6] !== undefined ? parseInt(dmyMatch[6], 10) : 0;
+
+    if (month < 1 || month > 12) return { error: 'Invalid month in Date & Time (must be 01–12)' };
+    if (year < 1900 || year > 2100) return { error: 'Invalid year in Date & Time (1900–2100)' };
+    const daysInMonth = new Date(year, month, 0).getDate();
+    if (day < 1 || day > daysInMonth) return { error: `Invalid day in Date & Time for month ${month} (must be 01–${daysInMonth})` };
+    if (hour < 0 || hour > 23) return { error: 'Invalid hour in Date & Time (must be 00–23)' };
+    if (minute < 0 || minute > 59) return { error: 'Invalid minute in Date & Time (must be 00–59)' };
+    if (second < 0 || second > 59) return { error: 'Invalid second in Date & Time (must be 00–59)' };
+
+    const p2 = (n) => String(n).padStart(2, '0');
+    itemCreatedAt = `${year}-${p2(month)}-${p2(day)}T${p2(hour)}:${p2(minute)}:${p2(second)}.000Z`;
+    regDate = `${year}-${p2(month)}-${p2(day)}`;
+    return { itemCreatedAt, regDate, error: null };
+  }
+
+  // 2. YYYY-MM-DD with optional time
+  const ymdMatch = s.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})(?:[\sT](\d{1,2}):(\d{2})(?::(\d{2}))?)?$/);
+  if (ymdMatch) {
+    const year = parseInt(ymdMatch[1], 10);
+    const month = parseInt(ymdMatch[2], 10);
+    const day = parseInt(ymdMatch[3], 10);
+    const hour = ymdMatch[4] !== undefined ? parseInt(ymdMatch[4], 10) : 0;
+    const minute = ymdMatch[5] !== undefined ? parseInt(ymdMatch[5], 10) : 0;
+    const second = ymdMatch[6] !== undefined ? parseInt(ymdMatch[6], 10) : 0;
+
+    if (month < 1 || month > 12) return { error: 'Invalid month in Date & Time (must be 01–12)' };
+    const daysInMonth = new Date(year, month, 0).getDate();
+    if (day < 1 || day > daysInMonth) return { error: `Invalid day in Date & Time for month ${month} (must be 01–${daysInMonth})` };
+
+    const p2 = (n) => String(n).padStart(2, '0');
+    itemCreatedAt = `${year}-${p2(month)}-${p2(day)}T${p2(hour)}:${p2(minute)}:${p2(second)}.000Z`;
+    regDate = `${year}-${p2(month)}-${p2(day)}`;
+    return { itemCreatedAt, regDate, error: null };
+  }
+
+  return { error: 'Date & Time must use DD-MM-YYYY HH:mm format (e.g. 05-09-2026 10:45)' };
+}
+
+function parseFlexibleDate(val, defaultVal = '') {
+  if (!val) return defaultVal;
+  const s = String(val).trim();
+  if (isValidDDMMYYYY(s)) return parseDDMMYYYY(s);
+  if (isValidDate(s)) return s;
+  return null;
+}
+
 /**
- * Validates parsed CSV rows for a specific entity type.
- * Returns { total, validRows, invalidRows, summary }
+ * Validates parsed and canonicalized CSV rows for a specific entity type.
+ * Returns { total, validRows, invalidRows, mappingError, summary }
  */
 export function validateCSVRows(type, rows, context = {}) {
+  // 1. Check for global header mapping errors if raw headers are available
+  if (context.headers && Array.isArray(context.headers)) {
+    const mappingErr = inspectHeaders(type, context.headers);
+    if (mappingErr) {
+      return {
+        total: rows.length,
+        validRows: [],
+        invalidRows: [],
+        mappingError: mappingErr,
+        summary: {
+          total: rows.length,
+          validCount: 0,
+          invalidCount: rows.length,
+          mappingError: true,
+        },
+      };
+    }
+  }
+
+  // 2. Canonicalize rows through the shared mapping layer
+  const canonicalRows = mapCSVRows(type, rows);
+
   const validRows = [];
   const invalidRows = [];
   const today = dkey(new Date());
@@ -34,17 +119,19 @@ export function validateCSVRows(type, rows, context = {}) {
     case 'patients': {
       const seenMobileName = new Set();
 
-      for (const row of rows) {
+      for (const row of canonicalRows) {
         const rowNum = row.__rowNum;
         const errors = [];
 
-        const name = String(row.name || row.full_name || row.patient_name || '').trim();
+        // Required: Full Name
+        const name = String(row.name || '').trim();
         if (!name) {
           errors.push('Full name is required');
         } else if (name.length < 3) {
           errors.push('Full name must be at least 3 characters');
         }
 
+        // Required: Age
         const rawAge = String(row.age ?? '').trim();
         const age = parseInt(rawAge, 10);
         if (!rawAge) {
@@ -53,6 +140,7 @@ export function validateCSVRows(type, rows, context = {}) {
           errors.push('Age must be a valid number between 0 and 125');
         }
 
+        // Required: Gender
         const rawGender = String(row.gender || '').trim().toLowerCase();
         let gender = '';
         if (!rawGender) {
@@ -63,7 +151,8 @@ export function validateCSVRows(type, rows, context = {}) {
           gender = rawGender === 'm' || rawGender === 'male' ? 'M' : rawGender === 'f' || rawGender === 'female' ? 'F' : 'Other';
         }
 
-        const rawMobile = String(row.mobile || row.mobile_number || row.phone || row.contact || '').trim();
+        // Required: Mobile Number
+        const rawMobile = String(row.mobile || '').trim();
         const mobile = cleanDigits(rawMobile);
         if (!rawMobile) {
           errors.push('Mobile number is required');
@@ -71,48 +160,24 @@ export function validateCSVRows(type, rows, context = {}) {
           errors.push('Mobile must be a valid 10-digit number');
         }
 
+        // Optional: Blood Group
         let bloodGroup = String(row.blood_group || '').trim().toUpperCase();
         if (bloodGroup && !BLOOD_GROUPS.has(bloodGroup)) {
           errors.push('Blood group must be one of A+, A-, B+, B-, AB+, AB-, O+, O-');
         }
 
-        // Manual historical Date & Time support (DD-MM-YYYY HH:mm)
-        const rawDateTime = String(row.date_time || row.date_and_time || row.datetime || row.created_at || row.reg_date || '').trim();
+        // Optional: Historical Date & Time (DD-MM-YYYY HH:mm)
+        const rawDateTime = String(row.date_time || '').trim();
         let itemCreatedAt = new Date().toISOString();
         let regDate = today;
 
         if (rawDateTime) {
-          const dtMatch = rawDateTime.match(/^(\d{2})-(\d{2})-(\d{4})(?:[\sT](\d{1,2}):(\d{2})(?::(\d{2}))?)?$/);
-          if (!dtMatch) {
-            errors.push('Date & Time must use DD-MM-YYYY HH:mm format (e.g. 05-09-2026 10:45)');
+          const parsedDT = parseHistoricalDateTime(rawDateTime, today);
+          if (parsedDT.error) {
+            errors.push(parsedDT.error);
           } else {
-            const day = parseInt(dtMatch[1], 10);
-            const month = parseInt(dtMatch[2], 10);
-            const year = parseInt(dtMatch[3], 10);
-            const hour = dtMatch[4] !== undefined ? parseInt(dtMatch[4], 10) : 0;
-            const minute = dtMatch[5] !== undefined ? parseInt(dtMatch[5], 10) : 0;
-            const second = dtMatch[6] !== undefined ? parseInt(dtMatch[6], 10) : 0;
-
-            if (month < 1 || month > 12) {
-              errors.push('Invalid month in Date & Time (must be 01–12)');
-            } else if (year < 1900 || year > 2100) {
-              errors.push('Invalid year in Date & Time (1900–2100)');
-            } else {
-              const daysInMonth = new Date(year, month, 0).getDate();
-              if (day < 1 || day > daysInMonth) {
-                errors.push(`Invalid day in Date & Time for month ${month} (must be 01–${daysInMonth})`);
-              } else if (hour < 0 || hour > 23) {
-                errors.push('Invalid hour in Date & Time (must be 00–23)');
-              } else if (minute < 0 || minute > 59) {
-                errors.push('Invalid minute in Date & Time (must be 00–59)');
-              } else if (second < 0 || second > 59) {
-                errors.push('Invalid second in Date & Time (must be 00–59)');
-              } else {
-                const p2 = (n) => String(n).padStart(2, '0');
-                itemCreatedAt = `${year}-${p2(month)}-${p2(day)}T${p2(hour)}:${p2(minute)}:${p2(second)}.000Z`;
-                regDate = `${year}-${p2(month)}-${p2(day)}`;
-              }
-            }
+            itemCreatedAt = parsedDT.itemCreatedAt;
+            regDate = parsedDT.regDate;
           }
         }
 
@@ -129,6 +194,7 @@ export function validateCSVRows(type, rows, context = {}) {
         } else {
           validRows.push({
             __rowNum: rowNum,
+            uhid: row.uhid || undefined,
             name,
             age,
             gender,
@@ -156,10 +222,11 @@ export function validateCSVRows(type, rows, context = {}) {
       );
       const seenNames = new Set();
 
-      for (const row of rows) {
+      for (const row of canonicalRows) {
         const rowNum = row.__rowNum;
         const errors = [];
 
+        // Required: Medicine Name
         const name = String(row.name || '').trim();
         if (!name) {
           errors.push('Medicine name is required');
@@ -176,25 +243,30 @@ export function validateCSVRows(type, rows, context = {}) {
           seenNames.add(nameKey);
         }
 
-        const sellingPriceStr = String(row.selling_price || '').trim();
-        const sellingPrice = Number(sellingPriceStr);
-        if (!sellingPriceStr) {
+        // Required: Selling Price
+        const rawSelling = cleanCurrency(row.selling_price);
+        const sellingPrice = Number(rawSelling);
+        if (!rawSelling) {
           errors.push('Selling price is required');
         } else if (isNaN(sellingPrice) || sellingPrice < 0) {
           errors.push('Selling price must be a valid positive number');
         }
 
+        // Optional: Purchase Price
         let purchasePrice = 0;
-        if (row.purchase_price !== undefined && String(row.purchase_price).trim() !== '') {
-          purchasePrice = Number(row.purchase_price);
+        const rawPurchase = cleanCurrency(row.purchase_price);
+        if (rawPurchase) {
+          purchasePrice = Number(rawPurchase);
           if (isNaN(purchasePrice) || purchasePrice < 0) {
             errors.push('Purchase price must be a valid positive number');
           }
         }
 
+        // Optional: Min Stock
         let minStock = 0;
-        if (row.min_stock !== undefined && String(row.min_stock).trim() !== '') {
-          minStock = parseInt(row.min_stock, 10);
+        const rawMinStock = String(row.min_stock ?? '').trim();
+        if (rawMinStock) {
+          minStock = parseInt(rawMinStock, 10);
           if (isNaN(minStock) || minStock < 0) {
             errors.push('Min stock must be a non-negative integer');
           }
@@ -205,6 +277,7 @@ export function validateCSVRows(type, rows, context = {}) {
         } else {
           validRows.push({
             __rowNum: rowNum,
+            medicine_code: row.medicine_code || undefined,
             name,
             generic: String(row.generic || '').trim(),
             category: String(row.category || 'Other').trim(),
@@ -228,10 +301,11 @@ export function validateCSVRows(type, rows, context = {}) {
       );
       const seenNames = new Set();
 
-      for (const row of rows) {
+      for (const row of canonicalRows) {
         const rowNum = row.__rowNum;
         const errors = [];
 
+        // Required: Category Name
         const name = String(row.name || '').trim();
         if (!name) {
           errors.push('Category name is required');
@@ -266,10 +340,11 @@ export function validateCSVRows(type, rows, context = {}) {
       );
       const seenNames = new Set();
 
-      for (const row of rows) {
+      for (const row of canonicalRows) {
         const rowNum = row.__rowNum;
         const errors = [];
 
+        // Required: Doctor Name
         const name = String(row.name || '').trim();
         if (!name) {
           errors.push('Doctor name is required');
@@ -286,6 +361,7 @@ export function validateCSVRows(type, rows, context = {}) {
           seenNames.add(nameKey);
         }
 
+        // Optional: Phone
         let phone = '';
         if (row.phone) {
           phone = cleanDigits(row.phone);
@@ -294,6 +370,7 @@ export function validateCSVRows(type, rows, context = {}) {
           }
         }
 
+        // Optional: Email
         let email = String(row.email || '').trim();
         if (email && !isValidEmail(email)) {
           errors.push('Invalid email address format');
@@ -320,15 +397,17 @@ export function validateCSVRows(type, rows, context = {}) {
       const medMap = new Map();
       medicines.forEach((m) => {
         medMap.set(String(m.name || '').trim().toLowerCase(), m);
+        if (m.id) medMap.set(String(m.id).trim().toLowerCase(), m);
       });
 
       const seenBatchKey = new Set();
 
-      for (const row of rows) {
+      for (const row of canonicalRows) {
         const rowNum = row.__rowNum;
         const errors = [];
 
-        const medName = String(row.medicine_name || '').trim();
+        // Required: Medicine Name / ID
+        const medName = String(row.medicine_name || row.medicine_id || '').trim();
         let matchedMed = null;
         if (!medName) {
           errors.push('Medicine name is required');
@@ -339,34 +418,37 @@ export function validateCSVRows(type, rows, context = {}) {
           }
         }
 
+        // Required: Batch Number
         const batchNo = String(row.batch_no || '').trim().toUpperCase();
         if (!batchNo) {
           errors.push('Batch number is required');
         }
 
-        let expiry = String(row.expiry || '').trim();
-        if (!expiry) {
+        // Required: Expiry Date (supports DD-MM-YYYY and YYYY-MM-DD)
+        const rawExpiry = String(row.expiry || '').trim();
+        const expiry = parseFlexibleDate(rawExpiry);
+        if (!rawExpiry) {
           errors.push('Expiry date is required');
-        } else if (isValidDDMMYYYY(expiry)) {
-          expiry = parseDDMMYYYY(expiry);
-        } else if (!isValidDate(expiry)) {
-          errors.push('Expiry must be valid DD-MM-YYYY format');
+        } else if (!expiry) {
+          errors.push('Expiry must be valid DD-MM-YYYY or YYYY-MM-DD format');
         }
 
-        let mfgDate = String(row.mfg_date || '').trim();
-        if (mfgDate) {
-          if (isValidDDMMYYYY(mfgDate)) {
-            mfgDate = parseDDMMYYYY(mfgDate);
-          } else if (!isValidDate(mfgDate)) {
-            errors.push('Mfg date must be valid DD-MM-YYYY format');
+        // Optional: Manufacturing Date
+        const rawMfg = String(row.mfg_date || '').trim();
+        let mfgDate = today;
+        if (rawMfg) {
+          const parsedMfg = parseFlexibleDate(rawMfg);
+          if (!parsedMfg) {
+            errors.push('Mfg date must be valid DD-MM-YYYY or YYYY-MM-DD format');
+          } else {
+            mfgDate = parsedMfg;
           }
           if (expiry && mfgDate > expiry) {
             errors.push('Mfg date cannot be after expiry date');
           }
-        } else {
-          mfgDate = today;
         }
 
+        // Required: Quantity
         const qtyStr = String(row.quantity || '').trim();
         const quantity = parseInt(qtyStr, 10);
         if (!qtyStr) {
@@ -375,9 +457,11 @@ export function validateCSVRows(type, rows, context = {}) {
           errors.push('Quantity must be a positive integer');
         }
 
+        // Optional: Purchase Price
         let purchasePrice = matchedMed?.purchase_price || 0;
-        if (row.purchase_price !== undefined && String(row.purchase_price).trim() !== '') {
-          const p = Number(row.purchase_price);
+        const rawPrice = cleanCurrency(row.purchase_price);
+        if (rawPrice) {
+          const p = Number(rawPrice);
           if (isNaN(p) || p < 0) {
             errors.push('Purchase price must be a valid positive number');
           } else {
@@ -389,7 +473,7 @@ export function validateCSVRows(type, rows, context = {}) {
         if (matchedMed && batchNo) {
           const bKey = `${matchedMed.id}||${batchNo}`;
           if (seenBatchKey.has(bKey)) {
-            errors.push(`Duplicate batch "${batchNo}" for medicine "${medName}" in this CSV`);
+            errors.push(`Duplicate batch "${batchNo}" for medicine "${matchedMed.name}" in this CSV`);
           } else {
             seenBatchKey.add(bKey);
           }
@@ -413,18 +497,56 @@ export function validateCSVRows(type, rows, context = {}) {
       break;
     }
 
+    case 'services': {
+      for (const row of canonicalRows) {
+        const rowNum = row.__rowNum;
+        const errors = [];
+
+        const name = String(row.name || '').trim();
+        if (!name) {
+          errors.push('Service name is required');
+        } else if (name.length < 2) {
+          errors.push('Service name must be at least 2 characters');
+        }
+
+        const rawPrice = cleanCurrency(row.price);
+        const price = Number(rawPrice);
+        if (!rawPrice) {
+          errors.push('Service price is required');
+        } else if (isNaN(price) || price < 0) {
+          errors.push('Price must be a valid positive number');
+        }
+
+        if (errors.length > 0) {
+          invalidRows.push({ rowNum, row, errors });
+        } else {
+          validRows.push({
+            __rowNum: rowNum,
+            service_code: row.service_code || undefined,
+            name,
+            type: String(row.type || 'Consultation').trim(),
+            price: Math.round(price * 100) / 100,
+            description: String(row.description || '').trim(),
+          });
+        }
+      }
+      break;
+    }
+
     default:
       throw new Error(`Unsupported validation type: ${type}`);
   }
 
   return {
-    total: rows.length,
+    total: canonicalRows.length,
     validRows,
     invalidRows,
+    mappingError: null,
     summary: {
-      total: rows.length,
+      total: canonicalRows.length,
       validCount: validRows.length,
       invalidCount: invalidRows.length,
+      mappingError: false,
     },
   };
 }

@@ -1567,10 +1567,23 @@ var init_d1Client = __esm({
           const counterKey = settingsRow.uhid_include_year !== 0 && settingsRow.uhid_include_year !== false ? `UHID|${year}` : "UHID|ALL";
           const pad = Number(settingsRow.uhid_padding) || 6;
           const prefix = (settingsRow.uhid_prefix || "HC").trim().toUpperCase();
-          const countRow = await db3.prepare("SELECT COUNT(*) as count FROM patients").first();
-          const patientCount = countRow ? Number(countRow.count) : 0;
           const counterRow = await db3.prepare("SELECT * FROM counters WHERE key = ? OR id = ? LIMIT 1").bind(counterKey, counterKey).first();
           let counterVal = counterRow && counterRow.value != null ? Number(counterRow.value) : (Number(settingsRow.uhid_start) || 1) - 1;
+          const uhidPrefix = `${prefix}${settingsRow.uhid_include_year !== 0 && settingsRow.uhid_include_year !== false ? `-${year}` : ""}-`;
+          const existingUhids = await db3.prepare("SELECT uhid FROM patients WHERE uhid LIKE ?").bind(`${uhidPrefix}%`).all();
+          let maxExistingSuffix = 0;
+          if (existingUhids && existingUhids.results) {
+            for (const row of existingUhids.results) {
+              const match = String(row.uhid || "").match(/-(\d+)$/);
+              if (match) {
+                const num = parseInt(match[1], 10);
+                if (!isNaN(num) && num > maxExistingSuffix) {
+                  maxExistingSuffix = num;
+                }
+              }
+            }
+          }
+          counterVal = Math.max(counterVal, maxExistingSuffix, (Number(settingsRow.uhid_start) || 1) - 1);
           const newPatients = [];
           const skipped = [];
           const batchStmts = [];
@@ -1624,6 +1637,7 @@ var init_d1Client = __esm({
           );
           if (batchStmts.length > 0) {
             await db3.batch(batchStmts);
+            await this.incrementDbVersion(db3, now);
           }
           return {
             success: true,
@@ -1639,6 +1653,18 @@ var init_d1Client = __esm({
         if (actual === "medicines") {
           const counterRow = await db3.prepare("SELECT * FROM counters WHERE key = 'MED|ALL' OR id = 'MED|ALL' LIMIT 1").first();
           let counterVal = counterRow ? Number(counterRow.value) : 0;
+          const { results: existingCodes } = await db3.prepare("SELECT medicine_code FROM medicines").all();
+          let maxMedCodeSuffix = 0;
+          if (existingCodes) {
+            for (const row of existingCodes) {
+              const m = String(row.medicine_code || "").match(/MD-(\d+)$/i);
+              if (m) {
+                const n = parseInt(m[1], 10);
+                if (!isNaN(n) && n > maxMedCodeSuffix) maxMedCodeSuffix = n;
+              }
+            }
+          }
+          counterVal = Math.max(counterVal, maxMedCodeSuffix);
           const { results: existingMeds } = await db3.prepare("SELECT id, name FROM medicines").all();
           const { results: existingCats } = await db3.prepare("SELECT id, name FROM medicine_categories").all();
           const existingMedNames = new Set((existingMeds || []).map((m) => String(m.name).trim().toLowerCase()));
@@ -1712,6 +1738,7 @@ var init_d1Client = __esm({
           );
           if (batchStmts.length > 0) {
             await db3.batch(batchStmts);
+            await this.incrementDbVersion(db3, now);
           }
           return {
             success: true,
@@ -1755,6 +1782,7 @@ var init_d1Client = __esm({
           }
           if (batchStmts.length > 0) {
             await db3.batch(batchStmts);
+            await this.incrementDbVersion(db3, now);
           }
           return {
             success: true,
@@ -1841,13 +1869,23 @@ var init_d1Client = __esm({
               skipped.push({ item, reason: "Quantity must be positive" });
               continue;
             }
+            const normalizeToIsoDate = (val, fallback) => {
+              if (!val) return fallback;
+              const s = String(val).trim();
+              const dmy = s.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})$/);
+              if (dmy) {
+                const p22 = (n) => String(n).padStart(2, "0");
+                return `${dmy[3]}-${p22(dmy[2])}-${p22(dmy[1])}`;
+              }
+              return s;
+            };
             const batchId = item.id || crypto.randomUUID();
             const batch = {
               id: batchId,
               medicine_id: med.id,
               batch_no: batchNo,
-              mfg_date: item.mfg_date || today,
-              expiry: item.expiry || "9999-12-31",
+              mfg_date: normalizeToIsoDate(item.mfg_date, today),
+              expiry: normalizeToIsoDate(item.expiry, "9999-12-31"),
               quantity: qty,
               available: qty,
               purchase_price: Number(item.purchase_price) || med.purchase_price || 0,
@@ -1896,6 +1934,52 @@ var init_d1Client = __esm({
             extraTables: {
               inventory_txns: newTxns
             }
+          };
+        }
+        if (actual === "services") {
+          const newServices = [];
+          const skipped = [];
+          const batchStmts = [];
+          for (const item of items) {
+            const name = String(item.name || "").trim();
+            if (!name) {
+              skipped.push({ item, reason: "Missing service name" });
+              continue;
+            }
+            const price = Number(item.price);
+            if (isNaN(price) || price < 0) {
+              skipped.push({ item, reason: "Price must be a valid positive number" });
+              continue;
+            }
+            const svc = {
+              id: item.id || crypto.randomUUID(),
+              service_code: item.service_code || `SVC-${Date.now().toString(36).toUpperCase()}`,
+              name,
+              type: item.type || "Consultation",
+              price,
+              description: item.description || "",
+              active: 1,
+              created_at: now,
+              updated_at: now
+            };
+            newServices.push(svc);
+            const filtered = filterFields("services", svc);
+            const cols = Object.keys(filtered);
+            const placeholders = cols.map(() => "?");
+            batchStmts.push(
+              db3.prepare(`INSERT OR REPLACE INTO services ("${cols.join('", "')}") VALUES (${placeholders.join(", ")})`).bind(...cols.map((c) => filtered[c]))
+            );
+          }
+          if (batchStmts.length > 0) {
+            await db3.batch(batchStmts);
+            await this.incrementDbVersion(db3, now);
+          }
+          return {
+            success: true,
+            count: newServices.length,
+            skipped: skipped.length,
+            skippedDetails: skipped,
+            records: newServices
           };
         }
         const createdList = [];

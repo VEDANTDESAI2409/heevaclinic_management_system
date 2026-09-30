@@ -4,8 +4,8 @@ import db from '../db';
 import { useApp } from '../context/AppContext';
 import { Btn, Card, Modal, Field, Input, DataTable, PageHeader, EmptyState, Tabs, Badge, Confirm } from '../components/ui';
 import { createDoctor, updateDoctor, archiveDoctor, deleteDoctor } from '../services/clinical';
-import { fmtDateTime } from '../utils';
-import { Pencil, Archive, Trash2, Plus, Upload } from 'lucide-react';
+import { fmtDateTime, download, toCSV, dkey } from '../utils';
+import { Pencil, Archive, Trash2, Plus, Upload, Download } from 'lucide-react';
 import CsvImportModal from '../components/csv/CsvImportModal';
 
 function DoctorModal({ open, onClose, editing }) {
@@ -61,10 +61,19 @@ export default function Staff() {
   }, []);
   const logs = useLiveQuery(() => db.activity_logs.orderBy('at').reverse().limit(100).toArray(), []);
 
+  const exportCSV = () => {
+    const list = doctors || [];
+    download(`heeva-doctors-${dkey()}.csv`, toCSV(
+      ['Doctor Full Name', 'Qualification', 'Specialization', 'Phone / Mobile', 'Email Address', 'Status'],
+      list.map((d) => [d.name, d.qualification || '', d.specialization || '', d.phone || '', d.email || '', d.active ? 'Active' : 'Archived'])
+    ), 'text/csv');
+  };
+
   return <div className="page">
     <PageHeader title="Staff & Users" sub="Doctors directory · audit logging" actions={tab === 'doctors' && (
       <div style={{ display: 'flex', gap: '8px' }}>
         <Btn variant="ghost" icon={Upload} onClick={() => setImportModal(true)}>Import CSV</Btn>
+        <Btn variant="ghost" icon={Download} onClick={exportCSV}>Export</Btn>
         <Btn variant="accent" icon={Plus} onClick={() => { setEditingDoctor(null); setDoctorModal(true); }}>+ Add Doctor</Btn>
       </div>
     )} />
