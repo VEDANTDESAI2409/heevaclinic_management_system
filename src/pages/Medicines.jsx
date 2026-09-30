@@ -14,7 +14,7 @@ import {
   MEDICINE_TYPES, stockMap,
 } from '../services/inventory';
 import { importMedicinesCSV } from '../services/billing';
-import { fmtDate, fmtMoney, fmtQty, daysUntil, download, toCSV, dkey } from '../utils';
+import { fmtDate, fmtMoney, fmtQty, daysUntil, isExpired, download, toCSV, dkey } from '../utils';
 import { Pill, Plus, Archive, Download, Upload, Pencil, Search, Trash2, FolderPlus, Tag } from 'lucide-react';
 import CsvImportModal from '../components/csv/CsvImportModal';
 
@@ -170,8 +170,7 @@ export default function Medicines() {
   const [editingCat, setEditingCat] = useState(null);
   const [deleteCatTarget, setDeleteCatTarget] = useState(null);
 
-  const cats = useLiveQuery(() => categoryList(), []);
-  const stock = useLiveQuery(() => stockMap(), []);
+  const cats = useLiveQuery(() => categoryList(), [], []);
 
   const catUsage = useLiveQuery(async () => {
     const meds = await db.medicines.toArray();
@@ -180,14 +179,29 @@ export default function Medicines() {
       if (m.category) map.set(m.category, (map.get(m.category) || 0) + 1);
     }
     return map;
-  }, []);
+  }, [], new Map());
 
+  // Combined live query on medicines + batches with stable filter dependencies
   const rows = useLiveQuery(async () => {
-    const all = await db.medicines.toArray();
+    const [all, batches] = await Promise.all([
+      db.medicines.toArray(),
+      db.batches.toArray(),
+    ]);
+
+    const stock = new Map();
+    for (const b of batches) {
+      const e = stock.get(b.medicine_id) || { available: 0, total: 0, next_expiry: null };
+      e.available += b.available || 0;
+      e.total += b.quantity || 0;
+      if (!isExpired(b.expiry) && (!e.next_expiry || b.expiry < e.next_expiry)) e.next_expiry = b.expiry;
+      stock.set(b.medicine_id, e);
+    }
+
     let list = all.map((m) => {
-      const s = stock?.get(m.id);
+      const s = stock.get(m.id);
       return { ...m, available: s?.available ?? 0, total: s?.total ?? 0, next_expiry: s?.next_expiry || null };
     });
+
     const s = q.trim().toLowerCase();
     if (s) {
       list = list.filter((m) =>
@@ -198,10 +212,18 @@ export default function Medicines() {
     }
     if (catF) list = list.filter((m) => m.category === catF);
     if (typeF) list = list.filter((m) => m.type === typeF);
-    if (statusF === 'active') list = list.filter((m) => m.active);
-    else if (statusF === 'archived') list = list.filter((m) => !m.active);
-    return list.sort((a, b) => a.name.localeCompare(b.name));
-  }, [q, catF, typeF, statusF, stock]);
+    if (statusF === 'active') list = list.filter((m) => m.active === 1 || m.active === true || m.active === '1');
+    else if (statusF === 'archived') list = list.filter((m) => !m.active || m.active === 0 || m.active === '0');
+    return list.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+  }, [q, catF, typeF, statusF]);
+
+  // Keep existing rows visible during background synchronization to eliminate UI flickering
+  const lastRowsRef = React.useRef(null);
+  if (rows !== undefined) {
+    lastRowsRef.current = rows;
+  }
+  const displayRows = rows !== undefined ? rows : (lastRowsRef.current || []);
+  const initialLoading = rows === undefined && lastRowsRef.current === null;
 
   const exportCSV = () => {
     const list = rows || [];
@@ -238,7 +260,7 @@ export default function Medicines() {
         active={activeTab}
         onChange={setActiveTab}
         tabs={[
-          { key: 'medicines', label: 'Medicines Master', badge: rows?.length },
+          { key: 'medicines', label: 'Medicines Master', badge: displayRows?.length },
           { key: 'categories', label: 'Medicine Categories', badge: cats?.length },
         ]}
       />
@@ -305,11 +327,11 @@ export default function Medicines() {
                 ),
               },
             ]}
-            rows={rows}
+            rows={displayRows}
             pageSize={12}
             onRow={(m) => { setEditing(m); setFormOpen(true); }}
             empty={<EmptyState title="No Medicines Found" message="Add medicines to start managing your clinic inventory." action={<Btn size="sm" variant="accent" onClick={() => { setEditing(null); setFormOpen(true); }}>+ Add Medicine</Btn>} />}
-            loading={!rows}
+            loading={initialLoading}
           />
         </Card>
       )}

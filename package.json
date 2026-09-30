@@ -17,7 +17,8 @@
     "smoke": "esbuild scripts/smoke.mjs --bundle --platform=node --format=esm --external:dexie --external:fake-indexeddb --outfile=.smoke.bundle.mjs --log-level=warning && node --import ./scripts/fidb-first.mjs .smoke.bundle.mjs",
     "render": "esbuild scripts/render-test.mjs --bundle --platform=node --format=esm --packages=external --outfile=.render.bundle.mjs --log-level=warning && node --import ./scripts/fidb-first.mjs .render.bundle.mjs",
     "test:multi-device": "node --import ./scripts/fidb-first.mjs scripts/test-multi-device.mjs",
-    "test": "npm run test:uhid && npm run smoke && npm run render && npm run test:multi-device"
+    "test:medicines": "node --import ./scripts/fidb-first.mjs scripts/test-medicine-sync-and-persistence.mjs",
+    "test": "npm run test:uhid && npm run smoke && npm run render && npm run test:multi-device && npm run test:medicines"
   },
   "dependencies": {
     "@fontsource-variable/inter": "^5.1.0",

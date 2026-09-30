@@ -38,11 +38,19 @@ const remoteName = (name) => remoteNames[name] || name;
 export const isBrowserRuntime = () =>
   typeof window !== 'undefined' && (Boolean(globalThis.__FORCE_SYNC__) || !(typeof process !== 'undefined' && process.versions?.node));
 
+// Track recent local mutations (table:id -> timestamp) to protect records from
+// being deleted by stale or lagging backend snapshots during background polling.
+const recentLocalMutations = new Map();
+const MUTATION_GRACE_PERIOD_MS = 60000; // 60-second protection window
+
 export async function pushRecord(name, record) {
   if (!isBrowserRuntime() || !syncedTables.has(name) || !record) return;
   const table = remoteName(name);
   const id = name === 'counters' ? record.key : name === 'settings' ? '1' : record.id;
   if (!id && name !== 'settings') return;
+
+  // Record mutation timestamp to protect against stale deletion during in-flight & post-save sync
+  recentLocalMutations.set(`${name}:${id}`, Date.now());
 
   try {
     // Atomic HTTP PUT upsert to central Cloudflare D1 database
@@ -64,6 +72,7 @@ export async function pushRecord(name, record) {
 
 export async function deleteRecord(name, id) {
   if (!isBrowserRuntime() || !syncedTables.has(name) || !id) return;
+  recentLocalMutations.delete(`${name}:${id}`);
   try {
     await deleteRemote(remoteName(name), id);
 
@@ -87,6 +96,12 @@ export async function syncFromBackend(db) {
   if (!isBrowserRuntime()) return null;
   db.__hydrating = true;
   try {
+    // Clean up expired entries in recentLocalMutations
+    const now = Date.now();
+    for (const [k, ts] of recentLocalMutations.entries()) {
+      if (now - ts > MUTATION_GRACE_PERIOD_MS) recentLocalMutations.delete(k);
+    }
+
     // 1. Try atomic bundle sync for single round-trip full sync
     let bundle = null;
     try {
@@ -100,13 +115,14 @@ export async function syncFromBackend(db) {
 
       // Settings
       if (Array.isArray(data.clinic_settings) && data.clinic_settings.length > 0) {
-        await db.settings.clear();
         const row = data.clinic_settings[0];
-        await db.settings.bulkPut(
-          Object.entries(row)
-            .filter(([key]) => !['id', 'created_at', 'updated_at'].includes(key))
-            .map(([key, value]) => ({ key, value }))
-        );
+        const entries = Object.entries(row)
+          .filter(([key]) => !['id', 'created_at', 'updated_at'].includes(key))
+          .map(([key, value]) => ({ key, value }));
+        await db.transaction('rw', [db.settings], async () => {
+          await (db.settings._rawClear ? db.settings._rawClear() : db.settings.clear());
+          await (db.settings._rawBulkPut ? db.settings._rawBulkPut(entries) : db.settings.bulkPut(entries));
+        });
       }
 
       // Synced tables
@@ -118,15 +134,32 @@ export async function syncFromBackend(db) {
           const keyField = name === 'counters' ? 'key' : 'id';
           const newKeySet = new Set(rows.map((r) => r[keyField]));
           const existingKeys = await db[name].toCollection().primaryKeys();
-          const toDelete = existingKeys.filter((k) => !newKeySet.has(k));
-          if (rows.length > 0) {
-            await db[name].bulkPut(rows);
-          }
-          if (toDelete.length > 0) {
-            await db[name].bulkDelete(toDelete);
-          }
+          
+          // Never delete recently mutated records (prevents disappearing on race condition / replica lag)
+          const toDelete = existingKeys.filter((k) => {
+            if (newKeySet.has(k)) {
+              recentLocalMutations.delete(`${name}:${k}`);
+              return false;
+            }
+            const mutationTime = recentLocalMutations.get(`${name}:${k}`);
+            if (mutationTime && now - mutationTime < MUTATION_GRACE_PERIOD_MS) {
+              return false; // Protect locally added/updated record
+            }
+            return true;
+          });
+
+          // Apply atomically per table
+          await db.transaction('rw', [db[name]], async () => {
+            if (rows.length > 0) {
+              await (db[name]._rawBulkPut ? db[name]._rawBulkPut(rows) : db[name].bulkPut(rows));
+            }
+            if (toDelete.length > 0) {
+              await (db[name]._rawBulkDelete ? db[name]._rawBulkDelete(toDelete) : db[name].bulkDelete(toDelete));
+            }
+          });
         }
       }
+      currentLocalVersion = bundle.version;
       return bundle.version;
     }
 
@@ -135,14 +168,15 @@ export async function syncFromBackend(db) {
       try {
         const rows = await getRecords(remoteName(name));
         if (name === 'settings') {
-          await db.settings.clear();
           const row = rows?.[0];
           if (row) {
-            await db.settings.bulkPut(
-              Object.entries(row)
-                .filter(([key]) => !['id', 'created_at', 'updated_at'].includes(key))
-                .map(([key, value]) => ({ key, value }))
-            );
+            const entries = Object.entries(row)
+              .filter(([key]) => !['id', 'created_at', 'updated_at'].includes(key))
+              .map(([key, value]) => ({ key, value }));
+            await db.transaction('rw', [db.settings], async () => {
+              await (db.settings._rawClear ? db.settings._rawClear() : db.settings.clear());
+              await (db.settings._rawBulkPut ? db.settings._rawBulkPut(entries) : db.settings.bulkPut(entries));
+            });
           }
           continue;
         }
@@ -150,13 +184,26 @@ export async function syncFromBackend(db) {
           const keyField = name === 'counters' ? 'key' : 'id';
           const newKeySet = new Set(rows.map((r) => r[keyField]));
           const existingKeys = await db[name].toCollection().primaryKeys();
-          const toDelete = existingKeys.filter((k) => !newKeySet.has(k));
-          if (rows.length > 0) {
-            await db[name].bulkPut(rows);
-          }
-          if (toDelete.length > 0) {
-            await db[name].bulkDelete(toDelete);
-          }
+          const toDelete = existingKeys.filter((k) => {
+            if (newKeySet.has(k)) {
+              recentLocalMutations.delete(`${name}:${k}`);
+              return false;
+            }
+            const mutationTime = recentLocalMutations.get(`${name}:${k}`);
+            if (mutationTime && now - mutationTime < MUTATION_GRACE_PERIOD_MS) {
+              return false;
+            }
+            return true;
+          });
+
+          await db.transaction('rw', [db[name]], async () => {
+            if (rows.length > 0) {
+              await (db[name]._rawBulkPut ? db[name]._rawBulkPut(rows) : db[name].bulkPut(rows));
+            }
+            if (toDelete.length > 0) {
+              await (db[name]._rawBulkDelete ? db[name]._rawBulkDelete(toDelete) : db[name].bulkDelete(toDelete));
+            }
+          });
         }
       } catch (tableErr) {
         console.error(`[remoteSync] Error syncing ${name} from D1:`, tableErr?.message || tableErr);
@@ -170,24 +217,31 @@ export async function syncFromBackend(db) {
 
 let currentLocalVersion = 0;
 let isSyncing = false;
+let syncQueued = false;
 
 export async function checkAndSync(db) {
-  if (!isBrowserRuntime() || isSyncing) return;
+  if (!isBrowserRuntime()) return;
+  if (isSyncing) {
+    syncQueued = true;
+    return;
+  }
+  isSyncing = true;
   try {
     const status = await getSyncStatus();
     if (status && status.ok) {
       if (status.version !== currentLocalVersion) {
-        isSyncing = true;
-        try {
-          const newVer = await syncFromBackend(db);
-          currentLocalVersion = newVer || status.version;
-        } finally {
-          isSyncing = false;
-        }
+        const newVer = await syncFromBackend(db);
+        currentLocalVersion = newVer || status.version;
       }
     }
   } catch (_) {
     // Network hiccup - ignore in poller
+  } finally {
+    isSyncing = false;
+    if (syncQueued) {
+      syncQueued = false;
+      checkAndSync(db);
+    }
   }
 }
 

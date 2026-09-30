@@ -214,6 +214,7 @@ async function pushRecord(name, record) {
   const table = remoteName(name);
   const id = name === "counters" ? record.key : name === "settings" ? "1" : record.id;
   if (!id && name !== "settings") return;
+  recentLocalMutations.set(`${name}:${id}`, Date.now());
   try {
     await updateRecord(table, id, record);
     if (typeof BroadcastChannel !== "undefined") {
@@ -231,6 +232,7 @@ async function pushRecord(name, record) {
 }
 async function deleteRecord2(name, id) {
   if (!isBrowserRuntime() || !syncedTables.has(name) || !id) return;
+  recentLocalMutations.delete(`${name}:${id}`);
   try {
     await deleteRecord(remoteName(name), id);
     if (typeof BroadcastChannel !== "undefined") {
@@ -252,6 +254,10 @@ async function syncFromBackend(db3) {
   if (!isBrowserRuntime()) return null;
   db3.__hydrating = true;
   try {
+    const now = Date.now();
+    for (const [k, ts] of recentLocalMutations.entries()) {
+      if (now - ts > MUTATION_GRACE_PERIOD_MS) recentLocalMutations.delete(k);
+    }
     let bundle = null;
     try {
       bundle = await getSyncBundle();
@@ -260,11 +266,12 @@ async function syncFromBackend(db3) {
     if (bundle && bundle.ok && bundle.data) {
       const data = bundle.data;
       if (Array.isArray(data.clinic_settings) && data.clinic_settings.length > 0) {
-        await db3.settings.clear();
         const row = data.clinic_settings[0];
-        await db3.settings.bulkPut(
-          Object.entries(row).filter(([key]) => !["id", "created_at", "updated_at"].includes(key)).map(([key, value]) => ({ key, value }))
-        );
+        const entries = Object.entries(row).filter(([key]) => !["id", "created_at", "updated_at"].includes(key)).map(([key, value]) => ({ key, value }));
+        await db3.transaction("rw", [db3.settings], async () => {
+          await (db3.settings._rawClear ? db3.settings._rawClear() : db3.settings.clear());
+          await (db3.settings._rawBulkPut ? db3.settings._rawBulkPut(entries) : db3.settings.bulkPut(entries));
+        });
       }
       for (const name of syncOrder) {
         if (name === "settings") continue;
@@ -274,27 +281,41 @@ async function syncFromBackend(db3) {
           const keyField = name === "counters" ? "key" : "id";
           const newKeySet = new Set(rows.map((r) => r[keyField]));
           const existingKeys = await db3[name].toCollection().primaryKeys();
-          const toDelete = existingKeys.filter((k) => !newKeySet.has(k));
-          if (rows.length > 0) {
-            await db3[name].bulkPut(rows);
-          }
-          if (toDelete.length > 0) {
-            await db3[name].bulkDelete(toDelete);
-          }
+          const toDelete = existingKeys.filter((k) => {
+            if (newKeySet.has(k)) {
+              recentLocalMutations.delete(`${name}:${k}`);
+              return false;
+            }
+            const mutationTime = recentLocalMutations.get(`${name}:${k}`);
+            if (mutationTime && now - mutationTime < MUTATION_GRACE_PERIOD_MS) {
+              return false;
+            }
+            return true;
+          });
+          await db3.transaction("rw", [db3[name]], async () => {
+            if (rows.length > 0) {
+              await (db3[name]._rawBulkPut ? db3[name]._rawBulkPut(rows) : db3[name].bulkPut(rows));
+            }
+            if (toDelete.length > 0) {
+              await (db3[name]._rawBulkDelete ? db3[name]._rawBulkDelete(toDelete) : db3[name].bulkDelete(toDelete));
+            }
+          });
         }
       }
+      currentLocalVersion = bundle.version;
       return bundle.version;
     }
     for (const name of syncOrder) {
       try {
         const rows = await getRecords(remoteName(name));
         if (name === "settings") {
-          await db3.settings.clear();
           const row = rows?.[0];
           if (row) {
-            await db3.settings.bulkPut(
-              Object.entries(row).filter(([key]) => !["id", "created_at", "updated_at"].includes(key)).map(([key, value]) => ({ key, value }))
-            );
+            const entries = Object.entries(row).filter(([key]) => !["id", "created_at", "updated_at"].includes(key)).map(([key, value]) => ({ key, value }));
+            await db3.transaction("rw", [db3.settings], async () => {
+              await (db3.settings._rawClear ? db3.settings._rawClear() : db3.settings.clear());
+              await (db3.settings._rawBulkPut ? db3.settings._rawBulkPut(entries) : db3.settings.bulkPut(entries));
+            });
           }
           continue;
         }
@@ -302,13 +323,25 @@ async function syncFromBackend(db3) {
           const keyField = name === "counters" ? "key" : "id";
           const newKeySet = new Set(rows.map((r) => r[keyField]));
           const existingKeys = await db3[name].toCollection().primaryKeys();
-          const toDelete = existingKeys.filter((k) => !newKeySet.has(k));
-          if (rows.length > 0) {
-            await db3[name].bulkPut(rows);
-          }
-          if (toDelete.length > 0) {
-            await db3[name].bulkDelete(toDelete);
-          }
+          const toDelete = existingKeys.filter((k) => {
+            if (newKeySet.has(k)) {
+              recentLocalMutations.delete(`${name}:${k}`);
+              return false;
+            }
+            const mutationTime = recentLocalMutations.get(`${name}:${k}`);
+            if (mutationTime && now - mutationTime < MUTATION_GRACE_PERIOD_MS) {
+              return false;
+            }
+            return true;
+          });
+          await db3.transaction("rw", [db3[name]], async () => {
+            if (rows.length > 0) {
+              await (db3[name]._rawBulkPut ? db3[name]._rawBulkPut(rows) : db3[name].bulkPut(rows));
+            }
+            if (toDelete.length > 0) {
+              await (db3[name]._rawBulkDelete ? db3[name]._rawBulkDelete(toDelete) : db3[name].bulkDelete(toDelete));
+            }
+          });
         }
       } catch (tableErr) {
         console.error(`[remoteSync] Error syncing ${name} from D1:`, tableErr?.message || tableErr);
@@ -320,21 +353,27 @@ async function syncFromBackend(db3) {
   }
 }
 async function checkAndSync(db3) {
-  if (!isBrowserRuntime() || isSyncing) return;
+  if (!isBrowserRuntime()) return;
+  if (isSyncing) {
+    syncQueued = true;
+    return;
+  }
+  isSyncing = true;
   try {
     const status = await getSyncStatus();
     if (status && status.ok) {
       if (status.version !== currentLocalVersion) {
-        isSyncing = true;
-        try {
-          const newVer = await syncFromBackend(db3);
-          currentLocalVersion = newVer || status.version;
-        } finally {
-          isSyncing = false;
-        }
+        const newVer = await syncFromBackend(db3);
+        currentLocalVersion = newVer || status.version;
       }
     }
   } catch (_) {
+  } finally {
+    isSyncing = false;
+    if (syncQueued) {
+      syncQueued = false;
+      checkAndSync(db3);
+    }
   }
 }
 function startRealtimeSync(db3, intervalMs = 2500) {
@@ -377,7 +416,7 @@ function startRealtimeSync(db3, intervalMs = 2500) {
     }
   };
 }
-var syncOrder, syncedTables, remoteNames, remoteName, isBrowserRuntime, currentLocalVersion, isSyncing, syncFromSqlite;
+var syncOrder, syncedTables, remoteNames, remoteName, isBrowserRuntime, recentLocalMutations, MUTATION_GRACE_PERIOD_MS, currentLocalVersion, isSyncing, syncQueued, syncFromSqlite;
 var init_remoteSync = __esm({
   "src/lib/remoteSync.js"() {
     init_api();
@@ -412,8 +451,11 @@ var init_remoteSync = __esm({
     };
     remoteName = (name) => remoteNames[name] || name;
     isBrowserRuntime = () => typeof window !== "undefined" && (Boolean(globalThis.__FORCE_SYNC__) || !(typeof process !== "undefined" && process.versions?.node));
+    recentLocalMutations = /* @__PURE__ */ new Map();
+    MUTATION_GRACE_PERIOD_MS = 6e4;
     currentLocalVersion = 0;
     isSyncing = false;
+    syncQueued = false;
     syncFromSqlite = syncFromBackend;
   }
 });
@@ -514,36 +556,39 @@ var init_db = __esm({
       const bulkPut = table.bulkPut.bind(table);
       const clear = table.clear.bind(table);
       const bulkDelete = table.bulkDelete ? table.bulkDelete.bind(table) : null;
+      table._rawAdd = add;
+      table._rawPut = put;
+      table._rawUpdate = update;
+      table._rawDelete = remove;
+      table._rawBulkPut = bulkPut;
+      table._rawClear = clear;
+      if (bulkDelete) table._rawBulkDelete = bulkDelete;
       table.add = async (record, key) => {
-        if (!db.__hydrating) await pushRecord(name, record);
+        await pushRecord(name, record);
         return add(record, key);
       };
       table.put = async (record, key) => {
-        if (!db.__hydrating) await pushRecord(name, record);
+        await pushRecord(name, record);
         return put(record, key);
       };
       table.update = async (key, changes) => {
         const existing = await table.get(key);
         if (!existing) return 0;
         const updated = { ...existing, ...changes };
-        if (!db.__hydrating) await pushRecord(name, updated);
+        await pushRecord(name, updated);
         return update(key, changes);
       };
       table.delete = async (key) => {
-        if (!db.__hydrating) await deleteRecord2(name, key);
+        await deleteRecord2(name, key);
         return remove(key);
       };
       table.bulkPut = async (records, options) => {
-        if (!db.__hydrating) {
-          for (const record of records) await pushRecord(name, record);
-        }
+        for (const record of records) await pushRecord(name, record);
         return bulkPut(records, options);
       };
       table.clear = async () => {
         const records = await table.toArray();
-        if (!db.__hydrating) {
-          for (const record of records) await deleteRecord2(name, record.id ?? record.key);
-        }
+        for (const record of records) await deleteRecord2(name, record.id ?? record.key);
         return clear();
       };
       if (bulkDelete) {
@@ -7044,8 +7089,7 @@ function Medicines() {
   const [catModalOpen, setCatModalOpen] = useState14(false);
   const [editingCat, setEditingCat] = useState14(null);
   const [deleteCatTarget, setDeleteCatTarget] = useState14(null);
-  const cats = useLiveQuery10(() => categoryList(), []);
-  const stock = useLiveQuery10(() => stockMap(), []);
+  const cats = useLiveQuery10(() => categoryList(), [], []);
   const catUsage = useLiveQuery10(async () => {
     const meds = await db_default.medicines.toArray();
     const map = /* @__PURE__ */ new Map();
@@ -7053,11 +7097,22 @@ function Medicines() {
       if (m.category) map.set(m.category, (map.get(m.category) || 0) + 1);
     }
     return map;
-  }, []);
+  }, [], /* @__PURE__ */ new Map());
   const rows = useLiveQuery10(async () => {
-    const all = await db_default.medicines.toArray();
+    const [all, batches] = await Promise.all([
+      db_default.medicines.toArray(),
+      db_default.batches.toArray()
+    ]);
+    const stock = /* @__PURE__ */ new Map();
+    for (const b of batches) {
+      const e = stock.get(b.medicine_id) || { available: 0, total: 0, next_expiry: null };
+      e.available += b.available || 0;
+      e.total += b.quantity || 0;
+      if (!isExpired(b.expiry) && (!e.next_expiry || b.expiry < e.next_expiry)) e.next_expiry = b.expiry;
+      stock.set(b.medicine_id, e);
+    }
     let list = all.map((m) => {
-      const s2 = stock?.get(m.id);
+      const s2 = stock.get(m.id);
       return { ...m, available: s2?.available ?? 0, total: s2?.total ?? 0, next_expiry: s2?.next_expiry || null };
     });
     const s = q.trim().toLowerCase();
@@ -7068,10 +7123,16 @@ function Medicines() {
     }
     if (catF) list = list.filter((m) => m.category === catF);
     if (typeF) list = list.filter((m) => m.type === typeF);
-    if (statusF === "active") list = list.filter((m) => m.active);
-    else if (statusF === "archived") list = list.filter((m) => !m.active);
-    return list.sort((a, b) => a.name.localeCompare(b.name));
-  }, [q, catF, typeF, statusF, stock]);
+    if (statusF === "active") list = list.filter((m) => m.active === 1 || m.active === true || m.active === "1");
+    else if (statusF === "archived") list = list.filter((m) => !m.active || m.active === 0 || m.active === "0");
+    return list.sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+  }, [q, catF, typeF, statusF]);
+  const lastRowsRef = React17.useRef(null);
+  if (rows !== void 0) {
+    lastRowsRef.current = rows;
+  }
+  const displayRows = rows !== void 0 ? rows : lastRowsRef.current || [];
+  const initialLoading = rows === void 0 && lastRowsRef.current === null;
   const exportCSV = () => {
     const list = rows || [];
     download(`heeva-medicines-${dkey()}.csv`, toCSV(
@@ -7098,7 +7159,7 @@ function Medicines() {
       active: activeTab,
       onChange: setActiveTab,
       tabs: [
-        { key: "medicines", label: "Medicines Master", badge: rows?.length },
+        { key: "medicines", label: "Medicines Master", badge: displayRows?.length },
         { key: "categories", label: "Medicine Categories", badge: cats?.length }
       ]
     }
@@ -7145,7 +7206,7 @@ function Medicines() {
           } }, "Restore"))
         }
       ],
-      rows,
+      rows: displayRows,
       pageSize: 12,
       onRow: (m) => {
         setEditing(m);
@@ -7155,7 +7216,7 @@ function Medicines() {
         setEditing(null);
         setFormOpen(true);
       } }, "+ Add Medicine") }),
-      loading: !rows
+      loading: initialLoading
     }
   )), activeTab === "categories" && /* @__PURE__ */ React17.createElement(Card, { title: "Medicine Categories", sub: "Organize medicines by pharmacological or therapeutic classification" }, /* @__PURE__ */ React17.createElement(
     DataTable,

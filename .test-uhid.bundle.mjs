@@ -105,6 +105,7 @@ async function pushRecord(name, record) {
   const table = remoteName(name);
   const id = name === "counters" ? record.key : name === "settings" ? "1" : record.id;
   if (!id && name !== "settings") return;
+  recentLocalMutations.set(`${name}:${id}`, Date.now());
   try {
     await updateRecord(table, id, record);
     if (typeof BroadcastChannel !== "undefined") {
@@ -122,6 +123,7 @@ async function pushRecord(name, record) {
 }
 async function deleteRecord2(name, id) {
   if (!isBrowserRuntime() || !syncedTables.has(name) || !id) return;
+  recentLocalMutations.delete(`${name}:${id}`);
   try {
     await deleteRecord(remoteName(name), id);
     if (typeof BroadcastChannel !== "undefined") {
@@ -143,6 +145,10 @@ async function syncFromBackend(db3) {
   if (!isBrowserRuntime()) return null;
   db3.__hydrating = true;
   try {
+    const now = Date.now();
+    for (const [k, ts] of recentLocalMutations.entries()) {
+      if (now - ts > MUTATION_GRACE_PERIOD_MS) recentLocalMutations.delete(k);
+    }
     let bundle = null;
     try {
       bundle = await getSyncBundle();
@@ -151,11 +157,12 @@ async function syncFromBackend(db3) {
     if (bundle && bundle.ok && bundle.data) {
       const data = bundle.data;
       if (Array.isArray(data.clinic_settings) && data.clinic_settings.length > 0) {
-        await db3.settings.clear();
         const row = data.clinic_settings[0];
-        await db3.settings.bulkPut(
-          Object.entries(row).filter(([key]) => !["id", "created_at", "updated_at"].includes(key)).map(([key, value]) => ({ key, value }))
-        );
+        const entries = Object.entries(row).filter(([key]) => !["id", "created_at", "updated_at"].includes(key)).map(([key, value]) => ({ key, value }));
+        await db3.transaction("rw", [db3.settings], async () => {
+          await (db3.settings._rawClear ? db3.settings._rawClear() : db3.settings.clear());
+          await (db3.settings._rawBulkPut ? db3.settings._rawBulkPut(entries) : db3.settings.bulkPut(entries));
+        });
       }
       for (const name of syncOrder) {
         if (name === "settings") continue;
@@ -165,27 +172,41 @@ async function syncFromBackend(db3) {
           const keyField = name === "counters" ? "key" : "id";
           const newKeySet = new Set(rows.map((r) => r[keyField]));
           const existingKeys = await db3[name].toCollection().primaryKeys();
-          const toDelete = existingKeys.filter((k) => !newKeySet.has(k));
-          if (rows.length > 0) {
-            await db3[name].bulkPut(rows);
-          }
-          if (toDelete.length > 0) {
-            await db3[name].bulkDelete(toDelete);
-          }
+          const toDelete = existingKeys.filter((k) => {
+            if (newKeySet.has(k)) {
+              recentLocalMutations.delete(`${name}:${k}`);
+              return false;
+            }
+            const mutationTime = recentLocalMutations.get(`${name}:${k}`);
+            if (mutationTime && now - mutationTime < MUTATION_GRACE_PERIOD_MS) {
+              return false;
+            }
+            return true;
+          });
+          await db3.transaction("rw", [db3[name]], async () => {
+            if (rows.length > 0) {
+              await (db3[name]._rawBulkPut ? db3[name]._rawBulkPut(rows) : db3[name].bulkPut(rows));
+            }
+            if (toDelete.length > 0) {
+              await (db3[name]._rawBulkDelete ? db3[name]._rawBulkDelete(toDelete) : db3[name].bulkDelete(toDelete));
+            }
+          });
         }
       }
+      currentLocalVersion = bundle.version;
       return bundle.version;
     }
     for (const name of syncOrder) {
       try {
         const rows = await getRecords(remoteName(name));
         if (name === "settings") {
-          await db3.settings.clear();
           const row = rows?.[0];
           if (row) {
-            await db3.settings.bulkPut(
-              Object.entries(row).filter(([key]) => !["id", "created_at", "updated_at"].includes(key)).map(([key, value]) => ({ key, value }))
-            );
+            const entries = Object.entries(row).filter(([key]) => !["id", "created_at", "updated_at"].includes(key)).map(([key, value]) => ({ key, value }));
+            await db3.transaction("rw", [db3.settings], async () => {
+              await (db3.settings._rawClear ? db3.settings._rawClear() : db3.settings.clear());
+              await (db3.settings._rawBulkPut ? db3.settings._rawBulkPut(entries) : db3.settings.bulkPut(entries));
+            });
           }
           continue;
         }
@@ -193,13 +214,25 @@ async function syncFromBackend(db3) {
           const keyField = name === "counters" ? "key" : "id";
           const newKeySet = new Set(rows.map((r) => r[keyField]));
           const existingKeys = await db3[name].toCollection().primaryKeys();
-          const toDelete = existingKeys.filter((k) => !newKeySet.has(k));
-          if (rows.length > 0) {
-            await db3[name].bulkPut(rows);
-          }
-          if (toDelete.length > 0) {
-            await db3[name].bulkDelete(toDelete);
-          }
+          const toDelete = existingKeys.filter((k) => {
+            if (newKeySet.has(k)) {
+              recentLocalMutations.delete(`${name}:${k}`);
+              return false;
+            }
+            const mutationTime = recentLocalMutations.get(`${name}:${k}`);
+            if (mutationTime && now - mutationTime < MUTATION_GRACE_PERIOD_MS) {
+              return false;
+            }
+            return true;
+          });
+          await db3.transaction("rw", [db3[name]], async () => {
+            if (rows.length > 0) {
+              await (db3[name]._rawBulkPut ? db3[name]._rawBulkPut(rows) : db3[name].bulkPut(rows));
+            }
+            if (toDelete.length > 0) {
+              await (db3[name]._rawBulkDelete ? db3[name]._rawBulkDelete(toDelete) : db3[name].bulkDelete(toDelete));
+            }
+          });
         }
       } catch (tableErr) {
         console.error(`[remoteSync] Error syncing ${name} from D1:`, tableErr?.message || tableErr);
@@ -210,7 +243,7 @@ async function syncFromBackend(db3) {
     db3.__hydrating = false;
   }
 }
-var syncOrder, syncedTables, remoteNames, remoteName, isBrowserRuntime, syncFromSqlite;
+var syncOrder, syncedTables, remoteNames, remoteName, isBrowserRuntime, recentLocalMutations, MUTATION_GRACE_PERIOD_MS, currentLocalVersion, syncFromSqlite;
 var init_remoteSync = __esm({
   "src/lib/remoteSync.js"() {
     init_api();
@@ -245,6 +278,9 @@ var init_remoteSync = __esm({
     };
     remoteName = (name) => remoteNames[name] || name;
     isBrowserRuntime = () => typeof window !== "undefined" && (Boolean(globalThis.__FORCE_SYNC__) || !(typeof process !== "undefined" && process.versions?.node));
+    recentLocalMutations = /* @__PURE__ */ new Map();
+    MUTATION_GRACE_PERIOD_MS = 6e4;
+    currentLocalVersion = 0;
     syncFromSqlite = syncFromBackend;
   }
 });
@@ -345,36 +381,39 @@ var init_db = __esm({
       const bulkPut = table.bulkPut.bind(table);
       const clear = table.clear.bind(table);
       const bulkDelete = table.bulkDelete ? table.bulkDelete.bind(table) : null;
+      table._rawAdd = add;
+      table._rawPut = put;
+      table._rawUpdate = update;
+      table._rawDelete = remove;
+      table._rawBulkPut = bulkPut;
+      table._rawClear = clear;
+      if (bulkDelete) table._rawBulkDelete = bulkDelete;
       table.add = async (record, key) => {
-        if (!db.__hydrating) await pushRecord(name, record);
+        await pushRecord(name, record);
         return add(record, key);
       };
       table.put = async (record, key) => {
-        if (!db.__hydrating) await pushRecord(name, record);
+        await pushRecord(name, record);
         return put(record, key);
       };
       table.update = async (key, changes) => {
         const existing = await table.get(key);
         if (!existing) return 0;
         const updated = { ...existing, ...changes };
-        if (!db.__hydrating) await pushRecord(name, updated);
+        await pushRecord(name, updated);
         return update(key, changes);
       };
       table.delete = async (key) => {
-        if (!db.__hydrating) await deleteRecord2(name, key);
+        await deleteRecord2(name, key);
         return remove(key);
       };
       table.bulkPut = async (records, options) => {
-        if (!db.__hydrating) {
-          for (const record of records) await pushRecord(name, record);
-        }
+        for (const record of records) await pushRecord(name, record);
         return bulkPut(records, options);
       };
       table.clear = async () => {
         const records = await table.toArray();
-        if (!db.__hydrating) {
-          for (const record of records) await deleteRecord2(name, record.id ?? record.key);
-        }
+        for (const record of records) await deleteRecord2(name, record.id ?? record.key);
         return clear();
       };
       if (bulkDelete) {
@@ -1390,15 +1429,18 @@ var init_d1Client = __esm({
         if (actual === "services") {
           if (!record.service_code) {
             const countRow = await db3.prepare("SELECT COUNT(*) as count FROM services").first();
-            const nextNum = (countRow ? Number(countRow.count) : 0) + 1;
-            record.service_code = `SRV-${String(nextNum).padStart(4, "0")}`;
+            const nextNum2 = (countRow ? Number(countRow.count) : 0) + 1;
+            record.service_code = `SRV-${String(nextNum2).padStart(4, "0")}`;
           }
           const existingSvc = await db3.prepare("SELECT id FROM services WHERE service_code = ?").bind(record.service_code).first();
           if (existingSvc && existingSvc.id !== id) {
             const countRow = await db3.prepare("SELECT COUNT(*) as count FROM services").first();
-            const nextNum = (countRow ? Number(countRow.count) : 0) + 1;
             record.service_code = `SRV-${String(nextNum).padStart(4, "0")}-${Date.now().toString().slice(-4)}`;
           }
+        }
+        if (actual === "medicines") {
+          if (record.active === void 0 || record.active === null) record.active = 1;
+          else record.active = record.active === 1 || record.active === true || record.active === "1" ? 1 : 0;
         }
         const filtered = filterFields(actual, record);
         const cols = Object.keys(filtered);
@@ -1454,6 +1496,9 @@ var init_d1Client = __esm({
           if (existingSvc) {
             delete updated.service_code;
           }
+        }
+        if (actual === "medicines" && patch.active !== void 0) {
+          updated.active = patch.active === 1 || patch.active === true || patch.active === "1" ? 1 : 0;
         }
         const filtered = filterFields(actual, updated);
         const cols = Object.keys(filtered).filter((c) => c !== "id");

@@ -86,36 +86,41 @@ for (const name of syncedTables) {
   const clear = table.clear.bind(table);
   const bulkDelete = table.bulkDelete ? table.bulkDelete.bind(table) : null;
 
+  // Preserve direct low-level Dexie operations for background synchronization
+  table._rawAdd = add;
+  table._rawPut = put;
+  table._rawUpdate = update;
+  table._rawDelete = remove;
+  table._rawBulkPut = bulkPut;
+  table._rawClear = clear;
+  if (bulkDelete) table._rawBulkDelete = bulkDelete;
+
   table.add = async (record, key) => {
-    if (!db.__hydrating) await pushRecord(name, record);
+    await pushRecord(name, record);
     return add(record, key);
   };
   table.put = async (record, key) => {
-    if (!db.__hydrating) await pushRecord(name, record);
+    await pushRecord(name, record);
     return put(record, key);
   };
   table.update = async (key, changes) => {
     const existing = await table.get(key);
     if (!existing) return 0;
     const updated = { ...existing, ...changes };
-    if (!db.__hydrating) await pushRecord(name, updated);
+    await pushRecord(name, updated);
     return update(key, changes);
   };
   table.delete = async (key) => {
-    if (!db.__hydrating) await deleteRecord(name, key);
+    await deleteRecord(name, key);
     return remove(key);
   };
   table.bulkPut = async (records, options) => {
-    if (!db.__hydrating) {
-      for (const record of records) await pushRecord(name, record);
-    }
+    for (const record of records) await pushRecord(name, record);
     return bulkPut(records, options);
   };
   table.clear = async () => {
     const records = await table.toArray();
-    if (!db.__hydrating) {
-      for (const record of records) await deleteRecord(name, record.id ?? record.key);
-    }
+    for (const record of records) await deleteRecord(name, record.id ?? record.key);
     return clear();
   };
   if (bulkDelete) {

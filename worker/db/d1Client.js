@@ -376,9 +376,13 @@ export const d1Client = {
       const existingSvc = await db.prepare('SELECT id FROM services WHERE service_code = ?').bind(record.service_code).first();
       if (existingSvc && existingSvc.id !== id) {
         const countRow = await db.prepare('SELECT COUNT(*) as count FROM services').first();
-        const nextNum = (countRow ? Number(countRow.count) : 0) + 1;
         record.service_code = `SRV-${String(nextNum).padStart(4, '0')}-${Date.now().toString().slice(-4)}`;
       }
+    }
+
+    if (actual === 'medicines') {
+      if (record.active === undefined || record.active === null) record.active = 1;
+      else record.active = (record.active === 1 || record.active === true || record.active === '1') ? 1 : 0;
     }
 
     const filtered = filterFields(actual, record);
@@ -445,6 +449,10 @@ export const d1Client = {
       if (existingSvc) {
         delete updated.service_code;
       }
+    }
+
+    if (actual === 'medicines' && patch.active !== undefined) {
+      updated.active = (patch.active === 1 || patch.active === true || patch.active === '1') ? 1 : 0;
     }
 
     const filtered = filterFields(actual, updated);
