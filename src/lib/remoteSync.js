@@ -92,22 +92,28 @@ export async function deleteRecord(name, id) {
   }
 }
 
+let backoffUntil = 0;
+let backoffDelay = 5000;
+let lastSyncTimestamp = 0;
+
 export async function syncFromBackend(db) {
   if (!isBrowserRuntime()) return null;
   db.__hydrating = true;
   try {
-    // Clean up expired entries in recentLocalMutations
     const now = Date.now();
     for (const [k, ts] of recentLocalMutations.entries()) {
       if (now - ts > MUTATION_GRACE_PERIOD_MS) recentLocalMutations.delete(k);
     }
 
-    // 1. Try atomic bundle sync for single round-trip full sync
     let bundle = null;
     try {
       bundle = await getSyncBundle();
-    } catch (_) {
-      // Fallback to table-by-table sync below
+    } catch (err) {
+      if (err?.status === 429 || err?.isRateLimit) {
+        backoffUntil = Date.now() + 15000;
+        console.warn('[remoteSync] Backend busy (429), pausing sync for 15s');
+      }
+      return null;
     }
 
     if (bundle && bundle.ok && bundle.data) {
@@ -134,16 +140,20 @@ export async function syncFromBackend(db) {
           const keyField = name === 'counters' ? 'key' : 'id';
           const newKeySet = new Set(rows.map((r) => r[keyField]));
           const existingKeys = await db[name].toCollection().primaryKeys();
-          
-          // Never delete recently mutated records (prevents disappearing on race condition / replica lag)
+
+          // Only delete local records if server returned records (protecting against corrupt/empty responses)
+          // and the record is not in recentLocalMutations grace window
           const toDelete = existingKeys.filter((k) => {
             if (newKeySet.has(k)) {
-              recentLocalMutations.delete(`${name}:${k}`);
               return false;
             }
             const mutationTime = recentLocalMutations.get(`${name}:${k}`);
             if (mutationTime && now - mutationTime < MUTATION_GRACE_PERIOD_MS) {
-              return false; // Protect locally added/updated record
+              return false; // Protect locally added/updated record from disappearing
+            }
+            // Do not wipe out local records if remote rows array is unexpectedly empty but local has records
+            if (rows.length === 0 && existingKeys.length > 0) {
+              return false;
             }
             return true;
           });
@@ -160,55 +170,11 @@ export async function syncFromBackend(db) {
         }
       }
       currentLocalVersion = bundle.version;
+      backoffDelay = 5000;
+      lastSyncTimestamp = Date.now();
       return bundle.version;
     }
 
-    // 2. Fallback: table-by-table sync
-    for (const name of syncOrder) {
-      try {
-        const rows = await getRecords(remoteName(name));
-        if (name === 'settings') {
-          const row = rows?.[0];
-          if (row) {
-            const entries = Object.entries(row)
-              .filter(([key]) => !['id', 'created_at', 'updated_at'].includes(key))
-              .map(([key, value]) => ({ key, value }));
-            await db.transaction('rw', [db.settings], async () => {
-              await (db.settings._rawClear ? db.settings._rawClear() : db.settings.clear());
-              await (db.settings._rawBulkPut ? db.settings._rawBulkPut(entries) : db.settings.bulkPut(entries));
-            });
-          }
-          continue;
-        }
-        if (db[name] && Array.isArray(rows)) {
-          const keyField = name === 'counters' ? 'key' : 'id';
-          const newKeySet = new Set(rows.map((r) => r[keyField]));
-          const existingKeys = await db[name].toCollection().primaryKeys();
-          const toDelete = existingKeys.filter((k) => {
-            if (newKeySet.has(k)) {
-              recentLocalMutations.delete(`${name}:${k}`);
-              return false;
-            }
-            const mutationTime = recentLocalMutations.get(`${name}:${k}`);
-            if (mutationTime && now - mutationTime < MUTATION_GRACE_PERIOD_MS) {
-              return false;
-            }
-            return true;
-          });
-
-          await db.transaction('rw', [db[name]], async () => {
-            if (rows.length > 0) {
-              await (db[name]._rawBulkPut ? db[name]._rawBulkPut(rows) : db[name].bulkPut(rows));
-            }
-            if (toDelete.length > 0) {
-              await (db[name]._rawBulkDelete ? db[name]._rawBulkDelete(toDelete) : db[name].bulkDelete(toDelete));
-            }
-          });
-        }
-      } catch (tableErr) {
-        console.error(`[remoteSync] Error syncing ${name} from D1:`, tableErr?.message || tableErr);
-      }
-    }
     return null;
   } finally {
     db.__hydrating = false;
@@ -221,6 +187,7 @@ let syncQueued = false;
 
 export async function checkAndSync(db) {
   if (!isBrowserRuntime()) return;
+  if (Date.now() < backoffUntil) return;
   if (isSyncing) {
     syncQueued = true;
     return;
@@ -233,19 +200,25 @@ export async function checkAndSync(db) {
         const newVer = await syncFromBackend(db);
         currentLocalVersion = newVer || status.version;
       }
+      backoffDelay = 5000;
     }
-  } catch (_) {
-    // Network hiccup - ignore in poller
+  } catch (err) {
+    if (err?.status === 429 || err?.isRateLimit) {
+      backoffUntil = Date.now() + 15000;
+      console.warn('[remoteSync] Rate limit received in status check, backing off for 15s');
+    }
   } finally {
     isSyncing = false;
     if (syncQueued) {
       syncQueued = false;
-      checkAndSync(db);
+      if (Date.now() >= backoffUntil) {
+        checkAndSync(db);
+      }
     }
   }
 }
 
-export function startRealtimeSync(db, intervalMs = 2500) {
+export function startRealtimeSync(db, intervalMs = 12000) {
   if (!isBrowserRuntime()) return () => {};
 
   let bc = null;
@@ -253,12 +226,14 @@ export function startRealtimeSync(db, intervalMs = 2500) {
     try {
       bc = new BroadcastChannel('heeva_sync');
       bc.onmessage = () => {
-        checkAndSync(db);
+        if (Date.now() - lastSyncTimestamp > 1500) {
+          checkAndSync(db);
+        }
       };
     } catch (_) {}
   }
 
-  // Periodic poll of central database version
+  // Periodic poll of central database version (safe 12s default)
   const timer = setInterval(() => {
     if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
       checkAndSync(db);
@@ -267,7 +242,9 @@ export function startRealtimeSync(db, intervalMs = 2500) {
 
   const onVisible = () => {
     if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
-      checkAndSync(db);
+      if (Date.now() - lastSyncTimestamp > 3000) {
+        checkAndSync(db);
+      }
     }
   };
 

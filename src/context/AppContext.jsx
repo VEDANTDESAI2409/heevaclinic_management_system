@@ -73,7 +73,34 @@ export function AppProvider({ children }) {
       } catch (e) {
         console.error('Backend boot error', e);
         if (mounted) {
-          setDatabaseError(e?.message || 'Unable to connect to the clinic server. Please check your internet connection.');
+          let hasLocalData = false;
+          try {
+            const [pCount, mCount] = await Promise.all([
+              db.patients.count(),
+              db.medicines.count(),
+            ]);
+            hasLocalData = (pCount > 0 || mCount > 0);
+          } catch (_) {}
+
+          if (hasLocalData) {
+            console.warn('[AppContext] Booting in offline/cached mode with existing local records.');
+            setIsAuthenticated(true);
+            setDatabaseError(null);
+            try {
+              const s = await getSettings();
+              setSettings(s);
+              setThemeState(s.theme || 'light');
+              setLangState(s.lang || 'en');
+            } catch (_) {}
+          } else {
+            let errorMsg = e?.message;
+            if (e?.status === 429 || e?.isRateLimit) {
+              errorMsg = 'Server is currently handling high traffic. Please wait a moment and try again.';
+            } else if (!errorMsg) {
+              errorMsg = 'Unable to connect to the clinic server. Please check your internet connection.';
+            }
+            setDatabaseError(errorMsg);
+          }
         }
       } finally {
         if (mounted) {
@@ -102,8 +129,8 @@ export function AppProvider({ children }) {
     setStandalone(mq.matches);
     if (mq.addEventListener) mq.addEventListener('change', (e) => setStandalone(e.matches));
 
-    // Multi-device real-time sync (2.5s poll + cross-tab BroadcastChannel + visibility/focus trigger)
-    const stopRealtimeSync = startRealtimeSync(db, 2500);
+    // Multi-device real-time sync (12s poll + cross-tab BroadcastChannel + visibility/focus trigger)
+    const stopRealtimeSync = startRealtimeSync(db, 12000);
 
     return () => {
       mounted = false;

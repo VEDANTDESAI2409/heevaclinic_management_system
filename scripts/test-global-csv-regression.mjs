@@ -181,6 +181,20 @@ const parsedExpPat = parseCSV(exportedPatientCsv);
 const valExpPat = validateCSVRows('patients', parsedExpPat.rows, { headers: parsedExpPat.rawHeaders });
 assert(valExpPat.summary.validCount === 2, 'Exported Patient CSV seamlessly imported back without mapping or placeholder errors');
 
+// A2. Patient import with separate Registration Date and Registration Time columns
+const separateDateTimeCsv = toCSV(
+  ['UHID', 'Registration Date', 'Registration Time', 'Full Name', 'Age', 'Gender', 'Mobile Number'],
+  [
+    ['HC-2026-000003', '15-09-2026', '16:45', 'Kavita Joshi', '32', 'F', '9898012345'],
+    ['HC-2026-000004', '16-09-2026', '11:15 AM', 'Suresh Patel', '48', 'M', '9898098765'],
+  ]
+);
+const parsedSep = parseCSV(separateDateTimeCsv);
+const valSep = validateCSVRows('patients', parsedSep.rows, { headers: parsedSep.rawHeaders });
+assert(valSep.summary.validCount === 2, 'Separate Registration Date & Time (with 12h AM/PM) combined and validated successfully');
+assert(valSep.validRows[0].reg_date === '2026-09-15', 'Historical reg_date extracted correctly from separate date column');
+assert(valSep.validRows[1].created_at.includes('2026-09-16T11:15'), 'Historical AM/PM time parsed accurately into created_at');
+
 // B. Medicine export simulation
 const exportedMedCsv = toCSV(
   ['Code', 'Name', 'Generic', 'Category', 'Type', 'Strength', 'Unit', 'Buy Price', 'Sell Price', 'Min Stock', 'Available', 'Active'],

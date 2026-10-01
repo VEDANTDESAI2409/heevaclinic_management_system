@@ -9,22 +9,10 @@ var __export = (target, all) => {
 };
 
 // src/services/api.js
-async function request(path, options = {}) {
-  const base = getBaseUrl();
-  const token = getAuthToken();
-  const headers = {
-    "Content-Type": "application/json",
-    ...token ? { Authorization: `Bearer ${token}` } : {},
-    ...options.headers || {}
-  };
+async function executeFetch(url, fetchOptions, attempt = 0) {
   let response;
   try {
-    response = await fetch(`${base}${path}`, {
-      ...options,
-      headers,
-      cache: "no-store"
-      // Always bypass HTTP disk/memory cache for dynamic clinic data
-    });
+    response = await fetch(url, fetchOptions);
   } catch (error) {
     if (typeof window !== "undefined" && !(typeof process !== "undefined" && process.versions?.node)) {
       console.error("[API] network error", error);
@@ -33,22 +21,82 @@ async function request(path, options = {}) {
   }
   if (response.status === 401) {
     if (typeof window !== "undefined") {
-      window.dispatchEvent(new CustomEvent("heeva:unauthorized", { detail: { path } }));
+      window.dispatchEvent(new CustomEvent("heeva:unauthorized", { detail: { url } }));
     }
+  }
+  if (response.status === 429) {
+    const isIdempotent = !fetchOptions.method || ["GET", "PUT", "DELETE"].includes(fetchOptions.method);
+    if (isIdempotent && attempt < 2) {
+      const retryAfterHeader = response.headers.get("Retry-After");
+      const waitMs = retryAfterHeader ? Math.min(5e3, Math.max(1e3, parseInt(retryAfterHeader, 10) * 1e3)) : Math.min(4e3, (attempt + 1) * 1200 + Math.random() * 500);
+      await delay(waitMs);
+      return executeFetch(url, fetchOptions, attempt + 1);
+    }
+    const body = await response.json().catch(() => ({}));
+    const message = body.error || "Server is currently handling high traffic. Please wait a moment.";
+    const err = new Error(message);
+    err.status = 429;
+    err.isRateLimit = true;
+    throw err;
   }
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
-    const message = body.error || `Request failed (${response.status})`;
+    let message = body.error;
+    if (!message) {
+      if (response.status === 500) {
+        message = "Server error. Please try again.";
+      } else if (response.status === 502 || response.status === 503 || response.status === 504) {
+        message = "Database temporarily unavailable.";
+      } else {
+        message = `Request failed (${response.status})`;
+      }
+    }
     if (response.status !== 404) {
-      console.error("[API]", path, message);
+      console.error("[API]", url, message);
     }
     const err = new Error(message);
     err.status = response.status;
     throw err;
   }
+  return response;
+}
+async function request(path, options = {}) {
+  const method = (options.method || "GET").toUpperCase();
+  const isGet = method === "GET";
+  const base = getBaseUrl();
+  const token = getAuthToken();
+  const headers = {
+    "Content-Type": "application/json",
+    ...token ? { Authorization: `Bearer ${token}` } : {},
+    ...options.headers || {}
+  };
+  const fetchOptions = {
+    ...options,
+    method,
+    headers,
+    cache: "no-store"
+    // Always bypass HTTP disk/memory cache for dynamic clinic data
+  };
+  const url = `${base}${path}`;
+  if (isGet) {
+    if (inFlightGets.has(url)) {
+      return inFlightGets.get(url);
+    }
+    const promise = (async () => {
+      try {
+        const response2 = await executeFetch(url, fetchOptions);
+        return response2.status === 204 ? null : response2.json();
+      } finally {
+        inFlightGets.delete(url);
+      }
+    })();
+    inFlightGets.set(url, promise);
+    return promise;
+  }
+  const response = await executeFetch(url, fetchOptions);
   return response.status === 204 ? null : response.json();
 }
-var TOKEN_KEY, getAuthToken, getBaseUrl, getRecords, createRecord, updateRecord, deleteRecord, createPatient, getSyncBundle;
+var TOKEN_KEY, getAuthToken, getBaseUrl, inFlightGets, delay, createRecord, updateRecord, deleteRecord, createPatient, getSyncBundle;
 var init_api = __esm({
   "src/services/api.js"() {
     TOKEN_KEY = "heeva_auth_token";
@@ -90,7 +138,8 @@ var init_api = __esm({
       }).catch(() => {
       });
     }
-    getRecords = (table) => request(`/${table}`);
+    inFlightGets = /* @__PURE__ */ new Map();
+    delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     createRecord = (table, record) => request(`/${table}`, { method: "POST", body: JSON.stringify(record) });
     updateRecord = (table, id, patch) => request(`/${table}/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify(patch) });
     deleteRecord = (table, id) => request(`/${table}/${encodeURIComponent(id)}`, { method: "DELETE" });
@@ -152,7 +201,12 @@ async function syncFromBackend(db3) {
     let bundle = null;
     try {
       bundle = await getSyncBundle();
-    } catch (_) {
+    } catch (err) {
+      if (err?.status === 429 || err?.isRateLimit) {
+        backoffUntil = Date.now() + 15e3;
+        console.warn("[remoteSync] Backend busy (429), pausing sync for 15s");
+      }
+      return null;
     }
     if (bundle && bundle.ok && bundle.data) {
       const data = bundle.data;
@@ -174,11 +228,13 @@ async function syncFromBackend(db3) {
           const existingKeys = await db3[name].toCollection().primaryKeys();
           const toDelete = existingKeys.filter((k) => {
             if (newKeySet.has(k)) {
-              recentLocalMutations.delete(`${name}:${k}`);
               return false;
             }
             const mutationTime = recentLocalMutations.get(`${name}:${k}`);
             if (mutationTime && now - mutationTime < MUTATION_GRACE_PERIOD_MS) {
+              return false;
+            }
+            if (rows.length === 0 && existingKeys.length > 0) {
               return false;
             }
             return true;
@@ -194,56 +250,16 @@ async function syncFromBackend(db3) {
         }
       }
       currentLocalVersion = bundle.version;
+      backoffDelay = 5e3;
+      lastSyncTimestamp = Date.now();
       return bundle.version;
-    }
-    for (const name of syncOrder) {
-      try {
-        const rows = await getRecords(remoteName(name));
-        if (name === "settings") {
-          const row = rows?.[0];
-          if (row) {
-            const entries = Object.entries(row).filter(([key]) => !["id", "created_at", "updated_at"].includes(key)).map(([key, value]) => ({ key, value }));
-            await db3.transaction("rw", [db3.settings], async () => {
-              await (db3.settings._rawClear ? db3.settings._rawClear() : db3.settings.clear());
-              await (db3.settings._rawBulkPut ? db3.settings._rawBulkPut(entries) : db3.settings.bulkPut(entries));
-            });
-          }
-          continue;
-        }
-        if (db3[name] && Array.isArray(rows)) {
-          const keyField = name === "counters" ? "key" : "id";
-          const newKeySet = new Set(rows.map((r) => r[keyField]));
-          const existingKeys = await db3[name].toCollection().primaryKeys();
-          const toDelete = existingKeys.filter((k) => {
-            if (newKeySet.has(k)) {
-              recentLocalMutations.delete(`${name}:${k}`);
-              return false;
-            }
-            const mutationTime = recentLocalMutations.get(`${name}:${k}`);
-            if (mutationTime && now - mutationTime < MUTATION_GRACE_PERIOD_MS) {
-              return false;
-            }
-            return true;
-          });
-          await db3.transaction("rw", [db3[name]], async () => {
-            if (rows.length > 0) {
-              await (db3[name]._rawBulkPut ? db3[name]._rawBulkPut(rows) : db3[name].bulkPut(rows));
-            }
-            if (toDelete.length > 0) {
-              await (db3[name]._rawBulkDelete ? db3[name]._rawBulkDelete(toDelete) : db3[name].bulkDelete(toDelete));
-            }
-          });
-        }
-      } catch (tableErr) {
-        console.error(`[remoteSync] Error syncing ${name} from D1:`, tableErr?.message || tableErr);
-      }
     }
     return null;
   } finally {
     db3.__hydrating = false;
   }
 }
-var syncOrder, syncedTables, remoteNames, remoteName, isBrowserRuntime, recentLocalMutations, MUTATION_GRACE_PERIOD_MS, currentLocalVersion, syncFromSqlite;
+var syncOrder, syncedTables, remoteNames, remoteName, isBrowserRuntime, recentLocalMutations, MUTATION_GRACE_PERIOD_MS, backoffUntil, backoffDelay, lastSyncTimestamp, currentLocalVersion, syncFromSqlite;
 var init_remoteSync = __esm({
   "src/lib/remoteSync.js"() {
     init_api();
@@ -280,6 +296,9 @@ var init_remoteSync = __esm({
     isBrowserRuntime = () => typeof window !== "undefined" && (Boolean(globalThis.__FORCE_SYNC__) || !(typeof process !== "undefined" && process.versions?.node));
     recentLocalMutations = /* @__PURE__ */ new Map();
     MUTATION_GRACE_PERIOD_MS = 6e4;
+    backoffUntil = 0;
+    backoffDelay = 5e3;
+    lastSyncTimestamp = 0;
     currentLocalVersion = 0;
     syncFromSqlite = syncFromBackend;
   }
@@ -389,14 +408,17 @@ var init_db = __esm({
       table._rawClear = clear;
       if (bulkDelete) table._rawBulkDelete = bulkDelete;
       table.add = async (record, key) => {
+        if (db.__hydrating) return add(record, key);
         await pushRecord(name, record);
         return add(record, key);
       };
       table.put = async (record, key) => {
+        if (db.__hydrating) return put(record, key);
         await pushRecord(name, record);
         return put(record, key);
       };
       table.update = async (key, changes) => {
+        if (db.__hydrating) return update(key, changes);
         const existing = await table.get(key);
         if (!existing) return 0;
         const updated = { ...existing, ...changes };
@@ -404,20 +426,24 @@ var init_db = __esm({
         return update(key, changes);
       };
       table.delete = async (key) => {
+        if (db.__hydrating) return remove(key);
         await deleteRecord2(name, key);
         return remove(key);
       };
       table.bulkPut = async (records, options) => {
+        if (db.__hydrating) return bulkPut(records, options);
         for (const record of records) await pushRecord(name, record);
         return bulkPut(records, options);
       };
       table.clear = async () => {
+        if (db.__hydrating) return clear();
         const records = await table.toArray();
         for (const record of records) await deleteRecord2(name, record.id ?? record.key);
         return clear();
       };
       if (bulkDelete) {
         table.bulkDelete = async (keys) => {
+          if (db.__hydrating) return bulkDelete(keys);
           for (const key of keys) await deleteRecord2(name, key);
           return bulkDelete(keys);
         };
@@ -1121,25 +1147,31 @@ function parseHistoricalDateTime(val, fallbackISO = (/* @__PURE__ */ new Date())
   if (typeof val !== "string") return fallbackISO;
   const s = val.trim();
   if (!s) return fallbackISO;
-  const dmyMatch = s.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?$/);
+  const dmyMatch = s.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?(?:\s*(AM|PM))?)?$/i);
   if (dmyMatch) {
     const day = parseInt(dmyMatch[1], 10);
     const month = parseInt(dmyMatch[2], 10) - 1;
     const year = parseInt(dmyMatch[3], 10);
-    const hours = dmyMatch[4] ? parseInt(dmyMatch[4], 10) : 0;
+    let hours = dmyMatch[4] ? parseInt(dmyMatch[4], 10) : 0;
     const minutes = dmyMatch[5] ? parseInt(dmyMatch[5], 10) : 0;
     const seconds = dmyMatch[6] ? parseInt(dmyMatch[6], 10) : 0;
+    const ampm = dmyMatch[7] ? dmyMatch[7].toUpperCase() : null;
+    if (ampm === "PM" && hours < 12) hours += 12;
+    if (ampm === "AM" && hours === 12) hours = 0;
     const d = new Date(Date.UTC(year, month, day, hours, minutes, seconds));
     if (!isNaN(d.getTime())) return d.toISOString();
   }
-  const ymdMatch = s.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})(?:[T\s](\d{1,2}):(\d{2})(?::(\d{2}))?)?$/);
+  const ymdMatch = s.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})(?:[T\s](\d{1,2}):(\d{2})(?::(\d{2}))?(?:\s*(AM|PM))?)?$/i);
   if (ymdMatch) {
     const year = parseInt(ymdMatch[1], 10);
     const month = parseInt(ymdMatch[2], 10) - 1;
     const day = parseInt(ymdMatch[3], 10);
-    const hours = ymdMatch[4] ? parseInt(ymdMatch[4], 10) : 0;
+    let hours = ymdMatch[4] ? parseInt(ymdMatch[4], 10) : 0;
     const minutes = ymdMatch[5] ? parseInt(ymdMatch[5], 10) : 0;
     const seconds = ymdMatch[6] ? parseInt(ymdMatch[6], 10) : 0;
+    const ampm = ymdMatch[7] ? ymdMatch[7].toUpperCase() : null;
+    if (ampm === "PM" && hours < 12) hours += 12;
+    if (ampm === "AM" && hours === 12) hours = 0;
     const d = new Date(Date.UTC(year, month, day, hours, minutes, seconds));
     if (!isNaN(d.getTime())) return d.toISOString();
   }
@@ -1163,6 +1195,33 @@ var init_d1Client = __esm({
   "worker/db/d1Client.js"() {
     init_tables();
     d1Client = {
+      async ensureSchemaIntegrity(db3) {
+        if (!db3) return;
+        const migrations = [
+          "ALTER TABLE patients ADD COLUMN age INTEGER",
+          "ALTER TABLE patients ADD COLUMN marital_status TEXT DEFAULT 'Single'",
+          "ALTER TABLE prescription_items ADD COLUMN timing TEXT",
+          "ALTER TABLE prescription_items ADD COLUMN quantity TEXT",
+          "ALTER TABLE bills ADD COLUMN doctor_phone TEXT",
+          "ALTER TABLE bills ADD COLUMN diagnosis TEXT",
+          "ALTER TABLE bills ADD COLUMN advice TEXT",
+          "ALTER TABLE bills ADD COLUMN next_visit TEXT",
+          "ALTER TABLE bill_items ADD COLUMN timing TEXT",
+          "ALTER TABLE bill_items ADD COLUMN frequency TEXT",
+          "ALTER TABLE bill_items ADD COLUMN duration TEXT",
+          "ALTER TABLE bill_items ADD COLUMN composition TEXT",
+          "ALTER TABLE bill_items ADD COLUMN notes TEXT",
+          "ALTER TABLE bill_items ADD COLUMN returned INTEGER DEFAULT 0",
+          "CREATE INDEX IF NOT EXISTS idx_appointments_doctor_id ON appointments(doctor_id)",
+          "CREATE INDEX IF NOT EXISTS idx_prescriptions_doctor_id ON prescriptions(doctor_id)"
+        ];
+        for (const sql of migrations) {
+          try {
+            await db3.prepare(sql).run();
+          } catch (_) {
+          }
+        }
+      },
       async getAll(db3, collection) {
         const actual = resolveCollection(collection);
         const query = `SELECT * FROM "${actual}" ORDER BY CASE WHEN updated_at IS NOT NULL THEN updated_at WHEN created_at IS NOT NULL THEN created_at ELSE id END DESC`;

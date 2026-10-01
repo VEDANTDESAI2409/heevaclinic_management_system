@@ -19,10 +19,18 @@ export const MODULE_FIELD_ALIASES = {
     date_time: [
       'date_time', 'date_and_time', 'datetime', 'registered_date_and_time',
       'registered_date_time', 'registered_datetime', 'registration_date_and_time',
-      'registration_date_time', 'registration_date', 'reg_date_and_time',
-      'reg_date_time', 'reg_date', 'reg_datetime', 'created_at', 'created_date',
+      'registration_date_time', 'reg_date_and_time',
+      'reg_date_time', 'reg_datetime', 'created_at', 'created_date',
       'created_date_time', 'date_and_time_dd_mm_yyyy_hh_mm', 'date_time_dd_mm_yyyy_hh_mm',
-      'registration_time', 'entry_date', 'registered_at',
+      'registered_at', 'registration_date', 'reg_date', 'registered_date',
+    ],
+    reg_date: [
+      'registration_date', 'reg_date', 'registered_date', 'date_of_registration',
+      'regdate', 'date',
+    ],
+    reg_time: [
+      'registration_time', 'reg_time', 'registered_time', 'time_of_registration',
+      'regtime', 'time',
     ],
     age: [
       'age', 'age_years', 'age_in_years', 'age_yrs', 'age_year', 'years',
@@ -323,6 +331,17 @@ export function mapParsedRow(type, rawRow) {
   for (const [key, value] of Object.entries(rawRow)) {
     if (key !== '__rowNum' && key !== '__raw' && canonicalRow[key] === undefined) {
       canonicalRow[key] = normalizeValue(value);
+    }
+  }
+
+  // 3. For patients, if separate Registration Date and Registration Time were provided, combine them
+  if (type === 'patients') {
+    const rawDate = canonicalRow.reg_date || '';
+    const rawTime = canonicalRow.reg_time || '';
+    if (rawDate && rawTime) {
+      canonicalRow.date_time = `${rawDate} ${rawTime}`.trim();
+    } else if (rawDate && !canonicalRow.date_time) {
+      canonicalRow.date_time = rawDate;
     }
   }
 

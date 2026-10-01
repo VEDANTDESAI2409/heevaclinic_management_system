@@ -210,10 +210,15 @@ export default function Patients() {
     return list.sort((a, b) => (b.created_at || b.reg_date || '').localeCompare(a.created_at || a.reg_date || ''));
   }, [q, gender]);
 
-  const exportCSV = () => {
+  const exportCSV = async () => {
+    const allPatients = await db.patients.toArray();
+    const sorted = allPatients.sort((a, b) =>
+      (b.created_at || b.reg_date || '').localeCompare(a.created_at || a.reg_date || '')
+    );
     const headers = [
       'UHID',
-      'Registered Date & Time',
+      'Registration Date',
+      'Registration Time',
       'Full Name',
       'Age',
       'Gender',
@@ -228,23 +233,28 @@ export default function Patients() {
       'Notes',
       'Patient Status',
     ];
-    const rows = (patients || []).map((p) => [
-      p.uhid || '—',
-      fmtDateTime(p.created_at || p.reg_date),
-      p.name || '—',
-      p.age != null ? p.age : ageLabel(p),
-      p.gender || '—',
-      p.marital_status || 'Single',
-      p.mobile || '—',
-      p.blood_group || '—',
-      p.address || '—',
-      p.pin || '—',
-      p.allergies || 'None',
-      p.conditions || 'None',
-      p.current_meds || 'None',
-      p.notes || '—',
-      p.status || 'New',
-    ]);
+    const rows = sorted.map((p) => {
+      const regDate = p.reg_date ? toDDMMYYYY(p.reg_date) : p.created_at ? toDDMMYYYY(p.created_at) : '—';
+      const regTime = p.created_at ? fmtTime(p.created_at) : '—';
+      return [
+        p.uhid || '—',
+        regDate,
+        regTime,
+        p.name || '—',
+        p.age != null ? p.age : ageLabel(p),
+        p.gender || '—',
+        p.marital_status || 'Single',
+        p.mobile || '—',
+        p.blood_group || '—',
+        p.address || '—',
+        p.pin || '—',
+        p.allergies || 'None',
+        p.conditions || 'None',
+        p.current_meds || 'None',
+        p.notes || '—',
+        p.active ? 'Active' : 'Archived',
+      ];
+    });
     download(
       `heeva-patients-all-${dkey()}.csv`,
       toCSV(headers, rows),

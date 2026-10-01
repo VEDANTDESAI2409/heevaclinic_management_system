@@ -1,7 +1,11 @@
+import { d1Client } from '../db/d1Client.js';
+
 export async function handleHealth(_req, env) {
   try {
     // Probe database connectivity with a lightweight query
     await env.DB.prepare('SELECT 1').first();
+    // Ensure all required schema columns and indexes exist
+    await d1Client.ensureSchemaIntegrity(env.DB);
     return Response.json(
       { status: 'ok', storage: 'd1', backend: 'connected' },
       { status: 200 }

@@ -96,14 +96,17 @@ for (const name of syncedTables) {
   if (bulkDelete) table._rawBulkDelete = bulkDelete;
 
   table.add = async (record, key) => {
+    if (db.__hydrating) return add(record, key);
     await pushRecord(name, record);
     return add(record, key);
   };
   table.put = async (record, key) => {
+    if (db.__hydrating) return put(record, key);
     await pushRecord(name, record);
     return put(record, key);
   };
   table.update = async (key, changes) => {
+    if (db.__hydrating) return update(key, changes);
     const existing = await table.get(key);
     if (!existing) return 0;
     const updated = { ...existing, ...changes };
@@ -111,20 +114,24 @@ for (const name of syncedTables) {
     return update(key, changes);
   };
   table.delete = async (key) => {
+    if (db.__hydrating) return remove(key);
     await deleteRecord(name, key);
     return remove(key);
   };
   table.bulkPut = async (records, options) => {
+    if (db.__hydrating) return bulkPut(records, options);
     for (const record of records) await pushRecord(name, record);
     return bulkPut(records, options);
   };
   table.clear = async () => {
+    if (db.__hydrating) return clear();
     const records = await table.toArray();
     for (const record of records) await deleteRecord(name, record.id ?? record.key);
     return clear();
   };
   if (bulkDelete) {
     table.bulkDelete = async (keys) => {
+      if (db.__hydrating) return bulkDelete(keys);
       for (const key of keys) await deleteRecord(name, key);
       return bulkDelete(keys);
     };

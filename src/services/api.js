@@ -53,7 +53,72 @@ if (typeof window !== 'undefined' && 'caches' in window) {
   }).catch(() => {});
 }
 
+const inFlightGets = new Map();
+const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function executeFetch(url, fetchOptions, attempt = 0) {
+  let response;
+  try {
+    response = await fetch(url, fetchOptions);
+  } catch (error) {
+    if (typeof window !== 'undefined' && !(typeof process !== 'undefined' && process.versions?.node)) {
+      console.error('[API] network error', error);
+    }
+    throw new Error('Unable to connect to the clinic server. Please check your internet connection.');
+  }
+
+  if (response.status === 401) {
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('heeva:unauthorized', { detail: { url } }));
+    }
+  }
+
+  // Handle HTTP 429 Rate Limit with backoff and controlled retry
+  if (response.status === 429) {
+    const isIdempotent = !fetchOptions.method || ['GET', 'PUT', 'DELETE'].includes(fetchOptions.method);
+    if (isIdempotent && attempt < 2) {
+      const retryAfterHeader = response.headers.get('Retry-After');
+      const waitMs = retryAfterHeader
+        ? Math.min(5000, Math.max(1000, parseInt(retryAfterHeader, 10) * 1000))
+        : Math.min(4000, (attempt + 1) * 1200 + Math.random() * 500);
+      await delay(waitMs);
+      return executeFetch(url, fetchOptions, attempt + 1);
+    }
+
+    const body = await response.json().catch(() => ({}));
+    const message = body.error || 'Server is currently handling high traffic. Please wait a moment.';
+    const err = new Error(message);
+    err.status = 429;
+    err.isRateLimit = true;
+    throw err;
+  }
+
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    let message = body.error;
+    if (!message) {
+      if (response.status === 500) {
+        message = 'Server error. Please try again.';
+      } else if (response.status === 502 || response.status === 503 || response.status === 504) {
+        message = 'Database temporarily unavailable.';
+      } else {
+        message = `Request failed (${response.status})`;
+      }
+    }
+    if (response.status !== 404) {
+      console.error('[API]', url, message);
+    }
+    const err = new Error(message);
+    err.status = response.status;
+    throw err;
+  }
+
+  return response;
+}
+
 async function request(path, options = {}) {
+  const method = (options.method || 'GET').toUpperCase();
+  const isGet = method === 'GET';
   const base = getBaseUrl();
   const token = getAuthToken();
 
@@ -63,39 +128,33 @@ async function request(path, options = {}) {
     ...(options.headers || {}),
   };
 
-  let response;
-  try {
-    response = await fetch(`${base}${path}`, {
-      ...options,
-      headers,
-      cache: 'no-store', // Always bypass HTTP disk/memory cache for dynamic clinic data
-    });
-  } catch (error) {
-    // Only log network failure if in browser runtime
-    if (typeof window !== 'undefined' && !(typeof process !== 'undefined' && process.versions?.node)) {
-      console.error('[API] network error', error);
+  const fetchOptions = {
+    ...options,
+    method,
+    headers,
+    cache: 'no-store', // Always bypass HTTP disk/memory cache for dynamic clinic data
+  };
+
+  const url = `${base}${path}`;
+
+  // In-flight deduplication for concurrent GET requests to avoid duplicate parallel calls
+  if (isGet) {
+    if (inFlightGets.has(url)) {
+      return inFlightGets.get(url);
     }
-    throw new Error('Unable to connect to the clinic server. Please check your internet connection.');
+    const promise = (async () => {
+      try {
+        const response = await executeFetch(url, fetchOptions);
+        return response.status === 204 ? null : response.json();
+      } finally {
+        inFlightGets.delete(url);
+      }
+    })();
+    inFlightGets.set(url, promise);
+    return promise;
   }
 
-  if (response.status === 401) {
-    if (typeof window !== 'undefined') {
-      window.dispatchEvent(new CustomEvent('heeva:unauthorized', { detail: { path } }));
-    }
-  }
-
-  if (!response.ok) {
-    const body = await response.json().catch(() => ({}));
-    const message = body.error || `Request failed (${response.status})`;
-    // Do not pollute console with 404s when querying individual records
-    if (response.status !== 404) {
-      console.error('[API]', path, message);
-    }
-    const err = new Error(message);
-    err.status = response.status;
-    throw err;
-  }
-
+  const response = await executeFetch(url, fetchOptions);
   return response.status === 204 ? null : response.json();
 }
 

@@ -29,15 +29,19 @@ function parseHistoricalDateTime(rawDateTime, today) {
 
   const s = String(rawDateTime).trim();
 
-  // 1. DD-MM-YYYY or DD/MM/YYYY with optional time
-  const dmyMatch = s.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})(?:[\sT](\d{1,2}):(\d{2})(?::(\d{2}))?)?$/);
+  // 1. DD-MM-YYYY or DD/MM/YYYY with optional time (24h or 12h AM/PM)
+  const dmyMatch = s.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})(?:[\sT](\d{1,2}):(\d{2})(?::(\d{2}))?(?:\s*(AM|PM))?)?$/i);
   if (dmyMatch) {
     const day = parseInt(dmyMatch[1], 10);
     const month = parseInt(dmyMatch[2], 10);
     const year = parseInt(dmyMatch[3], 10);
-    const hour = dmyMatch[4] !== undefined ? parseInt(dmyMatch[4], 10) : 0;
+    let hour = dmyMatch[4] !== undefined ? parseInt(dmyMatch[4], 10) : 0;
     const minute = dmyMatch[5] !== undefined ? parseInt(dmyMatch[5], 10) : 0;
     const second = dmyMatch[6] !== undefined ? parseInt(dmyMatch[6], 10) : 0;
+    const ampm = dmyMatch[7] ? dmyMatch[7].toUpperCase() : null;
+
+    if (ampm === 'PM' && hour < 12) hour += 12;
+    if (ampm === 'AM' && hour === 12) hour = 0;
 
     if (month < 1 || month > 12) return { error: 'Invalid month in Date & Time (must be 01–12)' };
     if (year < 1900 || year > 2100) return { error: 'Invalid year in Date & Time (1900–2100)' };
@@ -53,19 +57,26 @@ function parseHistoricalDateTime(rawDateTime, today) {
     return { itemCreatedAt, regDate, error: null };
   }
 
-  // 2. YYYY-MM-DD with optional time
-  const ymdMatch = s.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})(?:[\sT](\d{1,2}):(\d{2})(?::(\d{2}))?)?$/);
+  // 2. YYYY-MM-DD with optional time (24h or 12h AM/PM)
+  const ymdMatch = s.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})(?:[\sT](\d{1,2}):(\d{2})(?::(\d{2}))?(?:\s*(AM|PM))?)?$/i);
   if (ymdMatch) {
     const year = parseInt(ymdMatch[1], 10);
     const month = parseInt(ymdMatch[2], 10);
     const day = parseInt(ymdMatch[3], 10);
-    const hour = ymdMatch[4] !== undefined ? parseInt(ymdMatch[4], 10) : 0;
+    let hour = ymdMatch[4] !== undefined ? parseInt(ymdMatch[4], 10) : 0;
     const minute = ymdMatch[5] !== undefined ? parseInt(ymdMatch[5], 10) : 0;
     const second = ymdMatch[6] !== undefined ? parseInt(ymdMatch[6], 10) : 0;
+    const ampm = ymdMatch[7] ? ymdMatch[7].toUpperCase() : null;
+
+    if (ampm === 'PM' && hour < 12) hour += 12;
+    if (ampm === 'AM' && hour === 12) hour = 0;
 
     if (month < 1 || month > 12) return { error: 'Invalid month in Date & Time (must be 01–12)' };
     const daysInMonth = new Date(year, month, 0).getDate();
     if (day < 1 || day > daysInMonth) return { error: `Invalid day in Date & Time for month ${month} (must be 01–${daysInMonth})` };
+    if (hour < 0 || hour > 23) return { error: 'Invalid hour in Date & Time (must be 00–23)' };
+    if (minute < 0 || minute > 59) return { error: 'Invalid minute in Date & Time (must be 00–59)' };
+    if (second < 0 || second > 59) return { error: 'Invalid second in Date & Time (must be 00–59)' };
 
     const p2 = (n) => String(n).padStart(2, '0');
     itemCreatedAt = `${year}-${p2(month)}-${p2(day)}T${p2(hour)}:${p2(minute)}:${p2(second)}.000Z`;

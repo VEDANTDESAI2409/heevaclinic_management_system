@@ -54,12 +54,17 @@ class ErrorBoundary extends React.Component {
 }
 
 function DatabaseErrorScreen({ message }) {
+  const isRateLimit = /traffic|busy|429|rate/i.test(message || '');
+  const isNetwork = /internet|connect|network|offline/i.test(message || '');
+  const title = isRateLimit ? 'Server Busy' : isNetwork ? 'Connection Required' : 'Database Unavailable';
+  const btnLabel = isRateLimit ? 'Try Again' : 'Retry Connection';
+
   return (
     <div className="boot-screen">
       <Logo size={64} />
-      <div className="boot-name">Database connection required</div>
+      <div className="boot-name">{title}</div>
       <div className="boot-sub">{message}</div>
-      <button className="btn btn-primary" onClick={() => window.location.reload()}>Retry connection</button>
+      <button className="btn btn-primary" onClick={() => window.location.reload()}>{btnLabel}</button>
     </div>
   );
 }

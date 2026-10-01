@@ -39,22 +39,10 @@ __export(api_exports, {
   updatePatient: () => updatePatient,
   updateRecord: () => updateRecord
 });
-async function request(path, options = {}) {
-  const base = getBaseUrl();
-  const token = getAuthToken();
-  const headers = {
-    "Content-Type": "application/json",
-    ...token ? { Authorization: `Bearer ${token}` } : {},
-    ...options.headers || {}
-  };
+async function executeFetch(url, fetchOptions, attempt = 0) {
   let response;
   try {
-    response = await fetch(`${base}${path}`, {
-      ...options,
-      headers,
-      cache: "no-store"
-      // Always bypass HTTP disk/memory cache for dynamic clinic data
-    });
+    response = await fetch(url, fetchOptions);
   } catch (error) {
     if (typeof window !== "undefined" && !(typeof process !== "undefined" && process.versions?.node)) {
       console.error("[API] network error", error);
@@ -63,22 +51,82 @@ async function request(path, options = {}) {
   }
   if (response.status === 401) {
     if (typeof window !== "undefined") {
-      window.dispatchEvent(new CustomEvent("heeva:unauthorized", { detail: { path } }));
+      window.dispatchEvent(new CustomEvent("heeva:unauthorized", { detail: { url } }));
     }
+  }
+  if (response.status === 429) {
+    const isIdempotent = !fetchOptions.method || ["GET", "PUT", "DELETE"].includes(fetchOptions.method);
+    if (isIdempotent && attempt < 2) {
+      const retryAfterHeader = response.headers.get("Retry-After");
+      const waitMs = retryAfterHeader ? Math.min(5e3, Math.max(1e3, parseInt(retryAfterHeader, 10) * 1e3)) : Math.min(4e3, (attempt + 1) * 1200 + Math.random() * 500);
+      await delay(waitMs);
+      return executeFetch(url, fetchOptions, attempt + 1);
+    }
+    const body = await response.json().catch(() => ({}));
+    const message = body.error || "Server is currently handling high traffic. Please wait a moment.";
+    const err = new Error(message);
+    err.status = 429;
+    err.isRateLimit = true;
+    throw err;
   }
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
-    const message = body.error || `Request failed (${response.status})`;
+    let message = body.error;
+    if (!message) {
+      if (response.status === 500) {
+        message = "Server error. Please try again.";
+      } else if (response.status === 502 || response.status === 503 || response.status === 504) {
+        message = "Database temporarily unavailable.";
+      } else {
+        message = `Request failed (${response.status})`;
+      }
+    }
     if (response.status !== 404) {
-      console.error("[API]", path, message);
+      console.error("[API]", url, message);
     }
     const err = new Error(message);
     err.status = response.status;
     throw err;
   }
+  return response;
+}
+async function request(path, options = {}) {
+  const method = (options.method || "GET").toUpperCase();
+  const isGet = method === "GET";
+  const base = getBaseUrl();
+  const token = getAuthToken();
+  const headers = {
+    "Content-Type": "application/json",
+    ...token ? { Authorization: `Bearer ${token}` } : {},
+    ...options.headers || {}
+  };
+  const fetchOptions = {
+    ...options,
+    method,
+    headers,
+    cache: "no-store"
+    // Always bypass HTTP disk/memory cache for dynamic clinic data
+  };
+  const url = `${base}${path}`;
+  if (isGet) {
+    if (inFlightGets.has(url)) {
+      return inFlightGets.get(url);
+    }
+    const promise = (async () => {
+      try {
+        const response2 = await executeFetch(url, fetchOptions);
+        return response2.status === 204 ? null : response2.json();
+      } finally {
+        inFlightGets.delete(url);
+      }
+    })();
+    inFlightGets.set(url, promise);
+    return promise;
+  }
+  const response = await executeFetch(url, fetchOptions);
   return response.status === 204 ? null : response.json();
 }
-var TOKEN_KEY, getAuthToken, setAuthToken, clearAuthToken, getBaseUrl, authApi, adminApi, getHealth, getRecords, getRecord, createRecord, updateRecord, deleteRecord, bulkImportRecords, getPatients, getNextUhid, createPatient, updatePatient, deletePatient, getMedicines, createMedicine2, updateMedicine, deleteMedicine, getAppointments, createAppointment, updateAppointment, deleteAppointment, getSyncStatus, getSyncBundle;
+var TOKEN_KEY, getAuthToken, setAuthToken, clearAuthToken, getBaseUrl, inFlightGets, delay, authApi, adminApi, getHealth, getRecords, getRecord, createRecord, updateRecord, deleteRecord, bulkImportRecords, getPatients, getNextUhid, createPatient, updatePatient, deletePatient, getMedicines, createMedicine2, updateMedicine, deleteMedicine, getAppointments, createAppointment, updateAppointment, deleteAppointment, getSyncStatus, getSyncBundle;
 var init_api = __esm({
   "src/services/api.js"() {
     TOKEN_KEY = "heeva_auth_token";
@@ -130,6 +178,8 @@ var init_api = __esm({
       }).catch(() => {
       });
     }
+    inFlightGets = /* @__PURE__ */ new Map();
+    delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     authApi = {
       async login(password) {
         const res = await request("/auth/login", {
@@ -261,7 +311,12 @@ async function syncFromBackend(db3) {
     let bundle = null;
     try {
       bundle = await getSyncBundle();
-    } catch (_) {
+    } catch (err) {
+      if (err?.status === 429 || err?.isRateLimit) {
+        backoffUntil = Date.now() + 15e3;
+        console.warn("[remoteSync] Backend busy (429), pausing sync for 15s");
+      }
+      return null;
     }
     if (bundle && bundle.ok && bundle.data) {
       const data = bundle.data;
@@ -283,11 +338,13 @@ async function syncFromBackend(db3) {
           const existingKeys = await db3[name].toCollection().primaryKeys();
           const toDelete = existingKeys.filter((k) => {
             if (newKeySet.has(k)) {
-              recentLocalMutations.delete(`${name}:${k}`);
               return false;
             }
             const mutationTime = recentLocalMutations.get(`${name}:${k}`);
             if (mutationTime && now - mutationTime < MUTATION_GRACE_PERIOD_MS) {
+              return false;
+            }
+            if (rows.length === 0 && existingKeys.length > 0) {
               return false;
             }
             return true;
@@ -303,49 +360,9 @@ async function syncFromBackend(db3) {
         }
       }
       currentLocalVersion = bundle.version;
+      backoffDelay = 5e3;
+      lastSyncTimestamp = Date.now();
       return bundle.version;
-    }
-    for (const name of syncOrder) {
-      try {
-        const rows = await getRecords(remoteName(name));
-        if (name === "settings") {
-          const row = rows?.[0];
-          if (row) {
-            const entries = Object.entries(row).filter(([key]) => !["id", "created_at", "updated_at"].includes(key)).map(([key, value]) => ({ key, value }));
-            await db3.transaction("rw", [db3.settings], async () => {
-              await (db3.settings._rawClear ? db3.settings._rawClear() : db3.settings.clear());
-              await (db3.settings._rawBulkPut ? db3.settings._rawBulkPut(entries) : db3.settings.bulkPut(entries));
-            });
-          }
-          continue;
-        }
-        if (db3[name] && Array.isArray(rows)) {
-          const keyField = name === "counters" ? "key" : "id";
-          const newKeySet = new Set(rows.map((r) => r[keyField]));
-          const existingKeys = await db3[name].toCollection().primaryKeys();
-          const toDelete = existingKeys.filter((k) => {
-            if (newKeySet.has(k)) {
-              recentLocalMutations.delete(`${name}:${k}`);
-              return false;
-            }
-            const mutationTime = recentLocalMutations.get(`${name}:${k}`);
-            if (mutationTime && now - mutationTime < MUTATION_GRACE_PERIOD_MS) {
-              return false;
-            }
-            return true;
-          });
-          await db3.transaction("rw", [db3[name]], async () => {
-            if (rows.length > 0) {
-              await (db3[name]._rawBulkPut ? db3[name]._rawBulkPut(rows) : db3[name].bulkPut(rows));
-            }
-            if (toDelete.length > 0) {
-              await (db3[name]._rawBulkDelete ? db3[name]._rawBulkDelete(toDelete) : db3[name].bulkDelete(toDelete));
-            }
-          });
-        }
-      } catch (tableErr) {
-        console.error(`[remoteSync] Error syncing ${name} from D1:`, tableErr?.message || tableErr);
-      }
     }
     return null;
   } finally {
@@ -354,6 +371,7 @@ async function syncFromBackend(db3) {
 }
 async function checkAndSync(db3) {
   if (!isBrowserRuntime()) return;
+  if (Date.now() < backoffUntil) return;
   if (isSyncing) {
     syncQueued = true;
     return;
@@ -366,17 +384,24 @@ async function checkAndSync(db3) {
         const newVer = await syncFromBackend(db3);
         currentLocalVersion = newVer || status.version;
       }
+      backoffDelay = 5e3;
     }
-  } catch (_) {
+  } catch (err) {
+    if (err?.status === 429 || err?.isRateLimit) {
+      backoffUntil = Date.now() + 15e3;
+      console.warn("[remoteSync] Rate limit received in status check, backing off for 15s");
+    }
   } finally {
     isSyncing = false;
     if (syncQueued) {
       syncQueued = false;
-      checkAndSync(db3);
+      if (Date.now() >= backoffUntil) {
+        checkAndSync(db3);
+      }
     }
   }
 }
-function startRealtimeSync(db3, intervalMs = 2500) {
+function startRealtimeSync(db3, intervalMs = 12e3) {
   if (!isBrowserRuntime()) return () => {
   };
   let bc = null;
@@ -384,7 +409,9 @@ function startRealtimeSync(db3, intervalMs = 2500) {
     try {
       bc = new BroadcastChannel("heeva_sync");
       bc.onmessage = () => {
-        checkAndSync(db3);
+        if (Date.now() - lastSyncTimestamp > 1500) {
+          checkAndSync(db3);
+        }
       };
     } catch (_) {
     }
@@ -396,7 +423,9 @@ function startRealtimeSync(db3, intervalMs = 2500) {
   }, intervalMs);
   const onVisible = () => {
     if (typeof document !== "undefined" && document.visibilityState === "visible") {
-      checkAndSync(db3);
+      if (Date.now() - lastSyncTimestamp > 3e3) {
+        checkAndSync(db3);
+      }
     }
   };
   if (typeof document !== "undefined") {
@@ -416,7 +445,7 @@ function startRealtimeSync(db3, intervalMs = 2500) {
     }
   };
 }
-var syncOrder, syncedTables, remoteNames, remoteName, isBrowserRuntime, recentLocalMutations, MUTATION_GRACE_PERIOD_MS, currentLocalVersion, isSyncing, syncQueued, syncFromSqlite;
+var syncOrder, syncedTables, remoteNames, remoteName, isBrowserRuntime, recentLocalMutations, MUTATION_GRACE_PERIOD_MS, backoffUntil, backoffDelay, lastSyncTimestamp, currentLocalVersion, isSyncing, syncQueued, syncFromSqlite;
 var init_remoteSync = __esm({
   "src/lib/remoteSync.js"() {
     init_api();
@@ -453,6 +482,9 @@ var init_remoteSync = __esm({
     isBrowserRuntime = () => typeof window !== "undefined" && (Boolean(globalThis.__FORCE_SYNC__) || !(typeof process !== "undefined" && process.versions?.node));
     recentLocalMutations = /* @__PURE__ */ new Map();
     MUTATION_GRACE_PERIOD_MS = 6e4;
+    backoffUntil = 0;
+    backoffDelay = 5e3;
+    lastSyncTimestamp = 0;
     currentLocalVersion = 0;
     isSyncing = false;
     syncQueued = false;
@@ -564,14 +596,17 @@ var init_db = __esm({
       table._rawClear = clear;
       if (bulkDelete) table._rawBulkDelete = bulkDelete;
       table.add = async (record, key) => {
+        if (db.__hydrating) return add(record, key);
         await pushRecord(name, record);
         return add(record, key);
       };
       table.put = async (record, key) => {
+        if (db.__hydrating) return put(record, key);
         await pushRecord(name, record);
         return put(record, key);
       };
       table.update = async (key, changes) => {
+        if (db.__hydrating) return update(key, changes);
         const existing = await table.get(key);
         if (!existing) return 0;
         const updated = { ...existing, ...changes };
@@ -579,20 +614,24 @@ var init_db = __esm({
         return update(key, changes);
       };
       table.delete = async (key) => {
+        if (db.__hydrating) return remove(key);
         await deleteRecord2(name, key);
         return remove(key);
       };
       table.bulkPut = async (records, options) => {
+        if (db.__hydrating) return bulkPut(records, options);
         for (const record of records) await pushRecord(name, record);
         return bulkPut(records, options);
       };
       table.clear = async () => {
+        if (db.__hydrating) return clear();
         const records = await table.toArray();
         for (const record of records) await deleteRecord2(name, record.id ?? record.key);
         return clear();
       };
       if (bulkDelete) {
         table.bulkDelete = async (keys) => {
+          if (db.__hydrating) return bulkDelete(keys);
           for (const key of keys) await deleteRecord2(name, key);
           return bulkDelete(keys);
         };
@@ -618,7 +657,7 @@ function addDays(d, n) {
   x.setDate(x.getDate() + n);
   return x;
 }
-function toDDMMYYYY(s) {
+function toDDMMYYYY2(s) {
   if (!s) return "";
   const str = String(s).trim();
   if (/^\d{2}-\d{2}-\d{4}$/.test(str)) return str;
@@ -650,7 +689,7 @@ function parseDDMMYYYY(dateStr) {
 }
 function fmtDate(s) {
   if (!s) return "\u2014";
-  return toDDMMYYYY(s) || "\u2014";
+  return toDDMMYYYY2(s) || "\u2014";
 }
 function fmtDateTime(s) {
   if (!s) return "\u2014";
@@ -672,7 +711,7 @@ function fmtDateTime12h(s) {
   const timePart = `${p2(hours)}:${p2(d.getMinutes())} ${ampm}`;
   return `${datePart} ${timePart}`;
 }
-function fmtTime(s) {
+function fmtTime2(s) {
   if (!s) return "\u2014";
   const d = new Date(s);
   return d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
@@ -1488,7 +1527,35 @@ function AppProvider({ children }) {
       } catch (e) {
         console.error("Backend boot error", e);
         if (mounted) {
-          setDatabaseError(e?.message || "Unable to connect to the clinic server. Please check your internet connection.");
+          let hasLocalData = false;
+          try {
+            const [pCount, mCount] = await Promise.all([
+              db_default.patients.count(),
+              db_default.medicines.count()
+            ]);
+            hasLocalData = pCount > 0 || mCount > 0;
+          } catch (_) {
+          }
+          if (hasLocalData) {
+            console.warn("[AppContext] Booting in offline/cached mode with existing local records.");
+            setIsAuthenticated(true);
+            setDatabaseError(null);
+            try {
+              const s = await getSettings();
+              setSettings(s);
+              setThemeState(s.theme || "light");
+              setLangState(s.lang || "en");
+            } catch (_) {
+            }
+          } else {
+            let errorMsg = e?.message;
+            if (e?.status === 429 || e?.isRateLimit) {
+              errorMsg = "Server is currently handling high traffic. Please wait a moment and try again.";
+            } else if (!errorMsg) {
+              errorMsg = "Unable to connect to the clinic server. Please check your internet connection.";
+            }
+            setDatabaseError(errorMsg);
+          }
         }
       } finally {
         if (mounted) {
@@ -1518,7 +1585,7 @@ function AppProvider({ children }) {
     const mq = window.matchMedia("(display-mode: standalone)");
     setStandalone(mq.matches);
     if (mq.addEventListener) mq.addEventListener("change", (e) => setStandalone(e.matches));
-    const stopRealtimeSync = startRealtimeSync(db_default, 2500);
+    const stopRealtimeSync = startRealtimeSync(db_default, 12e3);
     return () => {
       mounted = false;
       stopRealtimeSync();
@@ -2141,7 +2208,7 @@ function printInvoiceA4(bill2, items = [], payments = [], s = {}) {
       `), /* @__PURE__ */ React3.createElement("div", { className: "letterhead-sheet" }, /* @__PURE__ */ React3.createElement("div", { className: "med-doc-patient" }, /* @__PURE__ */ React3.createElement("div", { className: "med-doc-grid" }, /* @__PURE__ */ React3.createElement("div", { className: "med-doc-field" }, /* @__PURE__ */ React3.createElement("span", { className: "med-doc-lbl" }, "Patient:"), /* @__PURE__ */ React3.createElement("span", { className: "med-doc-val" }, bill2.patient_name || "\u2014")), /* @__PURE__ */ React3.createElement("div", { className: "med-doc-field" }, /* @__PURE__ */ React3.createElement("span", { className: "med-doc-lbl" }, "UHID:"), /* @__PURE__ */ React3.createElement("span", { className: "med-doc-val" }, bill2.uhid || "\u2014")), /* @__PURE__ */ React3.createElement("div", { className: "med-doc-field" }, /* @__PURE__ */ React3.createElement("span", { className: "med-doc-lbl" }, "Bill No:"), /* @__PURE__ */ React3.createElement("span", { className: "med-doc-val", style: { fontFamily: "Consolas, monospace" } }, bill2.bill_no)), /* @__PURE__ */ React3.createElement("div", { className: "med-doc-field" }, /* @__PURE__ */ React3.createElement("span", { className: "med-doc-lbl" }, "Age / Sex:"), /* @__PURE__ */ React3.createElement("span", { className: "med-doc-val" }, ageSex)), /* @__PURE__ */ React3.createElement("div", { className: "med-doc-field" }, /* @__PURE__ */ React3.createElement("span", { className: "med-doc-lbl" }, "Mobile:"), /* @__PURE__ */ React3.createElement("span", { className: "med-doc-val" }, bill2.patient_mobile || "\u2014")), /* @__PURE__ */ React3.createElement("div", { className: "med-doc-field" }, /* @__PURE__ */ React3.createElement("span", { className: "med-doc-lbl" }, "Date & Time:"), /* @__PURE__ */ React3.createElement("span", { className: "med-doc-val" }, fmtDateTime12h(bill2.time))))), bill2.diagnosis && /* @__PURE__ */ React3.createElement("div", { className: "med-doc-diag" }, /* @__PURE__ */ React3.createElement("span", { className: "med-doc-diag-lbl" }, "DIAGNOSIS:"), /* @__PURE__ */ React3.createElement("span", { className: "med-doc-diag-val" }, bill2.diagnosis)), /* @__PURE__ */ React3.createElement("table", { className: "med-doc-table" }, /* @__PURE__ */ React3.createElement("thead", null, /* @__PURE__ */ React3.createElement("tr", null, /* @__PURE__ */ React3.createElement("th", { style: { width: "5%" }, className: "th-c" }, "#"), /* @__PURE__ */ React3.createElement("th", { style: { width: "34%" } }, "Medicine"), /* @__PURE__ */ React3.createElement("th", { style: { width: "14%" }, className: "th-c" }, "Dosage"), /* @__PURE__ */ React3.createElement("th", { style: { width: "25%" } }, "Timing - Frequency - Duration"), /* @__PURE__ */ React3.createElement("th", { style: { width: "8%" }, className: "th-c" }, "Qty"), /* @__PURE__ */ React3.createElement("th", { style: { width: "7%" }, className: "th-r" }, "Rate"), /* @__PURE__ */ React3.createElement("th", { style: { width: "7%" }, className: "th-r" }, "Amount"))), /* @__PURE__ */ React3.createElement("tbody", null, items.map((it, idx) => {
       const timingFreqDur = [it.timing, it.frequency, it.duration].filter(Boolean).join(" - ");
       return /* @__PURE__ */ React3.createElement("tr", { key: it.id || idx }, /* @__PURE__ */ React3.createElement("td", { className: "td-c" }, idx + 1), /* @__PURE__ */ React3.createElement("td", null, /* @__PURE__ */ React3.createElement("div", { className: "med-name" }, it.name), it.composition && /* @__PURE__ */ React3.createElement("div", { className: "med-comp" }, "Composition: ", it.composition), it.notes && /* @__PURE__ */ React3.createElement("div", { className: "med-note" }, "Note: ", it.notes)), /* @__PURE__ */ React3.createElement("td", { className: "td-c" }, it.dosage || "\u2014"), /* @__PURE__ */ React3.createElement("td", null, timingFreqDur || "\u2014"), /* @__PURE__ */ React3.createElement("td", { className: "td-c" }, fmtQty(it.qty), it.unit && it.unit !== "service" ? " " + it.unit : ""), /* @__PURE__ */ React3.createElement("td", { className: "td-r" }, money(it.price, s.currency)), /* @__PURE__ */ React3.createElement("td", { className: "td-r", style: { fontWeight: 600 } }, money(it.amount != null ? it.amount : it.qty * (it.price || 0), s.currency)));
-    }))), /* @__PURE__ */ React3.createElement("div", { className: "med-doc-pay-row" }, /* @__PURE__ */ React3.createElement("div", { className: "med-doc-pay-left" }, /* @__PURE__ */ React3.createElement("div", null, /* @__PURE__ */ React3.createElement("span", { className: "med-doc-pay-lbl" }, "Payment Method:"), " ", /* @__PURE__ */ React3.createElement("b", null, payMethodDisplay), /* @__PURE__ */ React3.createElement("span", { style: { marginLeft: "14px" } }, /* @__PURE__ */ React3.createElement("span", { className: "med-doc-pay-lbl" }, "Status:"), " ", /* @__PURE__ */ React3.createElement("b", { style: { color: bill2.payment_status === "PAID" ? "#22543d" : "#7b341e" } }, paymentStatus))), paidRows.length > 0 && /* @__PURE__ */ React3.createElement("div", { className: "med-doc-pay-txns" }, paidRows.map((p, i) => /* @__PURE__ */ React3.createElement("div", { key: p.id || i }, "\u2022 ", p.method, ": ", /* @__PURE__ */ React3.createElement("b", null, money(p.amount, s.currency)), " on ", fmtDate(p.at)))), bill2.cancel_reason && /* @__PURE__ */ React3.createElement("div", { style: { marginTop: "6px", color: "#c53030", fontWeight: 600, fontSize: "11.5px" } }, "Cancellation Reason: ", bill2.cancel_reason)), /* @__PURE__ */ React3.createElement("div", { className: "med-doc-pay-right" }, /* @__PURE__ */ React3.createElement("div", { className: "med-doc-tot-line" }, /* @__PURE__ */ React3.createElement("span", null, "Subtotal"), /* @__PURE__ */ React3.createElement("span", null, money(bill2.subtotal, s.currency))), Number(bill2.discount) > 0 && /* @__PURE__ */ React3.createElement("div", { className: "med-doc-tot-line", style: { color: "#2b6cb0" } }, /* @__PURE__ */ React3.createElement("span", null, "Discount"), /* @__PURE__ */ React3.createElement("span", null, "\u2212 ", money(bill2.discount, s.currency))), /* @__PURE__ */ React3.createElement("div", { className: "med-doc-tot-line bold" }, /* @__PURE__ */ React3.createElement("span", null, "Total Amount"), /* @__PURE__ */ React3.createElement("span", null, money(bill2.total, s.currency))), /* @__PURE__ */ React3.createElement("div", { className: "med-doc-tot-line" }, /* @__PURE__ */ React3.createElement("span", null, "Paid Amount"), /* @__PURE__ */ React3.createElement("span", null, money(bill2.paid || 0, s.currency))), Math.max(0, bill2.total - (bill2.paid || 0)) > 5e-3 && /* @__PURE__ */ React3.createElement("div", { className: "med-doc-tot-line due" }, /* @__PURE__ */ React3.createElement("span", null, "Balance Due"), /* @__PURE__ */ React3.createElement("span", null, money(Math.max(0, bill2.total - (bill2.paid || 0)), s.currency))))), bill2.advice && /* @__PURE__ */ React3.createElement("div", { className: "med-doc-advice" }, /* @__PURE__ */ React3.createElement("div", { className: "med-doc-sec-title" }, "Advice / Instructions:"), /* @__PURE__ */ React3.createElement("div", { className: "med-doc-sec-body" }, bill2.advice)), bill2.next_visit && /* @__PURE__ */ React3.createElement("div", { className: "med-doc-followup" }, /* @__PURE__ */ React3.createElement("span", { className: "med-doc-sec-title" }, "Next Visit / Follow-up:"), " ", /* @__PURE__ */ React3.createElement("b", null, toDDMMYYYY(bill2.next_visit) || bill2.next_visit)), /* @__PURE__ */ React3.createElement("div", { className: "med-doc-footer" }, /* @__PURE__ */ React3.createElement("div", { className: "med-doc-doc-info" }, /* @__PURE__ */ React3.createElement("div", { style: { fontSize: "10.5px", textTransform: "uppercase", color: "#718096", fontWeight: 700, letterSpacing: "0.04em" } }, "Consulting Doctor"), /* @__PURE__ */ React3.createElement("div", { className: "med-doc-doc-name" }, docName), /* @__PURE__ */ React3.createElement("div", { className: "med-doc-doc-phone" }, "Phone: ", /* @__PURE__ */ React3.createElement("b", null, docPhone))), /* @__PURE__ */ React3.createElement("div", { className: "med-doc-sign-box" }, /* @__PURE__ */ React3.createElement("div", { className: "med-doc-sign-line" }), /* @__PURE__ */ React3.createElement("div", { className: "med-doc-sign-lbl" }, "Authorized Signatory")))))
+    }))), /* @__PURE__ */ React3.createElement("div", { className: "med-doc-pay-row" }, /* @__PURE__ */ React3.createElement("div", { className: "med-doc-pay-left" }, /* @__PURE__ */ React3.createElement("div", null, /* @__PURE__ */ React3.createElement("span", { className: "med-doc-pay-lbl" }, "Payment Method:"), " ", /* @__PURE__ */ React3.createElement("b", null, payMethodDisplay), /* @__PURE__ */ React3.createElement("span", { style: { marginLeft: "14px" } }, /* @__PURE__ */ React3.createElement("span", { className: "med-doc-pay-lbl" }, "Status:"), " ", /* @__PURE__ */ React3.createElement("b", { style: { color: bill2.payment_status === "PAID" ? "#22543d" : "#7b341e" } }, paymentStatus))), paidRows.length > 0 && /* @__PURE__ */ React3.createElement("div", { className: "med-doc-pay-txns" }, paidRows.map((p, i) => /* @__PURE__ */ React3.createElement("div", { key: p.id || i }, "\u2022 ", p.method, ": ", /* @__PURE__ */ React3.createElement("b", null, money(p.amount, s.currency)), " on ", fmtDate(p.at)))), bill2.cancel_reason && /* @__PURE__ */ React3.createElement("div", { style: { marginTop: "6px", color: "#c53030", fontWeight: 600, fontSize: "11.5px" } }, "Cancellation Reason: ", bill2.cancel_reason)), /* @__PURE__ */ React3.createElement("div", { className: "med-doc-pay-right" }, /* @__PURE__ */ React3.createElement("div", { className: "med-doc-tot-line" }, /* @__PURE__ */ React3.createElement("span", null, "Subtotal"), /* @__PURE__ */ React3.createElement("span", null, money(bill2.subtotal, s.currency))), Number(bill2.discount) > 0 && /* @__PURE__ */ React3.createElement("div", { className: "med-doc-tot-line", style: { color: "#2b6cb0" } }, /* @__PURE__ */ React3.createElement("span", null, "Discount"), /* @__PURE__ */ React3.createElement("span", null, "\u2212 ", money(bill2.discount, s.currency))), /* @__PURE__ */ React3.createElement("div", { className: "med-doc-tot-line bold" }, /* @__PURE__ */ React3.createElement("span", null, "Total Amount"), /* @__PURE__ */ React3.createElement("span", null, money(bill2.total, s.currency))), /* @__PURE__ */ React3.createElement("div", { className: "med-doc-tot-line" }, /* @__PURE__ */ React3.createElement("span", null, "Paid Amount"), /* @__PURE__ */ React3.createElement("span", null, money(bill2.paid || 0, s.currency))), Math.max(0, bill2.total - (bill2.paid || 0)) > 5e-3 && /* @__PURE__ */ React3.createElement("div", { className: "med-doc-tot-line due" }, /* @__PURE__ */ React3.createElement("span", null, "Balance Due"), /* @__PURE__ */ React3.createElement("span", null, money(Math.max(0, bill2.total - (bill2.paid || 0)), s.currency))))), bill2.advice && /* @__PURE__ */ React3.createElement("div", { className: "med-doc-advice" }, /* @__PURE__ */ React3.createElement("div", { className: "med-doc-sec-title" }, "Advice / Instructions:"), /* @__PURE__ */ React3.createElement("div", { className: "med-doc-sec-body" }, bill2.advice)), bill2.next_visit && /* @__PURE__ */ React3.createElement("div", { className: "med-doc-followup" }, /* @__PURE__ */ React3.createElement("span", { className: "med-doc-sec-title" }, "Next Visit / Follow-up:"), " ", /* @__PURE__ */ React3.createElement("b", null, toDDMMYYYY2(bill2.next_visit) || bill2.next_visit)), /* @__PURE__ */ React3.createElement("div", { className: "med-doc-footer" }, /* @__PURE__ */ React3.createElement("div", { className: "med-doc-doc-info" }, /* @__PURE__ */ React3.createElement("div", { style: { fontSize: "10.5px", textTransform: "uppercase", color: "#718096", fontWeight: 700, letterSpacing: "0.04em" } }, "Consulting Doctor"), /* @__PURE__ */ React3.createElement("div", { className: "med-doc-doc-name" }, docName), /* @__PURE__ */ React3.createElement("div", { className: "med-doc-doc-phone" }, "Phone: ", /* @__PURE__ */ React3.createElement("b", null, docPhone))), /* @__PURE__ */ React3.createElement("div", { className: "med-doc-sign-box" }, /* @__PURE__ */ React3.createElement("div", { className: "med-doc-sign-line" }), /* @__PURE__ */ React3.createElement("div", { className: "med-doc-sign-lbl" }, "Authorized Signatory")))))
   );
 }
 function downloadReceipt(bill2, items = [], payments = [], s = {}) {
@@ -2175,7 +2242,7 @@ function downloadReceipt(bill2, items = [], payments = [], s = {}) {
   const paymentsRows = paidRows.map((p) => `
     <div>\u2022 ${p.method}: <b>${fmtM(p.amount)}</b> on ${fmtDate(p.at)}</div>
   `).join("");
-  const nextVisitDisplay = bill2.next_visit ? toDDMMYYYY(bill2.next_visit) || bill2.next_visit : "";
+  const nextVisitDisplay = bill2.next_visit ? toDDMMYYYY2(bill2.next_visit) || bill2.next_visit : "";
   const html = `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -3110,7 +3177,7 @@ function Dashboard() {
       ],
       money: true
     }
-  ) : /* @__PURE__ */ React7.createElement(EmptyState, { compact: true, title: "Loading\u2026" })), /* @__PURE__ */ React7.createElement(Card, { title: "Patient Visits \u2014 last 7 days" }, visits7 ? /* @__PURE__ */ React7.createElement(BarChart, { labels: visits7.map((v) => v.label), series: [{ name: "Visits", color: "var(--navy-700)", data: visits7.map((v) => v.value) }] }) : /* @__PURE__ */ React7.createElement(EmptyState, { compact: true, title: "Loading\u2026" })), /* @__PURE__ */ React7.createElement(Card, { title: "Top Selling Medicines \u2014 last 30 days", sub: "By quantity dispensed" }, topMeds && topMeds.length ? /* @__PURE__ */ React7.createElement(HBarList, { items: topMeds.map((m) => ({ label: m.name, value: m.qty })) }) : /* @__PURE__ */ React7.createElement(EmptyState, { compact: true, title: "No sales in range" }))), /* @__PURE__ */ React7.createElement("div", { className: "dash-grid" }, /* @__PURE__ */ React7.createElement(SectionCard, { title: "Recent Patients", icon: Users2, to: can("patients") ? "/patients" : void 0 }, !recentPatients ? /* @__PURE__ */ React7.createElement(EmptyState, { compact: true, title: "Loading\u2026" }) : recentPatients.length === 0 ? /* @__PURE__ */ React7.createElement(EmptyState, { compact: true, title: "No patients yet", action: /* @__PURE__ */ React7.createElement(Btn, { size: "sm", variant: "accent", onClick: () => navigate("/patients?new=1") }, "Register first patient") }) : /* @__PURE__ */ React7.createElement(React7.Fragment, null, recentPatients.map((p) => /* @__PURE__ */ React7.createElement(Row, { key: p.id, onClick: () => navigate(`/patients/${p.id}`) }, /* @__PURE__ */ React7.createElement("span", { className: "dr-name" }, p.name), /* @__PURE__ */ React7.createElement("span", { className: "dr-sub" }, /* @__PURE__ */ React7.createElement(UhidChip, { uhid: p.uhid, size: "sm" })), /* @__PURE__ */ React7.createElement("span", { className: "dr-right" }, fmtDate(p.reg_date)))))), /* @__PURE__ */ React7.createElement(SectionCard, { title: "Recent Bills", to: can("billing") ? "/billing" : void 0 }, !recentBills ? /* @__PURE__ */ React7.createElement(EmptyState, { compact: true, title: "Loading\u2026" }) : recentBills.length === 0 ? /* @__PURE__ */ React7.createElement(EmptyState, { compact: true, title: "No bills yet" }) : /* @__PURE__ */ React7.createElement(React7.Fragment, null, recentBills.map((b) => /* @__PURE__ */ React7.createElement(Row, { key: b.id, onClick: () => navigate(`/billing?bill=${b.id}`) }, /* @__PURE__ */ React7.createElement("span", { className: "dr-name" }, b.bill_no), /* @__PURE__ */ React7.createElement("span", { className: "dr-sub" }, b.patient_name, " \xB7 ", fmtTime(b.time)), /* @__PURE__ */ React7.createElement("span", { className: "dr-right" }, money2(b.total), " ", /* @__PURE__ */ React7.createElement(Badge, { tone: b.status === "CANCELLED" ? "gray" : b.payment_status === "PAID" ? "green" : b.payment_status === "PARTIAL" ? "amber" : "red" }, b.status === "CANCELLED" ? "Cancelled" : b.payment_status)))))), /* @__PURE__ */ React7.createElement(SectionCard, { title: "Upcoming Appointments", to: can("appointments") ? "/appointments" : void 0 }, !upAppts ? /* @__PURE__ */ React7.createElement(EmptyState, { compact: true, title: "Loading\u2026" }) : upAppts.length === 0 ? /* @__PURE__ */ React7.createElement(EmptyState, { compact: true, title: "Nothing scheduled", action: can("appointments") ? /* @__PURE__ */ React7.createElement(Btn, { size: "sm", variant: "outline", onClick: () => navigate("/appointments") }, "Schedule") : null }) : /* @__PURE__ */ React7.createElement(React7.Fragment, null, upAppts.map((a) => /* @__PURE__ */ React7.createElement(Row, { key: a.id, onClick: () => navigate("/appointments") }, /* @__PURE__ */ React7.createElement("span", { className: "dr-name" }, a.patient_name || "\u2014"), /* @__PURE__ */ React7.createElement("span", { className: "dr-sub" }, /* @__PURE__ */ React7.createElement(Badge, { tone: a.date === todayStr() ? "teal" : "blue" }, a.date === todayStr() ? "Today" : "Tomorrow"), " ", fmtTime(a.time + ":00")), /* @__PURE__ */ React7.createElement("span", { className: "dr-right" }, a.reason || ""))))), /* @__PURE__ */ React7.createElement(SectionCard, { title: "Low Stock Medicines", to: can("inventory") ? "/inventory" : void 0 }, !low ? /* @__PURE__ */ React7.createElement(EmptyState, { compact: true, title: "Loading\u2026" }) : low.length === 0 ? /* @__PURE__ */ React7.createElement(EmptyState, { compact: true, title: "All stocks healthy" }) : /* @__PURE__ */ React7.createElement(React7.Fragment, null, low.map((r) => /* @__PURE__ */ React7.createElement(Row, { key: r.medicine.id, onClick: () => navigate("/inventory") }, /* @__PURE__ */ React7.createElement("span", { className: "dr-name" }, r.medicine.name), /* @__PURE__ */ React7.createElement("span", { className: "dr-sub" }, /* @__PURE__ */ React7.createElement(Badge, { tone: "amber" }, r.available, " left"), " min ", r.min), /* @__PURE__ */ React7.createElement("span", { className: "dr-right" }))))), /* @__PURE__ */ React7.createElement(SectionCard, { title: "Expiring Medicines", to: can("inventory") ? "/inventory" : void 0 }, !expiring ? /* @__PURE__ */ React7.createElement(EmptyState, { compact: true, title: "Loading\u2026" }) : expiring.length === 0 ? /* @__PURE__ */ React7.createElement(EmptyState, { compact: true, title: "Nothing expiring soon" }) : /* @__PURE__ */ React7.createElement(React7.Fragment, null, expiring.map((b) => /* @__PURE__ */ React7.createElement(Row, { key: b.batch.id, onClick: () => navigate("/inventory") }, /* @__PURE__ */ React7.createElement("span", { className: "dr-name" }, b.med_name), /* @__PURE__ */ React7.createElement("span", { className: "dr-sub" }, "Batch ", b.batch.batch_no, " \xB7 ", /* @__PURE__ */ React7.createElement(Badge, { tone: b.days <= 30 ? "red" : "amber" }, b.days, "d")), /* @__PURE__ */ React7.createElement("span", { className: "dr-right" }, b.on_hand, " pcs"))))), /* @__PURE__ */ React7.createElement(SectionCard, { title: "Pending Payments", to: can("payments") ? "/payments" : void 0 }, !pending ? /* @__PURE__ */ React7.createElement(EmptyState, { compact: true, title: "Loading\u2026" }) : pending.length === 0 ? /* @__PURE__ */ React7.createElement(EmptyState, { compact: true, title: "All bills settled" }) : /* @__PURE__ */ React7.createElement(React7.Fragment, null, pending.map((b) => /* @__PURE__ */ React7.createElement(Row, { key: b.id, onClick: () => navigate("/payments") }, /* @__PURE__ */ React7.createElement("span", { className: "dr-name" }, b.bill_no), /* @__PURE__ */ React7.createElement("span", { className: "dr-sub" }, b.patient_name, " \xB7 ", fmtDate(b.date)), /* @__PURE__ */ React7.createElement("span", { className: "dr-right" }, /* @__PURE__ */ React7.createElement(Badge, { tone: "red" }, money2(b.total - (b.paid || 0))))))))));
+  ) : /* @__PURE__ */ React7.createElement(EmptyState, { compact: true, title: "Loading\u2026" })), /* @__PURE__ */ React7.createElement(Card, { title: "Patient Visits \u2014 last 7 days" }, visits7 ? /* @__PURE__ */ React7.createElement(BarChart, { labels: visits7.map((v) => v.label), series: [{ name: "Visits", color: "var(--navy-700)", data: visits7.map((v) => v.value) }] }) : /* @__PURE__ */ React7.createElement(EmptyState, { compact: true, title: "Loading\u2026" })), /* @__PURE__ */ React7.createElement(Card, { title: "Top Selling Medicines \u2014 last 30 days", sub: "By quantity dispensed" }, topMeds && topMeds.length ? /* @__PURE__ */ React7.createElement(HBarList, { items: topMeds.map((m) => ({ label: m.name, value: m.qty })) }) : /* @__PURE__ */ React7.createElement(EmptyState, { compact: true, title: "No sales in range" }))), /* @__PURE__ */ React7.createElement("div", { className: "dash-grid" }, /* @__PURE__ */ React7.createElement(SectionCard, { title: "Recent Patients", icon: Users2, to: can("patients") ? "/patients" : void 0 }, !recentPatients ? /* @__PURE__ */ React7.createElement(EmptyState, { compact: true, title: "Loading\u2026" }) : recentPatients.length === 0 ? /* @__PURE__ */ React7.createElement(EmptyState, { compact: true, title: "No patients yet", action: /* @__PURE__ */ React7.createElement(Btn, { size: "sm", variant: "accent", onClick: () => navigate("/patients?new=1") }, "Register first patient") }) : /* @__PURE__ */ React7.createElement(React7.Fragment, null, recentPatients.map((p) => /* @__PURE__ */ React7.createElement(Row, { key: p.id, onClick: () => navigate(`/patients/${p.id}`) }, /* @__PURE__ */ React7.createElement("span", { className: "dr-name" }, p.name), /* @__PURE__ */ React7.createElement("span", { className: "dr-sub" }, /* @__PURE__ */ React7.createElement(UhidChip, { uhid: p.uhid, size: "sm" })), /* @__PURE__ */ React7.createElement("span", { className: "dr-right" }, fmtDate(p.reg_date)))))), /* @__PURE__ */ React7.createElement(SectionCard, { title: "Recent Bills", to: can("billing") ? "/billing" : void 0 }, !recentBills ? /* @__PURE__ */ React7.createElement(EmptyState, { compact: true, title: "Loading\u2026" }) : recentBills.length === 0 ? /* @__PURE__ */ React7.createElement(EmptyState, { compact: true, title: "No bills yet" }) : /* @__PURE__ */ React7.createElement(React7.Fragment, null, recentBills.map((b) => /* @__PURE__ */ React7.createElement(Row, { key: b.id, onClick: () => navigate(`/billing?bill=${b.id}`) }, /* @__PURE__ */ React7.createElement("span", { className: "dr-name" }, b.bill_no), /* @__PURE__ */ React7.createElement("span", { className: "dr-sub" }, b.patient_name, " \xB7 ", fmtTime2(b.time)), /* @__PURE__ */ React7.createElement("span", { className: "dr-right" }, money2(b.total), " ", /* @__PURE__ */ React7.createElement(Badge, { tone: b.status === "CANCELLED" ? "gray" : b.payment_status === "PAID" ? "green" : b.payment_status === "PARTIAL" ? "amber" : "red" }, b.status === "CANCELLED" ? "Cancelled" : b.payment_status)))))), /* @__PURE__ */ React7.createElement(SectionCard, { title: "Upcoming Appointments", to: can("appointments") ? "/appointments" : void 0 }, !upAppts ? /* @__PURE__ */ React7.createElement(EmptyState, { compact: true, title: "Loading\u2026" }) : upAppts.length === 0 ? /* @__PURE__ */ React7.createElement(EmptyState, { compact: true, title: "Nothing scheduled", action: can("appointments") ? /* @__PURE__ */ React7.createElement(Btn, { size: "sm", variant: "outline", onClick: () => navigate("/appointments") }, "Schedule") : null }) : /* @__PURE__ */ React7.createElement(React7.Fragment, null, upAppts.map((a) => /* @__PURE__ */ React7.createElement(Row, { key: a.id, onClick: () => navigate("/appointments") }, /* @__PURE__ */ React7.createElement("span", { className: "dr-name" }, a.patient_name || "\u2014"), /* @__PURE__ */ React7.createElement("span", { className: "dr-sub" }, /* @__PURE__ */ React7.createElement(Badge, { tone: a.date === todayStr() ? "teal" : "blue" }, a.date === todayStr() ? "Today" : "Tomorrow"), " ", fmtTime2(a.time + ":00")), /* @__PURE__ */ React7.createElement("span", { className: "dr-right" }, a.reason || ""))))), /* @__PURE__ */ React7.createElement(SectionCard, { title: "Low Stock Medicines", to: can("inventory") ? "/inventory" : void 0 }, !low ? /* @__PURE__ */ React7.createElement(EmptyState, { compact: true, title: "Loading\u2026" }) : low.length === 0 ? /* @__PURE__ */ React7.createElement(EmptyState, { compact: true, title: "All stocks healthy" }) : /* @__PURE__ */ React7.createElement(React7.Fragment, null, low.map((r) => /* @__PURE__ */ React7.createElement(Row, { key: r.medicine.id, onClick: () => navigate("/inventory") }, /* @__PURE__ */ React7.createElement("span", { className: "dr-name" }, r.medicine.name), /* @__PURE__ */ React7.createElement("span", { className: "dr-sub" }, /* @__PURE__ */ React7.createElement(Badge, { tone: "amber" }, r.available, " left"), " min ", r.min), /* @__PURE__ */ React7.createElement("span", { className: "dr-right" }))))), /* @__PURE__ */ React7.createElement(SectionCard, { title: "Expiring Medicines", to: can("inventory") ? "/inventory" : void 0 }, !expiring ? /* @__PURE__ */ React7.createElement(EmptyState, { compact: true, title: "Loading\u2026" }) : expiring.length === 0 ? /* @__PURE__ */ React7.createElement(EmptyState, { compact: true, title: "Nothing expiring soon" }) : /* @__PURE__ */ React7.createElement(React7.Fragment, null, expiring.map((b) => /* @__PURE__ */ React7.createElement(Row, { key: b.batch.id, onClick: () => navigate("/inventory") }, /* @__PURE__ */ React7.createElement("span", { className: "dr-name" }, b.med_name), /* @__PURE__ */ React7.createElement("span", { className: "dr-sub" }, "Batch ", b.batch.batch_no, " \xB7 ", /* @__PURE__ */ React7.createElement(Badge, { tone: b.days <= 30 ? "red" : "amber" }, b.days, "d")), /* @__PURE__ */ React7.createElement("span", { className: "dr-right" }, b.on_hand, " pcs"))))), /* @__PURE__ */ React7.createElement(SectionCard, { title: "Pending Payments", to: can("payments") ? "/payments" : void 0 }, !pending ? /* @__PURE__ */ React7.createElement(EmptyState, { compact: true, title: "Loading\u2026" }) : pending.length === 0 ? /* @__PURE__ */ React7.createElement(EmptyState, { compact: true, title: "All bills settled" }) : /* @__PURE__ */ React7.createElement(React7.Fragment, null, pending.map((b) => /* @__PURE__ */ React7.createElement(Row, { key: b.id, onClick: () => navigate("/payments") }, /* @__PURE__ */ React7.createElement("span", { className: "dr-name" }, b.bill_no), /* @__PURE__ */ React7.createElement("span", { className: "dr-sub" }, b.patient_name, " \xB7 ", fmtDate(b.date)), /* @__PURE__ */ React7.createElement("span", { className: "dr-right" }, /* @__PURE__ */ React7.createElement(Badge, { tone: "red" }, money2(b.total - (b.paid || 0))))))))));
 }
 var Row;
 var init_Dashboard = __esm({
@@ -3708,6 +3775,15 @@ function mapParsedRow(type, rawRow) {
       canonicalRow[key] = normalizeValue(value);
     }
   }
+  if (type === "patients") {
+    const rawDate = canonicalRow.reg_date || "";
+    const rawTime = canonicalRow.reg_time || "";
+    if (rawDate && rawTime) {
+      canonicalRow.date_time = `${rawDate} ${rawTime}`.trim();
+    } else if (rawDate && !canonicalRow.date_time) {
+      canonicalRow.date_time = rawDate;
+    }
+  }
   return canonicalRow;
 }
 function mapCSVRows(type, parsedRows) {
@@ -3740,19 +3816,34 @@ var init_csvMapping = __esm({
           "registered_datetime",
           "registration_date_and_time",
           "registration_date_time",
-          "registration_date",
           "reg_date_and_time",
           "reg_date_time",
-          "reg_date",
           "reg_datetime",
           "created_at",
           "created_date",
           "created_date_time",
           "date_and_time_dd_mm_yyyy_hh_mm",
           "date_time_dd_mm_yyyy_hh_mm",
+          "registered_at",
+          "registration_date",
+          "reg_date",
+          "registered_date"
+        ],
+        reg_date: [
+          "registration_date",
+          "reg_date",
+          "registered_date",
+          "date_of_registration",
+          "regdate",
+          "date"
+        ],
+        reg_time: [
           "registration_time",
-          "entry_date",
-          "registered_at"
+          "reg_time",
+          "registered_time",
+          "time_of_registration",
+          "regtime",
+          "time"
         ],
         age: [
           "age",
@@ -4196,14 +4287,17 @@ function parseHistoricalDateTime(rawDateTime, today) {
   let regDate = today;
   if (!rawDateTime) return { itemCreatedAt, regDate, error: null };
   const s = String(rawDateTime).trim();
-  const dmyMatch = s.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})(?:[\sT](\d{1,2}):(\d{2})(?::(\d{2}))?)?$/);
+  const dmyMatch = s.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})(?:[\sT](\d{1,2}):(\d{2})(?::(\d{2}))?(?:\s*(AM|PM))?)?$/i);
   if (dmyMatch) {
     const day = parseInt(dmyMatch[1], 10);
     const month = parseInt(dmyMatch[2], 10);
     const year = parseInt(dmyMatch[3], 10);
-    const hour = dmyMatch[4] !== void 0 ? parseInt(dmyMatch[4], 10) : 0;
+    let hour = dmyMatch[4] !== void 0 ? parseInt(dmyMatch[4], 10) : 0;
     const minute = dmyMatch[5] !== void 0 ? parseInt(dmyMatch[5], 10) : 0;
     const second = dmyMatch[6] !== void 0 ? parseInt(dmyMatch[6], 10) : 0;
+    const ampm = dmyMatch[7] ? dmyMatch[7].toUpperCase() : null;
+    if (ampm === "PM" && hour < 12) hour += 12;
+    if (ampm === "AM" && hour === 12) hour = 0;
     if (month < 1 || month > 12) return { error: "Invalid month in Date & Time (must be 01\u201312)" };
     if (year < 1900 || year > 2100) return { error: "Invalid year in Date & Time (1900\u20132100)" };
     const daysInMonth = new Date(year, month, 0).getDate();
@@ -4216,17 +4310,23 @@ function parseHistoricalDateTime(rawDateTime, today) {
     regDate = `${year}-${p22(month)}-${p22(day)}`;
     return { itemCreatedAt, regDate, error: null };
   }
-  const ymdMatch = s.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})(?:[\sT](\d{1,2}):(\d{2})(?::(\d{2}))?)?$/);
+  const ymdMatch = s.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})(?:[\sT](\d{1,2}):(\d{2})(?::(\d{2}))?(?:\s*(AM|PM))?)?$/i);
   if (ymdMatch) {
     const year = parseInt(ymdMatch[1], 10);
     const month = parseInt(ymdMatch[2], 10);
     const day = parseInt(ymdMatch[3], 10);
-    const hour = ymdMatch[4] !== void 0 ? parseInt(ymdMatch[4], 10) : 0;
+    let hour = ymdMatch[4] !== void 0 ? parseInt(ymdMatch[4], 10) : 0;
     const minute = ymdMatch[5] !== void 0 ? parseInt(ymdMatch[5], 10) : 0;
     const second = ymdMatch[6] !== void 0 ? parseInt(ymdMatch[6], 10) : 0;
+    const ampm = ymdMatch[7] ? ymdMatch[7].toUpperCase() : null;
+    if (ampm === "PM" && hour < 12) hour += 12;
+    if (ampm === "AM" && hour === 12) hour = 0;
     if (month < 1 || month > 12) return { error: "Invalid month in Date & Time (must be 01\u201312)" };
     const daysInMonth = new Date(year, month, 0).getDate();
     if (day < 1 || day > daysInMonth) return { error: `Invalid day in Date & Time for month ${month} (must be 01\u2013${daysInMonth})` };
+    if (hour < 0 || hour > 23) return { error: "Invalid hour in Date & Time (must be 00\u201323)" };
+    if (minute < 0 || minute > 59) return { error: "Invalid minute in Date & Time (must be 00\u201359)" };
+    if (second < 0 || second > 59) return { error: "Invalid second in Date & Time (must be 00\u201359)" };
     const p22 = (n) => String(n).padStart(2, "0");
     itemCreatedAt = `${year}-${p22(month)}-${p22(day)}T${p22(hour)}:${p22(minute)}:${p22(second)}.000Z`;
     regDate = `${year}-${p22(month)}-${p22(day)}`;
@@ -5184,10 +5284,15 @@ function Patients() {
     if (gender) list = list.filter((p) => p.gender === gender);
     return list.sort((a, b) => (b.created_at || b.reg_date || "").localeCompare(a.created_at || a.reg_date || ""));
   }, [q, gender]);
-  const exportCSV = () => {
+  const exportCSV = async () => {
+    const allPatients = await db_default.patients.toArray();
+    const sorted = allPatients.sort(
+      (a, b) => (b.created_at || b.reg_date || "").localeCompare(a.created_at || a.reg_date || "")
+    );
     const headers = [
       "UHID",
-      "Registered Date & Time",
+      "Registration Date",
+      "Registration Time",
       "Full Name",
       "Age",
       "Gender",
@@ -5202,23 +5307,28 @@ function Patients() {
       "Notes",
       "Patient Status"
     ];
-    const rows = (patients || []).map((p) => [
-      p.uhid || "\u2014",
-      fmtDateTime(p.created_at || p.reg_date),
-      p.name || "\u2014",
-      p.age != null ? p.age : ageLabel(p),
-      p.gender || "\u2014",
-      p.marital_status || "Single",
-      p.mobile || "\u2014",
-      p.blood_group || "\u2014",
-      p.address || "\u2014",
-      p.pin || "\u2014",
-      p.allergies || "None",
-      p.conditions || "None",
-      p.current_meds || "None",
-      p.notes || "\u2014",
-      p.status || "New"
-    ]);
+    const rows = sorted.map((p) => {
+      const regDate = p.reg_date ? toDDMMYYYY(p.reg_date) : p.created_at ? toDDMMYYYY(p.created_at) : "\u2014";
+      const regTime = p.created_at ? fmtTime(p.created_at) : "\u2014";
+      return [
+        p.uhid || "\u2014",
+        regDate,
+        regTime,
+        p.name || "\u2014",
+        p.age != null ? p.age : ageLabel(p),
+        p.gender || "\u2014",
+        p.marital_status || "Single",
+        p.mobile || "\u2014",
+        p.blood_group || "\u2014",
+        p.address || "\u2014",
+        p.pin || "\u2014",
+        p.allergies || "None",
+        p.conditions || "None",
+        p.current_meds || "None",
+        p.notes || "\u2014",
+        p.active ? "Active" : "Archived"
+      ];
+    });
     download(
       `heeva-patients-all-${dkey()}.csv`,
       toCSV(headers, rows),
@@ -6640,7 +6750,7 @@ function Appointments() {
   ), /* @__PURE__ */ React12.createElement("div", { className: "appt-daybar" }, /* @__PURE__ */ React12.createElement(IconBtn, { icon: ChevronLeft2, title: "Previous day", onClick: () => shift(-1) }), /* @__PURE__ */ React12.createElement("input", { type: "date", className: "input appt-date", value: day, onChange: (e) => setDay(e.target.value) }), /* @__PURE__ */ React12.createElement(IconBtn, { icon: ChevronRight3, title: "Next day", onClick: () => shift(1) }), /* @__PURE__ */ React12.createElement(Btn, { variant: "ghost", size: "sm", onClick: () => setDay(dkey(/* @__PURE__ */ new Date())) }, "Today"), /* @__PURE__ */ React12.createElement("span", { className: "appt-daylabel" }, isToday ? "Today" : fmtDate(day, { weekday: "long" }), " \xB7 ", dayAppts?.length ?? 0, " appointment(s)"), /* @__PURE__ */ React12.createElement("div", { className: "appt-counts" }, APPT_STATUSES.map((s) => counts[s] ? /* @__PURE__ */ React12.createElement(Badge, { key: s, tone: s === "completed" ? "green" : s === "cancelled" ? "gray" : s === "in_consultation" ? "navy" : s === "waiting" ? "amber" : "blue" }, NEXT_LABEL[s] || s, ": ", counts[s]) : null))), /* @__PURE__ */ React12.createElement("div", { className: "toolbar" }, /* @__PURE__ */ React12.createElement("div", { className: "toolbar-search" }, /* @__PURE__ */ React12.createElement(Search4, { size: 15 }), /* @__PURE__ */ React12.createElement("input", { className: "input", value: q, onChange: (e) => setQ(e.target.value), placeholder: "Search patient, UHID, mobile or appointment number" })), /* @__PURE__ */ React12.createElement(Select, { value: statusFilter, onChange: (e) => setStatusFilter(e.target.value), className: "toolbar-select" }, /* @__PURE__ */ React12.createElement("option", { value: "" }, "All statuses"), APPT_STATUSES.map((status) => /* @__PURE__ */ React12.createElement("option", { key: status, value: status }, status.replace("_", " "))))), /* @__PURE__ */ React12.createElement(Card, null, !dayAppts ? /* @__PURE__ */ React12.createElement(EmptyState, { compact: true, title: "Loading\u2026" }) : dayAppts.length === 0 ? /* @__PURE__ */ React12.createElement(EmptyState, { title: "No Appointments Found", message: "No appointments have been scheduled yet.", action: /* @__PURE__ */ React12.createElement(Btn, { size: "sm", variant: "accent", onClick: () => {
     setEditing(null);
     setModal(true);
-  } }, "+ Schedule Appointment") }) : /* @__PURE__ */ React12.createElement("div", { className: "queue" }, dayAppts.map((a, i) => /* @__PURE__ */ React12.createElement("div", { key: a.id, className: `queue-item q-${a.status}` }, /* @__PURE__ */ React12.createElement("div", { className: "q-time" }, /* @__PURE__ */ React12.createElement("span", { className: "q-slotslot" }, i + 1), /* @__PURE__ */ React12.createElement("span", { className: "q-t" }, fmtTime(a.time + ":00"))), /* @__PURE__ */ React12.createElement("div", { className: "q-main" }, /* @__PURE__ */ React12.createElement("span", { className: "q-name" }, a.patient?.name || "Unknown", a.status === "scheduled" && /* @__PURE__ */ React12.createElement("span", { className: "q-dot", title: "Scheduled" })), /* @__PURE__ */ React12.createElement("span", { className: "q-sub" }, /* @__PURE__ */ React12.createElement(UhidChip, { uhid: a.uhid, size: "sm" }), a.reason && /* @__PURE__ */ React12.createElement("span", null, "\xB7 ", a.reason), a.doctor && /* @__PURE__ */ React12.createElement("span", null, "\xB7 ", a.doctor.name))), /* @__PURE__ */ React12.createElement(ApptBadge, { status: a.status }), /* @__PURE__ */ React12.createElement("div", { className: "q-actions" }, !["completed", "cancelled", "no_show"].includes(a.status) && /* @__PURE__ */ React12.createElement(Btn, { size: "sm", variant: "ghost", icon: Pencil2, onClick: () => {
+  } }, "+ Schedule Appointment") }) : /* @__PURE__ */ React12.createElement("div", { className: "queue" }, dayAppts.map((a, i) => /* @__PURE__ */ React12.createElement("div", { key: a.id, className: `queue-item q-${a.status}` }, /* @__PURE__ */ React12.createElement("div", { className: "q-time" }, /* @__PURE__ */ React12.createElement("span", { className: "q-slotslot" }, i + 1), /* @__PURE__ */ React12.createElement("span", { className: "q-t" }, fmtTime2(a.time + ":00"))), /* @__PURE__ */ React12.createElement("div", { className: "q-main" }, /* @__PURE__ */ React12.createElement("span", { className: "q-name" }, a.patient?.name || "Unknown", a.status === "scheduled" && /* @__PURE__ */ React12.createElement("span", { className: "q-dot", title: "Scheduled" })), /* @__PURE__ */ React12.createElement("span", { className: "q-sub" }, /* @__PURE__ */ React12.createElement(UhidChip, { uhid: a.uhid, size: "sm" }), a.reason && /* @__PURE__ */ React12.createElement("span", null, "\xB7 ", a.reason), a.doctor && /* @__PURE__ */ React12.createElement("span", null, "\xB7 ", a.doctor.name))), /* @__PURE__ */ React12.createElement(ApptBadge, { status: a.status }), /* @__PURE__ */ React12.createElement("div", { className: "q-actions" }, !["completed", "cancelled", "no_show"].includes(a.status) && /* @__PURE__ */ React12.createElement(Btn, { size: "sm", variant: "ghost", icon: Pencil2, onClick: () => {
     setEditing(a);
     setModal(true);
   } }, "Edit"), (NEXT[a.status] || []).map((s) => /* @__PURE__ */ React12.createElement(Btn, { key: s, size: "sm", variant: s === "cancelled" ? "ghost" : s === "completed" ? "accent" : "outline", disabled: busyId === a.id, onClick: () => advance(a, s) }, NEXT_LABEL[s])), a.status === "completed" && a.patient && /* @__PURE__ */ React12.createElement(Btn, { size: "sm", variant: "ghost", onClick: () => navigate(`/patients/${a.patient.id}`) }, "Open"), /* @__PURE__ */ React12.createElement(
@@ -7041,7 +7151,7 @@ function BillViewer2({ full, onClose, allowCancel = true, allowPayment = true })
     /* @__PURE__ */ React14.createElement("div", { className: "bv-body" }, /* @__PURE__ */ React14.createElement("div", { className: "bv-meta" }, /* @__PURE__ */ React14.createElement(PaymentBadge, { status: bill2.status === "CANCELLED" ? "CANCELLED" : bill2.payment_status }), /* @__PURE__ */ React14.createElement(Badge, { tone: "navy" }, bill2.bill_type), /* @__PURE__ */ React14.createElement("span", null, fmtDateTime(bill2.time)), bill2.cancel_reason && /* @__PURE__ */ React14.createElement(Badge, { tone: "red" }, "Cancelled: ", bill2.cancel_reason)), bill2.diagnosis && /* @__PURE__ */ React14.createElement("div", { style: { marginTop: "10px", padding: "8px 12px", background: "var(--surface-2)", borderRadius: "6px", fontSize: "13px" } }, /* @__PURE__ */ React14.createElement("b", { style: { textTransform: "uppercase", letterSpacing: "0.04em", fontSize: "11px", color: "var(--text-2)" } }, "Diagnosis: "), /* @__PURE__ */ React14.createElement("span", { style: { fontWeight: 600, textTransform: "uppercase" } }, bill2.diagnosis)), /* @__PURE__ */ React14.createElement("table", { className: "table bv-table", style: { marginTop: "10px" } }, /* @__PURE__ */ React14.createElement("thead", null, /* @__PURE__ */ React14.createElement("tr", null, /* @__PURE__ */ React14.createElement("th", null, "Item"), /* @__PURE__ */ React14.createElement("th", null, "Dosage / Instructions"), /* @__PURE__ */ React14.createElement("th", { className: "th-right" }, "Qty"), /* @__PURE__ */ React14.createElement("th", { className: "th-right" }, "Price"), /* @__PURE__ */ React14.createElement("th", { className: "th-right" }, "Amount"))), /* @__PURE__ */ React14.createElement("tbody", null, items.map((it) => {
       const timingFreqDur = [it.timing, it.frequency, it.duration].filter(Boolean).join(" - ");
       return /* @__PURE__ */ React14.createElement("tr", { key: it.id }, /* @__PURE__ */ React14.createElement("td", null, /* @__PURE__ */ React14.createElement("div", null, /* @__PURE__ */ React14.createElement("b", null, it.name), it.returned > 0 && /* @__PURE__ */ React14.createElement(Badge, { tone: "amber" }, " ", fmtQty(it.returned), " returned")), it.composition && /* @__PURE__ */ React14.createElement("div", { style: { fontSize: "11.5px", color: "var(--text-2)" } }, "Composition: ", it.composition), it.notes && /* @__PURE__ */ React14.createElement("div", { style: { fontSize: "11.5px", color: "var(--text-3)", fontStyle: "italic" } }, "Note: ", it.notes)), /* @__PURE__ */ React14.createElement("td", null, it.dosage ? /* @__PURE__ */ React14.createElement("div", null, /* @__PURE__ */ React14.createElement("b", null, it.dosage)) : null, timingFreqDur && /* @__PURE__ */ React14.createElement("div", { style: { fontSize: "12px", color: "var(--teal-700)" } }, timingFreqDur), !it.dosage && !timingFreqDur && /* @__PURE__ */ React14.createElement("span", { style: { color: "var(--text-3)" } }, "\u2014")), /* @__PURE__ */ React14.createElement("td", { className: "td-right" }, fmtQty(it.qty), it.unit && it.unit !== "service" ? " " + it.unit : ""), /* @__PURE__ */ React14.createElement("td", { className: "td-right" }, money2(it.price)), /* @__PURE__ */ React14.createElement("td", { className: "td-right" }, money2(it.amount)));
-    }))), (bill2.advice || bill2.next_visit) && /* @__PURE__ */ React14.createElement("div", { style: { margin: "12px 0", padding: "10px 12px", background: "var(--surface-2)", borderRadius: "6px", fontSize: "12.5px" } }, bill2.advice && /* @__PURE__ */ React14.createElement("div", { style: { marginBottom: bill2.next_visit ? "6px" : "0" } }, /* @__PURE__ */ React14.createElement("b", { style: { textTransform: "uppercase", fontSize: "11px", color: "var(--text-2)", display: "block" } }, "Advice / Instructions:"), /* @__PURE__ */ React14.createElement("div", { style: { whiteSpace: "pre-wrap", marginTop: "2px" } }, bill2.advice)), bill2.next_visit && /* @__PURE__ */ React14.createElement("div", null, /* @__PURE__ */ React14.createElement("b", { style: { textTransform: "uppercase", fontSize: "11px", color: "var(--text-2)" } }, "Next Visit / Follow-up: "), /* @__PURE__ */ React14.createElement("b", null, toDDMMYYYY(bill2.next_visit) || bill2.next_visit))), /* @__PURE__ */ React14.createElement("div", { className: "bv-totals" }, /* @__PURE__ */ React14.createElement("div", { className: "kv" }, /* @__PURE__ */ React14.createElement("span", null, "Subtotal"), /* @__PURE__ */ React14.createElement("b", null, money2(bill2.subtotal))), /* @__PURE__ */ React14.createElement("div", { className: "kv" }, /* @__PURE__ */ React14.createElement("span", null, "Discount"), /* @__PURE__ */ React14.createElement("b", null, "\u2212 ", money2(bill2.discount))), /* @__PURE__ */ React14.createElement("div", { className: "kv kv-total" }, /* @__PURE__ */ React14.createElement("span", null, "Total Amount"), /* @__PURE__ */ React14.createElement("b", null, money2(bill2.total))), /* @__PURE__ */ React14.createElement("div", { className: "kv" }, /* @__PURE__ */ React14.createElement("span", null, "Paid"), /* @__PURE__ */ React14.createElement("b", null, money2(bill2.paid))), /* @__PURE__ */ React14.createElement("div", { className: "kv" }, /* @__PURE__ */ React14.createElement("span", null, "Balance"), /* @__PURE__ */ React14.createElement("b", null, money2(balance)))), payments.length > 0 && /* @__PURE__ */ React14.createElement("div", { className: "bv-pay" }, payments.map((x) => /* @__PURE__ */ React14.createElement("span", { key: x.id, className: "bpay-item" }, /* @__PURE__ */ React14.createElement(Badge, { tone: x.kind === "refund" ? "red" : "green" }, x.kind === "refund" ? "Refund" : x.method), " ", money2(x.amount), " \xB7 ", fmtDate(x.at)))))
+    }))), (bill2.advice || bill2.next_visit) && /* @__PURE__ */ React14.createElement("div", { style: { margin: "12px 0", padding: "10px 12px", background: "var(--surface-2)", borderRadius: "6px", fontSize: "12.5px" } }, bill2.advice && /* @__PURE__ */ React14.createElement("div", { style: { marginBottom: bill2.next_visit ? "6px" : "0" } }, /* @__PURE__ */ React14.createElement("b", { style: { textTransform: "uppercase", fontSize: "11px", color: "var(--text-2)", display: "block" } }, "Advice / Instructions:"), /* @__PURE__ */ React14.createElement("div", { style: { whiteSpace: "pre-wrap", marginTop: "2px" } }, bill2.advice)), bill2.next_visit && /* @__PURE__ */ React14.createElement("div", null, /* @__PURE__ */ React14.createElement("b", { style: { textTransform: "uppercase", fontSize: "11px", color: "var(--text-2)" } }, "Next Visit / Follow-up: "), /* @__PURE__ */ React14.createElement("b", null, toDDMMYYYY2(bill2.next_visit) || bill2.next_visit))), /* @__PURE__ */ React14.createElement("div", { className: "bv-totals" }, /* @__PURE__ */ React14.createElement("div", { className: "kv" }, /* @__PURE__ */ React14.createElement("span", null, "Subtotal"), /* @__PURE__ */ React14.createElement("b", null, money2(bill2.subtotal))), /* @__PURE__ */ React14.createElement("div", { className: "kv" }, /* @__PURE__ */ React14.createElement("span", null, "Discount"), /* @__PURE__ */ React14.createElement("b", null, "\u2212 ", money2(bill2.discount))), /* @__PURE__ */ React14.createElement("div", { className: "kv kv-total" }, /* @__PURE__ */ React14.createElement("span", null, "Total Amount"), /* @__PURE__ */ React14.createElement("b", null, money2(bill2.total))), /* @__PURE__ */ React14.createElement("div", { className: "kv" }, /* @__PURE__ */ React14.createElement("span", null, "Paid"), /* @__PURE__ */ React14.createElement("b", null, money2(bill2.paid))), /* @__PURE__ */ React14.createElement("div", { className: "kv" }, /* @__PURE__ */ React14.createElement("span", null, "Balance"), /* @__PURE__ */ React14.createElement("b", null, money2(balance)))), payments.length > 0 && /* @__PURE__ */ React14.createElement("div", { className: "bv-pay" }, payments.map((x) => /* @__PURE__ */ React14.createElement("span", { key: x.id, className: "bpay-item" }, /* @__PURE__ */ React14.createElement(Badge, { tone: x.kind === "refund" ? "red" : "green" }, x.kind === "refund" ? "Refund" : x.method), " ", money2(x.amount), " \xB7 ", fmtDate(x.at)))))
   ), /* @__PURE__ */ React14.createElement(
     Modal,
     {
@@ -9981,7 +10091,11 @@ import React26 from "react";
 import { Routes, Route, Navigate } from "react-router-dom";
 import { Loader } from "lucide-react";
 function DatabaseErrorScreen({ message }) {
-  return /* @__PURE__ */ React26.createElement("div", { className: "boot-screen" }, /* @__PURE__ */ React26.createElement(Logo, { size: 64 }), /* @__PURE__ */ React26.createElement("div", { className: "boot-name" }, "Database connection required"), /* @__PURE__ */ React26.createElement("div", { className: "boot-sub" }, message), /* @__PURE__ */ React26.createElement("button", { className: "btn btn-primary", onClick: () => window.location.reload() }, "Retry connection"));
+  const isRateLimit = /traffic|busy|429|rate/i.test(message || "");
+  const isNetwork = /internet|connect|network|offline/i.test(message || "");
+  const title = isRateLimit ? "Server Busy" : isNetwork ? "Connection Required" : "Database Unavailable";
+  const btnLabel = isRateLimit ? "Try Again" : "Retry Connection";
+  return /* @__PURE__ */ React26.createElement("div", { className: "boot-screen" }, /* @__PURE__ */ React26.createElement(Logo, { size: 64 }), /* @__PURE__ */ React26.createElement("div", { className: "boot-name" }, title), /* @__PURE__ */ React26.createElement("div", { className: "boot-sub" }, message), /* @__PURE__ */ React26.createElement("button", { className: "btn btn-primary", onClick: () => window.location.reload() }, btnLabel));
 }
 function BootScreen() {
   return /* @__PURE__ */ React26.createElement("div", { className: "boot-screen" }, /* @__PURE__ */ React26.createElement(Logo, { size: 64 }), /* @__PURE__ */ React26.createElement("div", { className: "boot-name" }, "HEEVA CLINIC"), /* @__PURE__ */ React26.createElement("div", { className: "boot-sub" }, "Trusted care, every time."), /* @__PURE__ */ React26.createElement("div", { className: "boot-spinner" }, /* @__PURE__ */ React26.createElement(Loader, { size: 22, className: "spin" })));

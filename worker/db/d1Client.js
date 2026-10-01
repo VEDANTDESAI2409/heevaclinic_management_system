@@ -10,28 +10,34 @@ function parseHistoricalDateTime(val, fallbackISO = new Date().toISOString()) {
   const s = val.trim();
   if (!s) return fallbackISO;
 
-  // DD-MM-YYYY or DD-MM-YYYY HH:mm or DD-MM-YYYY HH:mm:ss
-  const dmyMatch = s.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?$/);
+  // DD-MM-YYYY or DD-MM-YYYY HH:mm or DD-MM-YYYY HH:mm:ss with optional AM/PM
+  const dmyMatch = s.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?(?:\s*(AM|PM))?)?$/i);
   if (dmyMatch) {
     const day = parseInt(dmyMatch[1], 10);
     const month = parseInt(dmyMatch[2], 10) - 1;
     const year = parseInt(dmyMatch[3], 10);
-    const hours = dmyMatch[4] ? parseInt(dmyMatch[4], 10) : 0;
+    let hours = dmyMatch[4] ? parseInt(dmyMatch[4], 10) : 0;
     const minutes = dmyMatch[5] ? parseInt(dmyMatch[5], 10) : 0;
     const seconds = dmyMatch[6] ? parseInt(dmyMatch[6], 10) : 0;
+    const ampm = dmyMatch[7] ? dmyMatch[7].toUpperCase() : null;
+    if (ampm === 'PM' && hours < 12) hours += 12;
+    if (ampm === 'AM' && hours === 12) hours = 0;
     const d = new Date(Date.UTC(year, month, day, hours, minutes, seconds));
     if (!isNaN(d.getTime())) return d.toISOString();
   }
 
-  // YYYY-MM-DD
-  const ymdMatch = s.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})(?:[T\s](\d{1,2}):(\d{2})(?::(\d{2}))?)?$/);
+  // YYYY-MM-DD with optional time and AM/PM
+  const ymdMatch = s.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})(?:[T\s](\d{1,2}):(\d{2})(?::(\d{2}))?(?:\s*(AM|PM))?)?$/i);
   if (ymdMatch) {
     const year = parseInt(ymdMatch[1], 10);
     const month = parseInt(ymdMatch[2], 10) - 1;
     const day = parseInt(ymdMatch[3], 10);
-    const hours = ymdMatch[4] ? parseInt(ymdMatch[4], 10) : 0;
+    let hours = ymdMatch[4] ? parseInt(ymdMatch[4], 10) : 0;
     const minutes = ymdMatch[5] ? parseInt(ymdMatch[5], 10) : 0;
     const seconds = ymdMatch[6] ? parseInt(ymdMatch[6], 10) : 0;
+    const ampm = ymdMatch[7] ? ymdMatch[7].toUpperCase() : null;
+    if (ampm === 'PM' && hours < 12) hours += 12;
+    if (ampm === 'AM' && hours === 12) hours = 0;
     const d = new Date(Date.UTC(year, month, day, hours, minutes, seconds));
     if (!isNaN(d.getTime())) return d.toISOString();
   }
@@ -54,6 +60,36 @@ function filterFields(table, obj) {
 }
 
 export const d1Client = {
+  async ensureSchemaIntegrity(db) {
+    if (!db) return;
+    const migrations = [
+      'ALTER TABLE patients ADD COLUMN age INTEGER',
+      "ALTER TABLE patients ADD COLUMN marital_status TEXT DEFAULT 'Single'",
+      'ALTER TABLE prescription_items ADD COLUMN timing TEXT',
+      'ALTER TABLE prescription_items ADD COLUMN quantity TEXT',
+      'ALTER TABLE bills ADD COLUMN doctor_phone TEXT',
+      'ALTER TABLE bills ADD COLUMN diagnosis TEXT',
+      'ALTER TABLE bills ADD COLUMN advice TEXT',
+      'ALTER TABLE bills ADD COLUMN next_visit TEXT',
+      'ALTER TABLE bill_items ADD COLUMN timing TEXT',
+      'ALTER TABLE bill_items ADD COLUMN frequency TEXT',
+      'ALTER TABLE bill_items ADD COLUMN duration TEXT',
+      'ALTER TABLE bill_items ADD COLUMN composition TEXT',
+      'ALTER TABLE bill_items ADD COLUMN notes TEXT',
+      'ALTER TABLE bill_items ADD COLUMN returned INTEGER DEFAULT 0',
+      'CREATE INDEX IF NOT EXISTS idx_appointments_doctor_id ON appointments(doctor_id)',
+      'CREATE INDEX IF NOT EXISTS idx_prescriptions_doctor_id ON prescriptions(doctor_id)',
+    ];
+
+    for (const sql of migrations) {
+      try {
+        await db.prepare(sql).run();
+      } catch (_) {
+        // Column already exists or index already exists in SQLite
+      }
+    }
+  },
+
   async getAll(db, collection) {
     const actual = resolveCollection(collection);
     const query = `SELECT * FROM "${actual}" ORDER BY CASE WHEN updated_at IS NOT NULL THEN updated_at WHEN created_at IS NOT NULL THEN created_at ELSE id END DESC`;
