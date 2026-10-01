@@ -11,7 +11,7 @@ import {
 import { registerPatient, deletePatient } from '../services/patients';
 import { getSettings } from '../services/core';
 import { getNextUhid } from '../services/api';
-import { ageLabel, fmtDate, fmtDateTime, fmtMoney, dkey, validMobile, download, toCSV } from '../utils';
+import { ageLabel, fmtDate, fmtDateTime, fmtMoney, dkey, validMobile, download, toCSV, toDDMMYYYY, fmtTime } from '../utils';
 import { UserPlus, Download, Upload, Search, CheckCircle2, Phone, Droplets, Trash2 } from 'lucide-react';
 import CsvImportModal from '../components/csv/CsvImportModal';
 
@@ -60,6 +60,20 @@ function RegisterModal({ open, onClose, prefill = {} }) {
   }, [open]);
 
   const set = (k) => (e) => setF((x) => ({ ...x, [k]: e.target.value }));
+
+  const validate = () => {
+    const e = {};
+    if (!f.name || f.name.trim().length < 3) e.name = 'Full name is required (min 3 characters)';
+    const ageNum = Number(f.age);
+    if (f.age === '' || f.age == null || isNaN(ageNum) || ageNum < 0 || ageNum > 125) {
+      e.age = 'Enter a valid age (0–125)';
+    }
+    if (!f.gender) e.gender = 'Select gender (M, F, Other)';
+    if (!f.mobile || !f.mobile.trim()) e.mobile = 'Mobile number is required';
+    else if (!validMobile(f.mobile)) e.mobile = 'Enter a valid 10-digit mobile number';
+    setErrs(e);
+    return Object.keys(e).length === 0;
+  };
 
   const save = async (e) => {
     if (e && e.preventDefault) e.preventDefault();

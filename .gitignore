@@ -4,6 +4,7 @@ dist
 .DS_Store
 .smoke.bundle.mjs
 .render.bundle.mjs
+.*.bundle.mjs
 server/data/*.tmp-*
 .env
 .env.*
