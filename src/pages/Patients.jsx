@@ -242,6 +242,11 @@ function DeleteAllPatientsModal({ open, onClose }) {
   );
 }
 
+const parseUhidNumber = (uhid) => {
+  const m = String(uhid || '').match(/(\d+)/g);
+  return m ? parseInt(m[m.length - 1], 10) : Number.MAX_SAFE_INTEGER;
+};
+
 export default function Patients() {
   const { t, settings, user, pushToast } = useApp();
   const navigate = useNavigate();
@@ -290,7 +295,12 @@ export default function Patients() {
       );
     }
     if (gender) list = list.filter((p) => p.gender === gender);
-    return list.sort((a, b) => (b.created_at || b.reg_date || '').localeCompare(a.created_at || a.reg_date || ''));
+    return list.sort((a, b) => {
+      const numA = parseUhidNumber(a.uhid);
+      const numB = parseUhidNumber(b.uhid);
+      if (numA !== numB) return numA - numB;
+      return String(a.uhid || '').localeCompare(String(b.uhid || ''));
+    });
   }, [q, gender]);
 
   const exportCSV = async () => {
@@ -387,7 +397,13 @@ export default function Patients() {
 
         <DataTable
           columns={[
-            { key: 'uhid', label: 'UHID', sortable: true, render: (p) => <UhidChip uhid={p.uhid} size="sm" /> },
+            {
+              key: 'uhid',
+              label: 'UHID',
+              sortable: true,
+              sortValue: (p) => parseUhidNumber(p.uhid),
+              render: (p) => <UhidChip uhid={p.uhid} size="sm" />,
+            },
             {
               key: 'name', label: 'Patient', sortable: true,
               render: (p) => (
