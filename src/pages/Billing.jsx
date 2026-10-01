@@ -15,7 +15,7 @@ import { createBill, getBill, PAY_METHODS } from '../services/billing';
 import { stockMap } from '../services/inventory';
 import { syncAlerts } from '../services/notifications';
 import { printInvoiceA4, downloadReceipt } from '../print/printers';
-import { fmtMoney, fmtQty, fmtDate, daysUntil, ageLabel } from '../utils';
+import { fmtMoney, fmtQty, fmtDate, daysUntil, ageLabel, todayStr } from '../utils';
 import {
   Pill, Stethoscope, Sparkles, Trash2, Minus, Plus, UserPlus, ReceiptText,
   Printer, Download, CheckCircle2, AlertTriangle, Search,
@@ -95,6 +95,7 @@ export default function Billing() {
   const [nextVisit, setNextVisit] = useState('');
   const doctors = useLiveQuery(() => db.doctors.filter((d) => d.active).toArray(), []) || [];
   const [selectedDoctorId, setSelectedDoctorId] = useState('');
+  const [billDate, setBillDate] = useState(todayStr());
 
   // item catalog
   const stock = useLiveQuery(() => stockMap(), []);
@@ -222,6 +223,7 @@ export default function Billing() {
     try {
       const { bill, items, payments: createdPayments } = await createBill({
         patient_id: patient.id,
+        bill_date: billDate || todayStr(),
         doctor_id: selectedDoc?.id || null,
         doctor_name: selectedDoc?.name || settings.doctor_name || '',
         doctor_phone: selectedDoc?.phone || settings.doctor_phone || '',
@@ -239,6 +241,7 @@ export default function Billing() {
       setCart([]);
       setDiscVal('');
       setPatient(null);
+      setBillDate(todayStr());
       setDiagnosis('');
       setAdvice('');
       setNextVisit('');
@@ -320,6 +323,15 @@ export default function Billing() {
                 )}
               </div>
             )}
+            <div style={{ marginTop: '12px' }}>
+              <Field label="Bill Date">
+                <Input
+                  type="date"
+                  value={billDate}
+                  onChange={(e) => setBillDate(e.target.value)}
+                />
+              </Field>
+            </div>
           </Card>
 
           <Card title="Clinical Details" sub="Diagnosis, advice & follow-up" pad className="pos-clinical-card">

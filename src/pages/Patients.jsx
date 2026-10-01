@@ -51,12 +51,13 @@ function RegisterModal({ open, onClose, prefill = {} }) {
     if (!open) return null;
     const s = await getSettings();
     const year = new Date().getFullYear();
-    const pad = Number(s.uhid_padding) || 6;
+    const includeYear = s.uhid_include_year === 1 || s.uhid_include_year === true;
+    const pad = Number(s.uhid_padding) || 4;
     const prefix = (s.uhid_prefix || 'HC').trim().toUpperCase();
-    const key = s.uhid_include_year ? `UHID|${year}` : 'UHID|ALL';
+    const key = includeYear ? `UHID|${year}` : 'UHID|ALL';
     const row = await db.counters.get(key);
-    const n = row ? row.value + 1 : Number(s.uhid_start) || 1;
-    return `${prefix}${s.uhid_include_year ? `-${year}` : ''}-${String(n).padStart(pad, '0')}`;
+    const n = row ? row.value + 1 : Number(s.uhid_start) || 1001;
+    return `${prefix}${includeYear ? `-${year}` : ''}-${String(n).padStart(pad, '0')}`;
   }, [open]);
 
   const set = (k) => (e) => setF((x) => ({ ...x, [k]: e.target.value }));

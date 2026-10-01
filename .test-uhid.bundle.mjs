@@ -576,15 +576,16 @@ async function nextCounter(key, start = 1) {
 }
 async function makeUHID(settings, year = (/* @__PURE__ */ new Date()).getFullYear()) {
   const s = settings || await getSettings();
-  const key = s.uhid_include_year ? `UHID|${year}` : "UHID|ALL";
-  let start = Number(s.uhid_start) || 1;
+  const includeYear = s.uhid_include_year === 1 || s.uhid_include_year === true;
+  const key = includeYear ? `UHID|${year}` : "UHID|ALL";
+  let start = Number(s.uhid_start) || 1001;
   try {
     if (db_default.patients) {
       const records = await db_default.patients.toArray();
       let maxSuffix = 0;
       for (const p of records) {
         const uhid = String(p.uhid || "");
-        const match = uhid.match(/-(\d+)$/);
+        const match = includeYear ? uhid.match(/-(\d+)$/) : uhid.match(/^[A-Za-z]+-(\d+)$/);
         if (match) {
           const num = parseInt(match[1], 10);
           if (!isNaN(num) && num > maxSuffix) maxSuffix = num;
@@ -595,9 +596,9 @@ async function makeUHID(settings, year = (/* @__PURE__ */ new Date()).getFullYea
   } catch (_) {
   }
   const n = await nextCounter(key, start);
-  const pad = Number(s.uhid_padding) || 6;
+  const pad = Number(s.uhid_padding) || 4;
   const prefix = (s.uhid_prefix || "HC").trim().toUpperCase();
-  return `${prefix}${s.uhid_include_year ? `-${year}` : ""}-${String(n).padStart(pad, "0")}`;
+  return `${prefix}${includeYear ? `-${year}` : ""}-${String(n).padStart(pad, "0")}`;
 }
 async function makeNo(kind, prefix, year = (/* @__PURE__ */ new Date()).getFullYear(), padding = 6, start = 1) {
   let effectiveStart = start;
@@ -714,9 +715,9 @@ var init_core = __esm({
       bill_padding: 6,
       default_payment: "Cash",
       uhid_prefix: "HC",
-      uhid_include_year: true,
-      uhid_padding: 6,
-      uhid_start: 1,
+      uhid_include_year: false,
+      uhid_padding: 4,
+      uhid_start: 1001,
       low_stock_default: 10,
       expiry_30: 30,
       expiry_60: 60,
@@ -1478,15 +1479,32 @@ var init_d1Client = __esm({
       async getNextUhidPreview(db3) {
         const settingsRow = await db3.prepare("SELECT * FROM clinic_settings LIMIT 1").first() || {};
         const year = (/* @__PURE__ */ new Date()).getFullYear();
-        const includeYear = settingsRow.uhid_include_year !== 0 && settingsRow.uhid_include_year !== false;
+        const includeYear = settingsRow.uhid_include_year === 1 || settingsRow.uhid_include_year === true;
         const counterKey = includeYear ? `UHID|${year}` : "UHID|ALL";
-        const pad = Number(settingsRow.uhid_padding) || 6;
+        const pad = Number(settingsRow.uhid_padding) || 4;
         const prefix = (settingsRow.uhid_prefix || "HC").trim().toUpperCase();
-        const start = Number(settingsRow.uhid_start) || 1;
+        const start = Number(settingsRow.uhid_start) || 1001;
         const countRow = await db3.prepare("SELECT COUNT(*) as count FROM patients").first();
         const patientCount = countRow ? Number(countRow.count) : 0;
         const counterRow = await db3.prepare("SELECT * FROM counters WHERE key = ? OR id = ? LIMIT 1").bind(counterKey, counterKey).first();
-        const nextNumber = counterRow && counterRow.value != null ? Number(counterRow.value) + 1 : start;
+        let maxExisting = 0;
+        try {
+          const existingRows = await db3.prepare("SELECT uhid FROM patients WHERE uhid LIKE ?").bind(`${prefix}-%`).all();
+          if (existingRows && existingRows.results) {
+            for (const r of existingRows.results) {
+              const uhidStr = String(r.uhid || "");
+              const m = includeYear ? uhidStr.match(/-(\d+)$/) : uhidStr.match(/^[A-Za-z]+-(\d+)$/);
+              if (m) {
+                const val = parseInt(m[1], 10);
+                if (!isNaN(val) && val > maxExisting) maxExisting = val;
+              }
+            }
+          }
+        } catch (_) {
+        }
+        const counterVal = counterRow && counterRow.value != null ? Number(counterRow.value) : 0;
+        const base = Math.max(counterVal, maxExisting);
+        const nextNumber = base >= start ? base + 1 : start;
         const nextUhid = `${prefix}${includeYear ? `-${year}` : ""}-${String(nextNumber).padStart(pad, "0")}`;
         return {
           ok: true,
@@ -1510,23 +1528,40 @@ var init_d1Client = __esm({
         }
         const settingsRow = await db3.prepare("SELECT * FROM clinic_settings LIMIT 1").first() || {};
         const year = (/* @__PURE__ */ new Date()).getFullYear();
-        const includeYear = settingsRow.uhid_include_year !== 0 && settingsRow.uhid_include_year !== false;
+        const includeYear = settingsRow.uhid_include_year === 1 || settingsRow.uhid_include_year === true;
         const counterKey = includeYear ? `UHID|${year}` : "UHID|ALL";
-        const pad = Number(settingsRow.uhid_padding) || 6;
+        const pad = Number(settingsRow.uhid_padding) || 4;
         const prefix = (settingsRow.uhid_prefix || "HC").trim().toUpperCase();
-        const start = Number(settingsRow.uhid_start) || 1;
+        const start = Number(settingsRow.uhid_start) || 1001;
         const itemAge = item.age !== void 0 && item.age !== null && item.age !== "" ? Number(item.age) : item.dob ? Math.max(0, Math.floor((Date.now() - new Date(item.dob).getTime()) / (365.25 * 24 * 3600 * 1e3))) : null;
         const itemCreatedAt = item.created_at || now;
         const itemRegDate = item.reg_date || itemCreatedAt.slice(0, 10) || today;
         for (let attempt = 0; attempt < 5; attempt++) {
           const counterRow = await db3.prepare("SELECT * FROM counters WHERE key = ? OR id = ? LIMIT 1").bind(counterKey, counterKey).first();
-          let nextVal = counterRow && counterRow.value != null ? Number(counterRow.value) + 1 : start;
+          let maxExisting = 0;
+          try {
+            const existingRows = await db3.prepare("SELECT uhid FROM patients WHERE uhid LIKE ?").bind(`${prefix}-%`).all();
+            if (existingRows && existingRows.results) {
+              for (const r of existingRows.results) {
+                const uhidStr = String(r.uhid || "");
+                const m = includeYear ? uhidStr.match(/-(\d+)$/) : uhidStr.match(/^[A-Za-z]+-(\d+)$/);
+                if (m) {
+                  const val = parseInt(m[1], 10);
+                  if (!isNaN(val) && val > maxExisting) maxExisting = val;
+                }
+              }
+            }
+          } catch (_) {
+          }
+          const counterVal = counterRow && counterRow.value != null ? Number(counterRow.value) : 0;
+          const base = Math.max(counterVal, maxExisting);
+          let nextVal = base >= start ? base + 1 : start;
           if (attempt > 0) nextVal += attempt;
           let uhid = item.uhid ? String(item.uhid).trim() : null;
           if (!uhid) {
             uhid = `${prefix}${includeYear ? `-${year}` : ""}-${String(nextVal).padStart(pad, "0")}`;
           } else {
-            const match = uhid.match(/-(\d+)$/);
+            const match = includeYear ? uhid.match(/-(\d+)$/) : uhid.match(/^[A-Za-z]+-(\d+)$/);
             if (match) {
               const numInUhid = Number(match[1]);
               if (!isNaN(numInUhid) && numInUhid > nextVal) {
@@ -1755,46 +1790,50 @@ var init_d1Client = __esm({
         if (actual === "patients") {
           const settingsRow = await db3.prepare("SELECT * FROM clinic_settings LIMIT 1").first() || {};
           const year = (/* @__PURE__ */ new Date()).getFullYear();
-          const counterKey = settingsRow.uhid_include_year !== 0 && settingsRow.uhid_include_year !== false ? `UHID|${year}` : "UHID|ALL";
-          const pad = Number(settingsRow.uhid_padding) || 6;
+          const includeYear = settingsRow.uhid_include_year === 1 || settingsRow.uhid_include_year === true;
+          const counterKey = includeYear ? `UHID|${year}` : "UHID|ALL";
+          const pad = Number(settingsRow.uhid_padding) || 4;
           const prefix = (settingsRow.uhid_prefix || "HC").trim().toUpperCase();
+          const start = Number(settingsRow.uhid_start) || 1001;
           const counterRow = await db3.prepare("SELECT * FROM counters WHERE key = ? OR id = ? LIMIT 1").bind(counterKey, counterKey).first();
-          let counterVal = counterRow && counterRow.value != null ? Number(counterRow.value) : (Number(settingsRow.uhid_start) || 1) - 1;
-          const uhidPrefix = `${prefix}${settingsRow.uhid_include_year !== 0 && settingsRow.uhid_include_year !== false ? `-${year}` : ""}-`;
-          const existingUhids = await db3.prepare("SELECT uhid FROM patients WHERE uhid LIKE ?").bind(`${uhidPrefix}%`).all();
+          let counterVal = counterRow && counterRow.value != null ? Number(counterRow.value) : 0;
           let maxExistingSuffix = 0;
-          if (existingUhids && existingUhids.results) {
-            for (const row of existingUhids.results) {
-              const match = String(row.uhid || "").match(/-(\d+)$/);
-              if (match) {
-                const num = parseInt(match[1], 10);
-                if (!isNaN(num) && num > maxExistingSuffix) {
-                  maxExistingSuffix = num;
+          try {
+            const existingUhids = await db3.prepare("SELECT uhid FROM patients WHERE uhid LIKE ?").bind(`${prefix}-%`).all();
+            if (existingUhids && existingUhids.results) {
+              for (const row of existingUhids.results) {
+                const match = includeYear ? String(row.uhid || "").match(/-(\d+)$/) : String(row.uhid || "").match(/^[A-Za-z]+-(\d+)$/);
+                if (match) {
+                  const num = parseInt(match[1], 10);
+                  if (!isNaN(num) && num > maxExistingSuffix) {
+                    maxExistingSuffix = num;
+                  }
                 }
               }
             }
+          } catch (_) {
           }
-          counterVal = Math.max(counterVal, maxExistingSuffix, (Number(settingsRow.uhid_start) || 1) - 1);
+          counterVal = Math.max(counterVal, maxExistingSuffix, start - 1);
           const newPatients = [];
           const skipped = [];
           const batchStmts = [];
           for (const item of items) {
             const itemAge = item.age !== void 0 && item.age !== null && item.age !== "" ? Number(item.age) : item.dob ? Math.max(0, Math.floor((Date.now() - new Date(item.dob).getTime()) / (365.25 * 24 * 3600 * 1e3))) : null;
-            if (!item.name || itemAge == null || isNaN(itemAge) || !item.gender || !item.mobile) {
-              skipped.push({ item, reason: "Missing required field (name, age, gender, or mobile)" });
+            if (!item.name || !item.gender) {
+              skipped.push({ item, reason: "Missing required field (name or gender)" });
               continue;
             }
             counterVal++;
-            const uhid = item.uhid || `${prefix}${settingsRow.uhid_include_year !== 0 && settingsRow.uhid_include_year !== false ? `-${year}` : ""}-${String(counterVal).padStart(pad, "0")}`;
+            const uhid = item.uhid || `${prefix}${includeYear ? `-${year}` : ""}-${String(counterVal).padStart(pad, "0")}`;
             const itemCreatedAt = parseHistoricalDateTime(item.created_at || item.date_time, now);
             const itemRegDate = item.reg_date || (itemCreatedAt ? itemCreatedAt.slice(0, 10) : today);
             const p = {
               id: item.id || crypto.randomUUID(),
               uhid,
               name: String(item.name).trim(),
-              age: itemAge,
+              age: itemAge != null && !isNaN(itemAge) ? itemAge : null,
               gender: item.gender,
-              mobile: String(item.mobile),
+              mobile: item.mobile ? String(item.mobile) : "",
               marital_status: item.marital_status || "Single",
               address: item.address || "",
               pin: item.pin ? String(item.pin) : "",
@@ -2218,8 +2257,8 @@ try {
     { name: "Patient One", age: 30, gender: "M", mobile: "9111111111" },
     "admin"
   );
-  assert.strictEqual(p1.uhid, "HC-2026-000001", `Expected HC-2026-000001, got ${p1.uhid}`);
-  ok("TEST 1: Zero patients in DB -> First patient receives HC-2026-000001");
+  assert.strictEqual(p1.uhid, "HC-1001", `Expected HC-1001, got ${p1.uhid}`);
+  ok("TEST 1: Zero patients in DB -> First patient receives HC-1001");
   const p22 = await patients.registerPatient(
     { name: "Patient Two", age: 25, gender: "F", mobile: "9222222222" },
     "admin"
@@ -2228,30 +2267,30 @@ try {
     { name: "Patient Three", age: 40, gender: "M", mobile: "9333333333" },
     "admin"
   );
-  assert.strictEqual(p22.uhid, "HC-2026-000002", `Expected HC-2026-000002, got ${p22.uhid}`);
-  assert.strictEqual(p3.uhid, "HC-2026-000003", `Expected HC-2026-000003, got ${p3.uhid}`);
-  ok("TEST 2: Three patients created sequentially: 000001, 000002, 000003");
+  assert.strictEqual(p22.uhid, "HC-1002", `Expected HC-1002, got ${p22.uhid}`);
+  assert.strictEqual(p3.uhid, "HC-1003", `Expected HC-1003, got ${p3.uhid}`);
+  ok("TEST 2: Three patients created sequentially: HC-1001, HC-1002, HC-1003");
   await patients.deletePatient(p22.id, "admin");
   const remainingAfterDelete2 = await db2.patients.toArray();
-  assert.strictEqual(remainingAfterDelete2.length, 2, "Two patients should remain (001 and 003)");
-  assert(!remainingAfterDelete2.some((p) => p.uhid === "HC-2026-000002"), "002 must be deleted");
+  assert.strictEqual(remainingAfterDelete2.length, 2, "Two patients should remain (1001 and 1003)");
+  assert(!remainingAfterDelete2.some((p) => p.uhid === "HC-1002"), "1002 must be deleted");
   const p4 = await patients.registerPatient(
     { name: "Patient Four", age: 35, gender: "F", mobile: "9444444444" },
     "admin"
   );
-  assert.strictEqual(p4.uhid, "HC-2026-000004", `Expected HC-2026-000004, got ${p4.uhid}`);
-  ok("TEST 3: Deleted patient 002; next patient receives HC-2026-000004 (no reuse of 002)");
+  assert.strictEqual(p4.uhid, "HC-1004", `Expected HC-1004, got ${p4.uhid}`);
+  ok("TEST 3: Deleted patient 1002; next patient receives HC-1004 (no reuse of 1002)");
   await patients.deletePatient(p1.id, "admin");
   await patients.deletePatient(p3.id, "admin");
   const remainingAfterDelete1and3 = await db2.patients.toArray();
-  assert.strictEqual(remainingAfterDelete1and3.length, 1, "Patient 004 must still exist in DB");
-  assert.strictEqual(remainingAfterDelete1and3[0].uhid, "HC-2026-000004");
+  assert.strictEqual(remainingAfterDelete1and3.length, 1, "Patient 1004 must still exist in DB");
+  assert.strictEqual(remainingAfterDelete1and3[0].uhid, "HC-1004");
   const p5 = await patients.registerPatient(
     { name: "Patient Five", age: 50, gender: "M", mobile: "9555555555" },
     "admin"
   );
-  assert.strictEqual(p5.uhid, "HC-2026-000005", `Expected HC-2026-000005, got ${p5.uhid}`);
-  ok("TEST 4: Deleted patients 001 and 003 (004 remains); next patient receives HC-2026-000005");
+  assert.strictEqual(p5.uhid, "HC-1005", `Expected HC-1005, got ${p5.uhid}`);
+  ok("TEST 4: Deleted patients 1001 and 1003 (1004 remains); next patient receives HC-1005");
   await patients.deletePatient(p4.id, "admin");
   await patients.deletePatient(p5.id, "admin");
   const remainingZero = await db2.patients.count();
@@ -2260,8 +2299,8 @@ try {
     { name: "Patient After All Deleted", age: 22, gender: "F", mobile: "9666666666" },
     "admin"
   );
-  assert.strictEqual(pNew.uhid, "HC-2026-000006", `Expected HC-2026-000006 even after deleting all patients, got ${pNew.uhid}`);
-  ok("TEST 5: All patients deleted (zero remaining) -> Monotonic sequence preserved, next patient receives HC-2026-000006");
+  assert.strictEqual(pNew.uhid, "HC-1006", `Expected HC-1006 even after deleting all patients, got ${pNew.uhid}`);
+  ok("TEST 5: All patients deleted (zero remaining) -> Monotonic sequence preserved, next patient receives HC-1006");
 } catch (err) {
   fail("Part 1 failure", err);
 }
@@ -2273,9 +2312,9 @@ console.log("\n--- PART 2: Cloudflare D1 Backend Engine Verification ---");
         id: "1",
         clinic_name: "HEEVA CLINIC",
         uhid_prefix: "HC",
-        uhid_include_year: 1,
-        uhid_padding: 6,
-        uhid_start: 1
+        uhid_include_year: 0,
+        uhid_padding: 4,
+        uhid_start: 1001
       }
     ],
     counters: [],
@@ -2355,47 +2394,47 @@ console.log("\n--- PART 2: Cloudflare D1 Backend Engine Verification ---");
     }
   };
   const prev1 = await d1Client2.getNextUhidPreview(mockD1);
-  assert.strictEqual(prev1.nextUhid, "HC-2026-000001", "Preview for 0 patients must be HC-2026-000001");
+  assert.strictEqual(prev1.nextUhid, "HC-1001", "Preview for 0 patients must be HC-1001");
   const d1p1 = await d1Client2.allocatePatient(mockD1, { name: "D1 Patient 1", age: 30, gender: "M", mobile: "9111111111" });
-  assert.strictEqual(d1p1.uhid, "HC-2026-000001");
-  ok("D1 TEST 1: Zero patients in D1 -> preview and allocated UHID are HC-2026-000001");
+  assert.strictEqual(d1p1.uhid, "HC-1001");
+  ok("D1 TEST 1: Zero patients in D1 -> preview and allocated UHID are HC-1001");
   const d1p2 = await d1Client2.allocatePatient(mockD1, { name: "D1 Patient 2", age: 25, gender: "F", mobile: "9222222222" });
   const d1p3 = await d1Client2.allocatePatient(mockD1, { name: "D1 Patient 3", age: 40, gender: "M", mobile: "9333333333" });
-  assert.strictEqual(d1p2.uhid, "HC-2026-000002");
-  assert.strictEqual(d1p3.uhid, "HC-2026-000003");
-  ok("D1 TEST 2: Sequential allocation produces HC-2026-000002 and HC-2026-000003");
+  assert.strictEqual(d1p2.uhid, "HC-1002");
+  assert.strictEqual(d1p3.uhid, "HC-1003");
+  ok("D1 TEST 2: Sequential allocation produces HC-1002 and HC-1003");
   await d1Client2.remove(mockD1, "patients", d1p2.id);
   assert.strictEqual(tables.patients.length, 2, "2 patients remain in D1");
   const prevAfterDelete2 = await d1Client2.getNextUhidPreview(mockD1);
-  assert.strictEqual(prevAfterDelete2.nextUhid, "HC-2026-000004", "Preview must be HC-2026-000004");
+  assert.strictEqual(prevAfterDelete2.nextUhid, "HC-1004", "Preview must be HC-1004");
   const d1p4 = await d1Client2.allocatePatient(mockD1, { name: "D1 Patient 4", age: 35, gender: "F", mobile: "9444444444" });
-  assert.strictEqual(d1p4.uhid, "HC-2026-000004", `Expected HC-2026-000004, got ${d1p4.uhid}`);
-  ok("D1 TEST 3: Deleting 002 does NOT reset or reuse counter; next patient is HC-2026-000004");
+  assert.strictEqual(d1p4.uhid, "HC-1004", `Expected HC-1004, got ${d1p4.uhid}`);
+  ok("D1 TEST 3: Deleting 1002 does NOT reset or reuse counter; next patient is HC-1004");
   await d1Client2.remove(mockD1, "patients", d1p1.id);
   await d1Client2.remove(mockD1, "patients", d1p3.id);
-  assert.strictEqual(tables.patients.length, 1, "Patient 004 remains in D1");
+  assert.strictEqual(tables.patients.length, 1, "Patient 1004 remains in D1");
   const d1p5 = await d1Client2.allocatePatient(mockD1, { name: "D1 Patient 5", age: 50, gender: "M", mobile: "9555555555" });
-  assert.strictEqual(d1p5.uhid, "HC-2026-000005", `Expected HC-2026-000005, got ${d1p5.uhid}`);
-  ok("D1 TEST 4: Deleting 001 and 003 leaves 004 in DB; next patient is HC-2026-000005");
+  assert.strictEqual(d1p5.uhid, "HC-1005", `Expected HC-1005, got ${d1p5.uhid}`);
+  ok("D1 TEST 4: Deleting 1001 and 1003 leaves 1004 in DB; next patient is HC-1005");
   await d1Client2.remove(mockD1, "patients", d1p4.id);
   await d1Client2.remove(mockD1, "patients", d1p5.id);
   assert.strictEqual(tables.patients.length, 0, "D1 now has genuinely 0 patients");
   const prevAfterZero = await d1Client2.getNextUhidPreview(mockD1);
-  assert.strictEqual(prevAfterZero.nextUhid, "HC-2026-000006", "Preview after zero patients must be HC-2026-000006 (counter preserved)");
+  assert.strictEqual(prevAfterZero.nextUhid, "HC-1006", "Preview after zero patients must be HC-1006 (counter preserved)");
   const d1Fresh = await d1Client2.allocatePatient(mockD1, { name: "D1 Fresh", age: 28, gender: "F", mobile: "9777777777" });
-  assert.strictEqual(d1Fresh.uhid, "HC-2026-000006", `Expected HC-2026-000006, got ${d1Fresh.uhid}`);
-  ok("D1 TEST 5: All patients deleted in D1 -> sequence continues monotonically with HC-2026-000006");
+  assert.strictEqual(d1Fresh.uhid, "HC-1006", `Expected HC-1006, got ${d1Fresh.uhid}`);
+  ok("D1 TEST 5: All patients deleted in D1 -> sequence continues monotonically with HC-1006");
   const laptop1Patient = await d1Client2.allocatePatient(mockD1, { name: "Laptop 1 Patient", age: 45, gender: "M", mobile: "9888888881" });
   const laptop2Patient = await d1Client2.allocatePatient(mockD1, { name: "Laptop 2 Patient", age: 32, gender: "F", mobile: "9888888882" });
-  assert.strictEqual(laptop1Patient.uhid, "HC-2026-000007");
-  assert.strictEqual(laptop2Patient.uhid, "HC-2026-000008");
+  assert.strictEqual(laptop1Patient.uhid, "HC-1007");
+  assert.strictEqual(laptop2Patient.uhid, "HC-1008");
   assert.notStrictEqual(laptop1Patient.uhid, laptop2Patient.uhid, "Multi-laptop UHIDs must be strictly distinct");
-  ok("D1 TEST 6: Multi-laptop simulation: Laptop 1 (000007) & Laptop 2 (000008) receive unique sequential UHIDs");
+  ok("D1 TEST 6: Multi-laptop simulation: Laptop 1 (HC-1007) & Laptop 2 (HC-1008) receive unique sequential UHIDs");
   const previewAfterReload = await d1Client2.getNextUhidPreview(mockD1);
-  assert.strictEqual(previewAfterReload.nextUhid, "HC-2026-000009");
+  assert.strictEqual(previewAfterReload.nextUhid, "HC-1009");
   const nextReloadPatient = await d1Client2.allocatePatient(mockD1, { name: "Post-Reload Patient", age: 29, gender: "M", mobile: "9888888889" });
-  assert.strictEqual(nextReloadPatient.uhid, "HC-2026-000009");
-  ok("D1 TEST 7: State persistence: preview and subsequent patient continue sequence to HC-2026-000009");
+  assert.strictEqual(nextReloadPatient.uhid, "HC-1009");
+  ok("D1 TEST 7: State persistence: preview and subsequent patient continue sequence to HC-1009");
 }
 console.log("\n================================================================");
 console.log(`RESULTS: ${passed} passed, ${failed} failed.`);

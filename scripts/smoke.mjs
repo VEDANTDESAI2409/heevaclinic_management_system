@@ -38,7 +38,7 @@ const p1 = await patients.registerPatient(
   { name: 'Smoke Test Patient', gender: 'M', age: 36, marital_status: 'Single', mobile: '9000000001' },
   user.id
 );
-ok(`new patient → UHID ${p1.uhid} (format ${/^HC-\d{4}-\d{6}$/.test(p1.uhid) ? 'correct' : 'WRONG'})`);
+ok(`new patient → UHID ${p1.uhid} (format ${/^HC-\d+$/.test(p1.uhid) ? 'correct' : 'WRONG'})`);
 
 const allU = (await db.patients.toArray()).map((p) => p.uhid);
 const dupU = new Set(allU).size !== allU.length;

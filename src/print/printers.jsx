@@ -276,7 +276,7 @@ export function printInvoiceA4(bill, items = [], payments = [], s = {}) {
             </div>
             <div className="med-doc-field">
               <span className="med-doc-lbl">Date & Time:</span>
-              <span className="med-doc-val">{fmtDateTime12h(bill.time)}</span>
+              <span className="med-doc-val">{fmtDateTime12h(bill.time || bill.date)}</span>
             </div>
           </div>
         </div>
@@ -714,7 +714,7 @@ export function downloadReceipt(bill, items = [], payments = [], s = {}) {
           </div>
           <div class="med-doc-field">
             <span class="med-doc-lbl">Date & Time:</span>
-            <span class="med-doc-val">${fmtDateTime12h(bill.time)}</span>
+            <span class="med-doc-val">${fmtDateTime12h(bill.time || bill.date)}</span>
           </div>
         </div>
       </div>

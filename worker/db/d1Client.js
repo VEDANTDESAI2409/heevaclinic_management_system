@@ -232,17 +232,35 @@ export const d1Client = {
   async getNextUhidPreview(db) {
     const settingsRow = (await db.prepare('SELECT * FROM clinic_settings LIMIT 1').first()) || {};
     const year = new Date().getFullYear();
-    const includeYear = settingsRow.uhid_include_year !== 0 && settingsRow.uhid_include_year !== false;
+    const includeYear = settingsRow.uhid_include_year === 1 || settingsRow.uhid_include_year === true;
     const counterKey = includeYear ? `UHID|${year}` : 'UHID|ALL';
-    const pad = Number(settingsRow.uhid_padding) || 6;
+    const pad = Number(settingsRow.uhid_padding) || 4;
     const prefix = (settingsRow.uhid_prefix || 'HC').trim().toUpperCase();
-    const start = Number(settingsRow.uhid_start) || 1;
+    const start = Number(settingsRow.uhid_start) || 1001;
 
     const countRow = await db.prepare('SELECT COUNT(*) as count FROM patients').first();
     const patientCount = countRow ? Number(countRow.count) : 0;
 
     const counterRow = await db.prepare('SELECT * FROM counters WHERE key = ? OR id = ? LIMIT 1').bind(counterKey, counterKey).first();
-    const nextNumber = counterRow && counterRow.value != null ? Number(counterRow.value) + 1 : start;
+
+    let maxExisting = 0;
+    try {
+      const existingRows = await db.prepare('SELECT uhid FROM patients WHERE uhid LIKE ?').bind(`${prefix}-%`).all();
+      if (existingRows && existingRows.results) {
+        for (const r of existingRows.results) {
+          const uhidStr = String(r.uhid || '');
+          const m = includeYear ? uhidStr.match(/-(\d+)$/) : uhidStr.match(/^[A-Za-z]+-(\d+)$/);
+          if (m) {
+            const val = parseInt(m[1], 10);
+            if (!isNaN(val) && val > maxExisting) maxExisting = val;
+          }
+        }
+      }
+    } catch (_) {}
+
+    const counterVal = counterRow && counterRow.value != null ? Number(counterRow.value) : 0;
+    const base = Math.max(counterVal, maxExisting);
+    const nextNumber = base >= start ? base + 1 : start;
 
     const nextUhid = `${prefix}${includeYear ? `-${year}` : ''}-${String(nextNumber).padStart(pad, '0')}`;
     return {
@@ -271,11 +289,11 @@ export const d1Client = {
 
     const settingsRow = (await db.prepare('SELECT * FROM clinic_settings LIMIT 1').first()) || {};
     const year = new Date().getFullYear();
-    const includeYear = settingsRow.uhid_include_year !== 0 && settingsRow.uhid_include_year !== false;
+    const includeYear = settingsRow.uhid_include_year === 1 || settingsRow.uhid_include_year === true;
     const counterKey = includeYear ? `UHID|${year}` : 'UHID|ALL';
-    const pad = Number(settingsRow.uhid_padding) || 6;
+    const pad = Number(settingsRow.uhid_padding) || 4;
     const prefix = (settingsRow.uhid_prefix || 'HC').trim().toUpperCase();
-    const start = Number(settingsRow.uhid_start) || 1;
+    const start = Number(settingsRow.uhid_start) || 1001;
 
     const itemAge = item.age !== undefined && item.age !== null && item.age !== ''
       ? Number(item.age)
@@ -287,14 +305,32 @@ export const d1Client = {
     // Retry loop to guarantee concurrency safety and unique UHID allocation across multiple devices
     for (let attempt = 0; attempt < 5; attempt++) {
       const counterRow = await db.prepare('SELECT * FROM counters WHERE key = ? OR id = ? LIMIT 1').bind(counterKey, counterKey).first();
-      let nextVal = counterRow && counterRow.value != null ? Number(counterRow.value) + 1 : start;
+
+      let maxExisting = 0;
+      try {
+        const existingRows = await db.prepare('SELECT uhid FROM patients WHERE uhid LIKE ?').bind(`${prefix}-%`).all();
+        if (existingRows && existingRows.results) {
+          for (const r of existingRows.results) {
+            const uhidStr = String(r.uhid || '');
+            const m = includeYear ? uhidStr.match(/-(\d+)$/) : uhidStr.match(/^[A-Za-z]+-(\d+)$/);
+            if (m) {
+              const val = parseInt(m[1], 10);
+              if (!isNaN(val) && val > maxExisting) maxExisting = val;
+            }
+          }
+        }
+      } catch (_) {}
+
+      const counterVal = counterRow && counterRow.value != null ? Number(counterRow.value) : 0;
+      const base = Math.max(counterVal, maxExisting);
+      let nextVal = base >= start ? base + 1 : start;
       if (attempt > 0) nextVal += attempt;
 
       let uhid = item.uhid ? String(item.uhid).trim() : null;
       if (!uhid) {
         uhid = `${prefix}${includeYear ? `-${year}` : ''}-${String(nextVal).padStart(pad, '0')}`;
       } else {
-        const match = uhid.match(/-(\d+)$/);
+        const match = includeYear ? uhid.match(/-(\d+)$/) : uhid.match(/^[A-Za-z]+-(\d+)$/);
         if (match) {
           const numInUhid = Number(match[1]);
           if (!isNaN(numInUhid) && numInUhid > nextVal) {
@@ -574,31 +610,32 @@ export const d1Client = {
     if (actual === 'patients') {
       const settingsRow = (await db.prepare('SELECT * FROM clinic_settings LIMIT 1').first()) || {};
       const year = new Date().getFullYear();
-      const counterKey = settingsRow.uhid_include_year !== 0 && settingsRow.uhid_include_year !== false
-        ? `UHID|${year}`
-        : 'UHID|ALL';
-      const pad = Number(settingsRow.uhid_padding) || 6;
+      const includeYear = settingsRow.uhid_include_year === 1 || settingsRow.uhid_include_year === true;
+      const counterKey = includeYear ? `UHID|${year}` : 'UHID|ALL';
+      const pad = Number(settingsRow.uhid_padding) || 4;
       const prefix = (settingsRow.uhid_prefix || 'HC').trim().toUpperCase();
+      const start = Number(settingsRow.uhid_start) || 1001;
 
       const counterRow = await db.prepare('SELECT * FROM counters WHERE key = ? OR id = ? LIMIT 1').bind(counterKey, counterKey).first();
-      let counterVal = counterRow && counterRow.value != null ? Number(counterRow.value) : (Number(settingsRow.uhid_start) || 1) - 1;
+      let counterVal = counterRow && counterRow.value != null ? Number(counterRow.value) : 0;
 
       // Ensure counter is at least the highest numerical suffix in existing patients so deleting patients never recycles UHIDs
-      const uhidPrefix = `${prefix}${settingsRow.uhid_include_year !== 0 && settingsRow.uhid_include_year !== false ? `-${year}` : ''}-`;
-      const existingUhids = await db.prepare('SELECT uhid FROM patients WHERE uhid LIKE ?').bind(`${uhidPrefix}%`).all();
       let maxExistingSuffix = 0;
-      if (existingUhids && existingUhids.results) {
-        for (const row of existingUhids.results) {
-          const match = String(row.uhid || '').match(/-(\d+)$/);
-          if (match) {
-            const num = parseInt(match[1], 10);
-            if (!isNaN(num) && num > maxExistingSuffix) {
-              maxExistingSuffix = num;
+      try {
+        const existingUhids = await db.prepare('SELECT uhid FROM patients WHERE uhid LIKE ?').bind(`${prefix}-%`).all();
+        if (existingUhids && existingUhids.results) {
+          for (const row of existingUhids.results) {
+            const match = includeYear ? String(row.uhid || '').match(/-(\d+)$/) : String(row.uhid || '').match(/^[A-Za-z]+-(\d+)$/);
+            if (match) {
+              const num = parseInt(match[1], 10);
+              if (!isNaN(num) && num > maxExistingSuffix) {
+                maxExistingSuffix = num;
+              }
             }
           }
         }
-      }
-      counterVal = Math.max(counterVal, maxExistingSuffix, (Number(settingsRow.uhid_start) || 1) - 1);
+      } catch (_) {}
+      counterVal = Math.max(counterVal, maxExistingSuffix, start - 1);
 
       const newPatients = [];
       const skipped = [];
@@ -612,7 +649,7 @@ export const d1Client = {
           continue;
         }
         counterVal++;
-        const uhid = item.uhid || `${prefix}${settingsRow.uhid_include_year !== 0 && settingsRow.uhid_include_year !== false ? `-${year}` : ''}-${String(counterVal).padStart(pad, '0')}`;
+        const uhid = item.uhid || `${prefix}${includeYear ? `-${year}` : ''}-${String(counterVal).padStart(pad, '0')}`;
         const itemCreatedAt = parseHistoricalDateTime(item.created_at || item.date_time, now);
         const itemRegDate = item.reg_date || (itemCreatedAt ? itemCreatedAt.slice(0, 10) : today);
         const p = {

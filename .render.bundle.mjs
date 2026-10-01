@@ -705,7 +705,7 @@ function addDays(d, n) {
   x.setDate(x.getDate() + n);
   return x;
 }
-function toDDMMYYYY2(s) {
+function toDDMMYYYY(s) {
   if (!s) return "";
   const str = String(s).trim();
   if (/^\d{2}-\d{2}-\d{4}$/.test(str)) return str;
@@ -737,7 +737,7 @@ function parseDDMMYYYY(dateStr) {
 }
 function fmtDate(s) {
   if (!s) return "\u2014";
-  return toDDMMYYYY2(s) || "\u2014";
+  return toDDMMYYYY(s) || "\u2014";
 }
 function fmtDateTime(s) {
   if (!s) return "\u2014";
@@ -759,7 +759,7 @@ function fmtDateTime12h(s) {
   const timePart = `${p2(hours)}:${p2(d.getMinutes())} ${ampm}`;
   return `${datePart} ${timePart}`;
 }
-function fmtTime2(s) {
+function fmtTime(s) {
   if (!s) return "\u2014";
   const d = new Date(s);
   return d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
@@ -874,15 +874,16 @@ async function nextCounter(key, start = 1) {
 }
 async function makeUHID(settings, year = (/* @__PURE__ */ new Date()).getFullYear()) {
   const s = settings || await getSettings();
-  const key = s.uhid_include_year ? `UHID|${year}` : "UHID|ALL";
-  let start = Number(s.uhid_start) || 1;
+  const includeYear = s.uhid_include_year === 1 || s.uhid_include_year === true;
+  const key = includeYear ? `UHID|${year}` : "UHID|ALL";
+  let start = Number(s.uhid_start) || 1001;
   try {
     if (db_default.patients) {
       const records = await db_default.patients.toArray();
       let maxSuffix = 0;
       for (const p of records) {
         const uhid = String(p.uhid || "");
-        const match = uhid.match(/-(\d+)$/);
+        const match = includeYear ? uhid.match(/-(\d+)$/) : uhid.match(/^[A-Za-z]+-(\d+)$/);
         if (match) {
           const num = parseInt(match[1], 10);
           if (!isNaN(num) && num > maxSuffix) maxSuffix = num;
@@ -893,9 +894,9 @@ async function makeUHID(settings, year = (/* @__PURE__ */ new Date()).getFullYea
   } catch (_) {
   }
   const n = await nextCounter(key, start);
-  const pad = Number(s.uhid_padding) || 6;
+  const pad = Number(s.uhid_padding) || 4;
   const prefix = (s.uhid_prefix || "HC").trim().toUpperCase();
-  return `${prefix}${s.uhid_include_year ? `-${year}` : ""}-${String(n).padStart(pad, "0")}`;
+  return `${prefix}${includeYear ? `-${year}` : ""}-${String(n).padStart(pad, "0")}`;
 }
 async function makeNo(kind, prefix, year = (/* @__PURE__ */ new Date()).getFullYear(), padding = 6, start = 1) {
   let effectiveStart = start;
@@ -1012,9 +1013,9 @@ var init_core = __esm({
       bill_padding: 6,
       default_payment: "Cash",
       uhid_prefix: "HC",
-      uhid_include_year: true,
-      uhid_padding: 6,
-      uhid_start: 1,
+      uhid_include_year: false,
+      uhid_padding: 4,
+      uhid_start: 1001,
       low_stock_default: 10,
       expiry_30: 30,
       expiry_60: 60,
@@ -1837,11 +1838,11 @@ function Logo({ size = 36, className, src }) {
     }
   );
 }
-function Btn({ variant = "primary", size = "md", icon: Icon, children, className, ...rest }) {
-  return /* @__PURE__ */ React2.createElement("button", { className: cx("btn", `btn-${variant}`, size !== "md" && `btn-${size}`, className), ...rest }, Icon && /* @__PURE__ */ React2.createElement(Icon, { size: size === "sm" ? 14 : size === "lg" ? 18 : 16 }), children);
+function Btn({ variant = "primary", size = "md", icon: Icon, children, className, type = "button", ...rest }) {
+  return /* @__PURE__ */ React2.createElement("button", { type, className: cx("btn", `btn-${variant}`, size !== "md" && `btn-${size}`, className), ...rest }, Icon && /* @__PURE__ */ React2.createElement(Icon, { size: size === "sm" ? 14 : size === "lg" ? 18 : 16 }), children);
 }
-function IconBtn({ title, icon: Icon, active, className, size = 18, ...rest }) {
-  return /* @__PURE__ */ React2.createElement("button", { className: cx("icon-btn", active && "icon-btn-active", className), title, ...rest }, /* @__PURE__ */ React2.createElement(Icon, { size }));
+function IconBtn({ title, icon: Icon, active, className, size = 18, type = "button", children, ...rest }) {
+  return /* @__PURE__ */ React2.createElement("button", { type, className: cx("icon-btn", active && "icon-btn-active", className), title, ...rest }, Icon && /* @__PURE__ */ React2.createElement(Icon, { size }), children);
 }
 function Card({ title, sub, actions, children, className, pad = true, tone }) {
   return /* @__PURE__ */ React2.createElement("section", { className: cx("card", tone && `card-${tone}`, className) }, (title || actions) && /* @__PURE__ */ React2.createElement("header", { className: "card-head" }, /* @__PURE__ */ React2.createElement("div", null, title && /* @__PURE__ */ React2.createElement("h3", { className: "card-title" }, title), sub && /* @__PURE__ */ React2.createElement("p", { className: "card-sub" }, sub)), actions && /* @__PURE__ */ React2.createElement("div", { className: "card-actions" }, actions)), /* @__PURE__ */ React2.createElement("div", { className: cx("card-body", !pad && "card-body-flush") }, children));
@@ -1849,7 +1850,7 @@ function Card({ title, sub, actions, children, className, pad = true, tone }) {
 function PageHeader({ title, sub, actions }) {
   return /* @__PURE__ */ React2.createElement("div", { className: "page-head" }, /* @__PURE__ */ React2.createElement("div", null, /* @__PURE__ */ React2.createElement("h1", { className: "page-title" }, title), sub && /* @__PURE__ */ React2.createElement("p", { className: "page-sub" }, sub)), actions && /* @__PURE__ */ React2.createElement("div", { className: "page-actions" }, actions));
 }
-function Modal({ open, onClose, title, sub, children, footer, width = "md" }) {
+function Modal({ open, onClose, onSubmit, title, sub, children, footer, width = "md" }) {
   useEffect2(() => {
     if (!open) return void 0;
     const h2 = (e) => e.key === "Escape" && onClose && onClose();
@@ -1857,7 +1858,27 @@ function Modal({ open, onClose, title, sub, children, footer, width = "md" }) {
     return () => window.removeEventListener("keydown", h2);
   }, [open, onClose]);
   if (!open) return null;
-  return /* @__PURE__ */ React2.createElement("div", { className: "modal-overlay", onMouseDown: (e) => e.target === e.currentTarget && onClose && onClose() }, /* @__PURE__ */ React2.createElement("div", { className: cx("modal", `modal-${width}`), role: "dialog", "aria-modal": "true" }, /* @__PURE__ */ React2.createElement("header", { className: "modal-head" }, /* @__PURE__ */ React2.createElement("div", null, /* @__PURE__ */ React2.createElement("h3", null, title), sub && /* @__PURE__ */ React2.createElement("p", null, sub)), onClose && /* @__PURE__ */ React2.createElement("button", { className: "icon-btn", onClick: onClose, "aria-label": "Close" }, /* @__PURE__ */ React2.createElement(X, { size: 18 }))), /* @__PURE__ */ React2.createElement("div", { className: "modal-body" }, children), footer && /* @__PURE__ */ React2.createElement("footer", { className: "modal-foot" }, footer)));
+  const Tag2 = onSubmit ? "form" : "div";
+  const handleFormSubmit = (e) => {
+    e.preventDefault();
+    const active = document.activeElement;
+    if (active && active.tagName === "TEXTAREA") return;
+    if (onSubmit) {
+      onSubmit(e);
+    }
+  };
+  return /* @__PURE__ */ React2.createElement("div", { className: "modal-overlay", onMouseDown: (e) => e.target === e.currentTarget && onClose && onClose() }, /* @__PURE__ */ React2.createElement(
+    Tag2,
+    {
+      className: cx("modal", `modal-${width}`),
+      role: "dialog",
+      "aria-modal": "true",
+      onSubmit: onSubmit ? handleFormSubmit : void 0
+    },
+    /* @__PURE__ */ React2.createElement("header", { className: "modal-head" }, /* @__PURE__ */ React2.createElement("div", null, /* @__PURE__ */ React2.createElement("h3", null, title), sub && /* @__PURE__ */ React2.createElement("p", null, sub)), onClose && /* @__PURE__ */ React2.createElement("button", { type: "button", className: "icon-btn", onClick: onClose, "aria-label": "Close" }, /* @__PURE__ */ React2.createElement(X, { size: 18 }))),
+    /* @__PURE__ */ React2.createElement("div", { className: "modal-body" }, children),
+    footer && /* @__PURE__ */ React2.createElement("footer", { className: "modal-foot" }, footer)
+  ));
 }
 function Confirm({ open, onClose, onConfirm, title = "Are you sure?", message, danger, confirmText = "Confirm", busy, reason, requireReason, placeholder }) {
   const [why, setWhy] = useState2("");
@@ -2017,20 +2038,28 @@ function SearchSelect({ value, onChange, options, getLabel, getSearch, placehold
     setHi(-1);
   };
   const onKey = (e) => {
-    if (!open && (e.key === "ArrowDown" || e.key === "Enter")) setOpen(true);
-    if (e.key === "ArrowDown") {
+    if (!open && e.key === "ArrowDown") {
       e.preventDefault();
-      setHi((h2) => Math.min(h2 + 1, filtered.length - 1));
+      setOpen(true);
+      return;
     }
-    if (e.key === "ArrowUp") {
-      e.preventDefault();
-      setHi((h2) => Math.max(h2 - 1, 0));
+    if (open) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setHi((h2) => Math.min(h2 + 1, filtered.length - 1));
+      } else if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setHi((h2) => Math.max(h2 - 1, 0));
+      } else if (e.key === "Enter") {
+        if (filtered.length > 0) {
+          e.preventDefault();
+          pick(filtered[hi >= 0 ? hi : 0]);
+        }
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        setOpen(false);
+      }
     }
-    if (e.key === "Enter" && open && hi >= 0 && filtered[hi]) {
-      e.preventDefault();
-      pick(filtered[hi]);
-    }
-    if (e.key === "Escape") setOpen(false);
   };
   return /* @__PURE__ */ React2.createElement("div", { className: cx("search-select", error && "field-error"), ref: boxRef }, /* @__PURE__ */ React2.createElement("div", { className: "search-select-box" }, /* @__PURE__ */ React2.createElement(Search, { size: 15, className: "ss-icon" }), /* @__PURE__ */ React2.createElement(
     "input",
@@ -2337,10 +2366,10 @@ function printInvoiceA4(bill2, items = [], payments = [], s = {}) {
           font-weight: 600;
           color: #4a5568;
         }
-      `), /* @__PURE__ */ React3.createElement("div", { className: "letterhead-sheet" }, /* @__PURE__ */ React3.createElement("div", { className: "med-doc-patient" }, /* @__PURE__ */ React3.createElement("div", { className: "med-doc-grid" }, /* @__PURE__ */ React3.createElement("div", { className: "med-doc-field" }, /* @__PURE__ */ React3.createElement("span", { className: "med-doc-lbl" }, "Patient:"), /* @__PURE__ */ React3.createElement("span", { className: "med-doc-val" }, bill2.patient_name || "\u2014")), /* @__PURE__ */ React3.createElement("div", { className: "med-doc-field" }, /* @__PURE__ */ React3.createElement("span", { className: "med-doc-lbl" }, "UHID:"), /* @__PURE__ */ React3.createElement("span", { className: "med-doc-val" }, bill2.uhid || "\u2014")), /* @__PURE__ */ React3.createElement("div", { className: "med-doc-field" }, /* @__PURE__ */ React3.createElement("span", { className: "med-doc-lbl" }, "Bill No:"), /* @__PURE__ */ React3.createElement("span", { className: "med-doc-val", style: { fontFamily: "Consolas, monospace" } }, bill2.bill_no)), /* @__PURE__ */ React3.createElement("div", { className: "med-doc-field" }, /* @__PURE__ */ React3.createElement("span", { className: "med-doc-lbl" }, "Age / Sex:"), /* @__PURE__ */ React3.createElement("span", { className: "med-doc-val" }, ageSex)), /* @__PURE__ */ React3.createElement("div", { className: "med-doc-field" }, /* @__PURE__ */ React3.createElement("span", { className: "med-doc-lbl" }, "Mobile:"), /* @__PURE__ */ React3.createElement("span", { className: "med-doc-val" }, bill2.patient_mobile || "\u2014")), /* @__PURE__ */ React3.createElement("div", { className: "med-doc-field" }, /* @__PURE__ */ React3.createElement("span", { className: "med-doc-lbl" }, "Date & Time:"), /* @__PURE__ */ React3.createElement("span", { className: "med-doc-val" }, fmtDateTime12h(bill2.time))))), bill2.diagnosis && /* @__PURE__ */ React3.createElement("div", { className: "med-doc-diag" }, /* @__PURE__ */ React3.createElement("span", { className: "med-doc-diag-lbl" }, "DIAGNOSIS:"), /* @__PURE__ */ React3.createElement("span", { className: "med-doc-diag-val" }, bill2.diagnosis)), /* @__PURE__ */ React3.createElement("table", { className: "med-doc-table" }, /* @__PURE__ */ React3.createElement("thead", null, /* @__PURE__ */ React3.createElement("tr", null, /* @__PURE__ */ React3.createElement("th", { style: { width: "5%" }, className: "th-c" }, "#"), /* @__PURE__ */ React3.createElement("th", { style: { width: "34%" } }, "Medicine"), /* @__PURE__ */ React3.createElement("th", { style: { width: "14%" }, className: "th-c" }, "Dosage"), /* @__PURE__ */ React3.createElement("th", { style: { width: "25%" } }, "Timing - Frequency - Duration"), /* @__PURE__ */ React3.createElement("th", { style: { width: "8%" }, className: "th-c" }, "Qty"), /* @__PURE__ */ React3.createElement("th", { style: { width: "7%" }, className: "th-r" }, "Rate"), /* @__PURE__ */ React3.createElement("th", { style: { width: "7%" }, className: "th-r" }, "Amount"))), /* @__PURE__ */ React3.createElement("tbody", null, items.map((it, idx) => {
+      `), /* @__PURE__ */ React3.createElement("div", { className: "letterhead-sheet" }, /* @__PURE__ */ React3.createElement("div", { className: "med-doc-patient" }, /* @__PURE__ */ React3.createElement("div", { className: "med-doc-grid" }, /* @__PURE__ */ React3.createElement("div", { className: "med-doc-field" }, /* @__PURE__ */ React3.createElement("span", { className: "med-doc-lbl" }, "Patient:"), /* @__PURE__ */ React3.createElement("span", { className: "med-doc-val" }, bill2.patient_name || "\u2014")), /* @__PURE__ */ React3.createElement("div", { className: "med-doc-field" }, /* @__PURE__ */ React3.createElement("span", { className: "med-doc-lbl" }, "UHID:"), /* @__PURE__ */ React3.createElement("span", { className: "med-doc-val" }, bill2.uhid || "\u2014")), /* @__PURE__ */ React3.createElement("div", { className: "med-doc-field" }, /* @__PURE__ */ React3.createElement("span", { className: "med-doc-lbl" }, "Bill No:"), /* @__PURE__ */ React3.createElement("span", { className: "med-doc-val", style: { fontFamily: "Consolas, monospace" } }, bill2.bill_no)), /* @__PURE__ */ React3.createElement("div", { className: "med-doc-field" }, /* @__PURE__ */ React3.createElement("span", { className: "med-doc-lbl" }, "Age / Sex:"), /* @__PURE__ */ React3.createElement("span", { className: "med-doc-val" }, ageSex)), /* @__PURE__ */ React3.createElement("div", { className: "med-doc-field" }, /* @__PURE__ */ React3.createElement("span", { className: "med-doc-lbl" }, "Mobile:"), /* @__PURE__ */ React3.createElement("span", { className: "med-doc-val" }, bill2.patient_mobile || "\u2014")), /* @__PURE__ */ React3.createElement("div", { className: "med-doc-field" }, /* @__PURE__ */ React3.createElement("span", { className: "med-doc-lbl" }, "Date & Time:"), /* @__PURE__ */ React3.createElement("span", { className: "med-doc-val" }, fmtDateTime12h(bill2.time || bill2.date))))), bill2.diagnosis && /* @__PURE__ */ React3.createElement("div", { className: "med-doc-diag" }, /* @__PURE__ */ React3.createElement("span", { className: "med-doc-diag-lbl" }, "DIAGNOSIS:"), /* @__PURE__ */ React3.createElement("span", { className: "med-doc-diag-val" }, bill2.diagnosis)), /* @__PURE__ */ React3.createElement("table", { className: "med-doc-table" }, /* @__PURE__ */ React3.createElement("thead", null, /* @__PURE__ */ React3.createElement("tr", null, /* @__PURE__ */ React3.createElement("th", { style: { width: "5%" }, className: "th-c" }, "#"), /* @__PURE__ */ React3.createElement("th", { style: { width: "34%" } }, "Medicine"), /* @__PURE__ */ React3.createElement("th", { style: { width: "14%" }, className: "th-c" }, "Dosage"), /* @__PURE__ */ React3.createElement("th", { style: { width: "25%" } }, "Timing - Frequency - Duration"), /* @__PURE__ */ React3.createElement("th", { style: { width: "8%" }, className: "th-c" }, "Qty"), /* @__PURE__ */ React3.createElement("th", { style: { width: "7%" }, className: "th-r" }, "Rate"), /* @__PURE__ */ React3.createElement("th", { style: { width: "7%" }, className: "th-r" }, "Amount"))), /* @__PURE__ */ React3.createElement("tbody", null, items.map((it, idx) => {
       const timingFreqDur = [it.timing, it.frequency, it.duration].filter(Boolean).join(" - ");
       return /* @__PURE__ */ React3.createElement("tr", { key: it.id || idx }, /* @__PURE__ */ React3.createElement("td", { className: "td-c" }, idx + 1), /* @__PURE__ */ React3.createElement("td", null, /* @__PURE__ */ React3.createElement("div", { className: "med-name" }, it.name), it.composition && /* @__PURE__ */ React3.createElement("div", { className: "med-comp" }, "Composition: ", it.composition), it.notes && /* @__PURE__ */ React3.createElement("div", { className: "med-note" }, "Note: ", it.notes)), /* @__PURE__ */ React3.createElement("td", { className: "td-c" }, it.dosage || "\u2014"), /* @__PURE__ */ React3.createElement("td", null, timingFreqDur || "\u2014"), /* @__PURE__ */ React3.createElement("td", { className: "td-c" }, fmtQty(it.qty), it.unit && it.unit !== "service" ? " " + it.unit : ""), /* @__PURE__ */ React3.createElement("td", { className: "td-r" }, money(it.price, s.currency)), /* @__PURE__ */ React3.createElement("td", { className: "td-r", style: { fontWeight: 600 } }, money(it.amount != null ? it.amount : it.qty * (it.price || 0), s.currency)));
-    }))), /* @__PURE__ */ React3.createElement("div", { className: "med-doc-pay-row" }, /* @__PURE__ */ React3.createElement("div", { className: "med-doc-pay-left" }, /* @__PURE__ */ React3.createElement("div", null, /* @__PURE__ */ React3.createElement("span", { className: "med-doc-pay-lbl" }, "Payment Method:"), " ", /* @__PURE__ */ React3.createElement("b", null, payMethodDisplay), /* @__PURE__ */ React3.createElement("span", { style: { marginLeft: "14px" } }, /* @__PURE__ */ React3.createElement("span", { className: "med-doc-pay-lbl" }, "Status:"), " ", /* @__PURE__ */ React3.createElement("b", { style: { color: bill2.payment_status === "PAID" ? "#22543d" : "#7b341e" } }, paymentStatus))), paidRows.length > 0 && /* @__PURE__ */ React3.createElement("div", { className: "med-doc-pay-txns" }, paidRows.map((p, i) => /* @__PURE__ */ React3.createElement("div", { key: p.id || i }, "\u2022 ", p.method, ": ", /* @__PURE__ */ React3.createElement("b", null, money(p.amount, s.currency)), " on ", fmtDate(p.at)))), bill2.cancel_reason && /* @__PURE__ */ React3.createElement("div", { style: { marginTop: "6px", color: "#c53030", fontWeight: 600, fontSize: "11.5px" } }, "Cancellation Reason: ", bill2.cancel_reason)), /* @__PURE__ */ React3.createElement("div", { className: "med-doc-pay-right" }, /* @__PURE__ */ React3.createElement("div", { className: "med-doc-tot-line" }, /* @__PURE__ */ React3.createElement("span", null, "Subtotal"), /* @__PURE__ */ React3.createElement("span", null, money(bill2.subtotal, s.currency))), Number(bill2.discount) > 0 && /* @__PURE__ */ React3.createElement("div", { className: "med-doc-tot-line", style: { color: "#2b6cb0" } }, /* @__PURE__ */ React3.createElement("span", null, "Discount"), /* @__PURE__ */ React3.createElement("span", null, "\u2212 ", money(bill2.discount, s.currency))), /* @__PURE__ */ React3.createElement("div", { className: "med-doc-tot-line bold" }, /* @__PURE__ */ React3.createElement("span", null, "Total Amount"), /* @__PURE__ */ React3.createElement("span", null, money(bill2.total, s.currency))), /* @__PURE__ */ React3.createElement("div", { className: "med-doc-tot-line" }, /* @__PURE__ */ React3.createElement("span", null, "Paid Amount"), /* @__PURE__ */ React3.createElement("span", null, money(bill2.paid || 0, s.currency))), Math.max(0, bill2.total - (bill2.paid || 0)) > 5e-3 && /* @__PURE__ */ React3.createElement("div", { className: "med-doc-tot-line due" }, /* @__PURE__ */ React3.createElement("span", null, "Balance Due"), /* @__PURE__ */ React3.createElement("span", null, money(Math.max(0, bill2.total - (bill2.paid || 0)), s.currency))))), bill2.advice && /* @__PURE__ */ React3.createElement("div", { className: "med-doc-advice" }, /* @__PURE__ */ React3.createElement("div", { className: "med-doc-sec-title" }, "Advice / Instructions:"), /* @__PURE__ */ React3.createElement("div", { className: "med-doc-sec-body" }, bill2.advice)), bill2.next_visit && /* @__PURE__ */ React3.createElement("div", { className: "med-doc-followup" }, /* @__PURE__ */ React3.createElement("span", { className: "med-doc-sec-title" }, "Next Visit / Follow-up:"), " ", /* @__PURE__ */ React3.createElement("b", null, toDDMMYYYY2(bill2.next_visit) || bill2.next_visit)), /* @__PURE__ */ React3.createElement("div", { className: "med-doc-footer" }, /* @__PURE__ */ React3.createElement("div", { className: "med-doc-doc-info" }, /* @__PURE__ */ React3.createElement("div", { style: { fontSize: "10.5px", textTransform: "uppercase", color: "#718096", fontWeight: 700, letterSpacing: "0.04em" } }, "Consulting Doctor"), /* @__PURE__ */ React3.createElement("div", { className: "med-doc-doc-name" }, docName), /* @__PURE__ */ React3.createElement("div", { className: "med-doc-doc-phone" }, "Phone: ", /* @__PURE__ */ React3.createElement("b", null, docPhone))), /* @__PURE__ */ React3.createElement("div", { className: "med-doc-sign-box" }, /* @__PURE__ */ React3.createElement("div", { className: "med-doc-sign-line" }), /* @__PURE__ */ React3.createElement("div", { className: "med-doc-sign-lbl" }, "Authorized Signatory")))))
+    }))), /* @__PURE__ */ React3.createElement("div", { className: "med-doc-pay-row" }, /* @__PURE__ */ React3.createElement("div", { className: "med-doc-pay-left" }, /* @__PURE__ */ React3.createElement("div", null, /* @__PURE__ */ React3.createElement("span", { className: "med-doc-pay-lbl" }, "Payment Method:"), " ", /* @__PURE__ */ React3.createElement("b", null, payMethodDisplay), /* @__PURE__ */ React3.createElement("span", { style: { marginLeft: "14px" } }, /* @__PURE__ */ React3.createElement("span", { className: "med-doc-pay-lbl" }, "Status:"), " ", /* @__PURE__ */ React3.createElement("b", { style: { color: bill2.payment_status === "PAID" ? "#22543d" : "#7b341e" } }, paymentStatus))), paidRows.length > 0 && /* @__PURE__ */ React3.createElement("div", { className: "med-doc-pay-txns" }, paidRows.map((p, i) => /* @__PURE__ */ React3.createElement("div", { key: p.id || i }, "\u2022 ", p.method, ": ", /* @__PURE__ */ React3.createElement("b", null, money(p.amount, s.currency)), " on ", fmtDate(p.at)))), bill2.cancel_reason && /* @__PURE__ */ React3.createElement("div", { style: { marginTop: "6px", color: "#c53030", fontWeight: 600, fontSize: "11.5px" } }, "Cancellation Reason: ", bill2.cancel_reason)), /* @__PURE__ */ React3.createElement("div", { className: "med-doc-pay-right" }, /* @__PURE__ */ React3.createElement("div", { className: "med-doc-tot-line" }, /* @__PURE__ */ React3.createElement("span", null, "Subtotal"), /* @__PURE__ */ React3.createElement("span", null, money(bill2.subtotal, s.currency))), Number(bill2.discount) > 0 && /* @__PURE__ */ React3.createElement("div", { className: "med-doc-tot-line", style: { color: "#2b6cb0" } }, /* @__PURE__ */ React3.createElement("span", null, "Discount"), /* @__PURE__ */ React3.createElement("span", null, "\u2212 ", money(bill2.discount, s.currency))), /* @__PURE__ */ React3.createElement("div", { className: "med-doc-tot-line bold" }, /* @__PURE__ */ React3.createElement("span", null, "Total Amount"), /* @__PURE__ */ React3.createElement("span", null, money(bill2.total, s.currency))), /* @__PURE__ */ React3.createElement("div", { className: "med-doc-tot-line" }, /* @__PURE__ */ React3.createElement("span", null, "Paid Amount"), /* @__PURE__ */ React3.createElement("span", null, money(bill2.paid || 0, s.currency))), Math.max(0, bill2.total - (bill2.paid || 0)) > 5e-3 && /* @__PURE__ */ React3.createElement("div", { className: "med-doc-tot-line due" }, /* @__PURE__ */ React3.createElement("span", null, "Balance Due"), /* @__PURE__ */ React3.createElement("span", null, money(Math.max(0, bill2.total - (bill2.paid || 0)), s.currency))))), bill2.advice && /* @__PURE__ */ React3.createElement("div", { className: "med-doc-advice" }, /* @__PURE__ */ React3.createElement("div", { className: "med-doc-sec-title" }, "Advice / Instructions:"), /* @__PURE__ */ React3.createElement("div", { className: "med-doc-sec-body" }, bill2.advice)), bill2.next_visit && /* @__PURE__ */ React3.createElement("div", { className: "med-doc-followup" }, /* @__PURE__ */ React3.createElement("span", { className: "med-doc-sec-title" }, "Next Visit / Follow-up:"), " ", /* @__PURE__ */ React3.createElement("b", null, toDDMMYYYY(bill2.next_visit) || bill2.next_visit)), /* @__PURE__ */ React3.createElement("div", { className: "med-doc-footer" }, /* @__PURE__ */ React3.createElement("div", { className: "med-doc-doc-info" }, /* @__PURE__ */ React3.createElement("div", { style: { fontSize: "10.5px", textTransform: "uppercase", color: "#718096", fontWeight: 700, letterSpacing: "0.04em" } }, "Consulting Doctor"), /* @__PURE__ */ React3.createElement("div", { className: "med-doc-doc-name" }, docName), /* @__PURE__ */ React3.createElement("div", { className: "med-doc-doc-phone" }, "Phone: ", /* @__PURE__ */ React3.createElement("b", null, docPhone))), /* @__PURE__ */ React3.createElement("div", { className: "med-doc-sign-box" }, /* @__PURE__ */ React3.createElement("div", { className: "med-doc-sign-line" }), /* @__PURE__ */ React3.createElement("div", { className: "med-doc-sign-lbl" }, "Authorized Signatory")))))
   );
 }
 function downloadReceipt(bill2, items = [], payments = [], s = {}) {
@@ -2374,7 +2403,7 @@ function downloadReceipt(bill2, items = [], payments = [], s = {}) {
   const paymentsRows = paidRows.map((p) => `
     <div>\u2022 ${p.method}: <b>${fmtM(p.amount)}</b> on ${fmtDate(p.at)}</div>
   `).join("");
-  const nextVisitDisplay = bill2.next_visit ? toDDMMYYYY2(bill2.next_visit) || bill2.next_visit : "";
+  const nextVisitDisplay = bill2.next_visit ? toDDMMYYYY(bill2.next_visit) || bill2.next_visit : "";
   const html = `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -2637,7 +2666,7 @@ function downloadReceipt(bill2, items = [], payments = [], s = {}) {
           </div>
           <div class="med-doc-field">
             <span class="med-doc-lbl">Date & Time:</span>
-            <span class="med-doc-val">${fmtDateTime12h(bill2.time)}</span>
+            <span class="med-doc-val">${fmtDateTime12h(bill2.time || bill2.date)}</span>
           </div>
         </div>
       </div>
@@ -2901,7 +2930,23 @@ function GlobalSearch() {
         setOpen(true);
       },
       onFocus: () => setOpen(true),
-      onBlur: () => setTimeout(() => setOpen(false), 180)
+      onBlur: () => setTimeout(() => setOpen(false), 180),
+      onKeyDown: (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          if (res?.patients?.length > 0) {
+            go(`/patients/${res.patients[0].id}`);
+          } else if (res?.bills?.length > 0) {
+            go(`/billing?bill=${res.bills[0].id}`);
+          } else if (res?.meds?.length > 0) {
+            go(`/medicines?q=${encodeURIComponent(res.meds[0].name)}`);
+          } else if (q.trim()) {
+            go(`/patients?q=${encodeURIComponent(q.trim())}`);
+          }
+        } else if (e.key === "Escape") {
+          setOpen(false);
+        }
+      }
     }
   )), open && q.trim().length >= 2 && /* @__PURE__ */ React5.createElement("div", { className: "gsearch-drop" }, empty && /* @__PURE__ */ React5.createElement("div", { className: "gsearch-none" }, "No results for \u201C", q, "\u201D"), res?.patients.length > 0 && /* @__PURE__ */ React5.createElement("div", { className: "gs-group" }, /* @__PURE__ */ React5.createElement("div", { className: "gs-title" }, "Patients"), res.patients.map((p) => /* @__PURE__ */ React5.createElement("button", { key: p.id, className: "gs-item", onMouseDown: () => go(`/patients/${p.id}`) }, /* @__PURE__ */ React5.createElement(Users, { size: 14 }), /* @__PURE__ */ React5.createElement("span", { className: "gs-main" }, p.name), /* @__PURE__ */ React5.createElement("span", { className: "gs-sub" }, p.uhid, " \xB7 ", p.mobile || "")))), res?.bills.length > 0 && /* @__PURE__ */ React5.createElement("div", { className: "gs-group" }, /* @__PURE__ */ React5.createElement("div", { className: "gs-title" }, "Bills"), res.bills.map((b) => /* @__PURE__ */ React5.createElement("button", { key: b.id, className: "gs-item", onMouseDown: () => go(`/billing?bill=${b.id}`) }, /* @__PURE__ */ React5.createElement(ReceiptText, { size: 14 }), /* @__PURE__ */ React5.createElement("span", { className: "gs-main" }, b.bill_no), /* @__PURE__ */ React5.createElement("span", { className: "gs-sub" }, b.patient_name, " \xB7 \u20B9", (b.total || 0).toLocaleString("en-IN"))))), res?.meds.length > 0 && /* @__PURE__ */ React5.createElement("div", { className: "gs-group" }, /* @__PURE__ */ React5.createElement("div", { className: "gs-title" }, "Medicines"), res.meds.map((m) => /* @__PURE__ */ React5.createElement("button", { key: m.id, className: "gs-item", onMouseDown: () => go(`/medicines?q=${encodeURIComponent(m.name)}`) }, /* @__PURE__ */ React5.createElement(Pill, { size: 14 }), /* @__PURE__ */ React5.createElement("span", { className: "gs-main" }, m.name), /* @__PURE__ */ React5.createElement("span", { className: "gs-sub" }, m.generic || m.category))))));
 }
@@ -3309,7 +3354,7 @@ function Dashboard() {
       ],
       money: true
     }
-  ) : /* @__PURE__ */ React7.createElement(EmptyState, { compact: true, title: "Loading\u2026" })), /* @__PURE__ */ React7.createElement(Card, { title: "Patient Visits \u2014 last 7 days" }, visits7 ? /* @__PURE__ */ React7.createElement(BarChart, { labels: visits7.map((v) => v.label), series: [{ name: "Visits", color: "var(--navy-700)", data: visits7.map((v) => v.value) }] }) : /* @__PURE__ */ React7.createElement(EmptyState, { compact: true, title: "Loading\u2026" })), /* @__PURE__ */ React7.createElement(Card, { title: "Top Selling Medicines \u2014 last 30 days", sub: "By quantity dispensed" }, topMeds && topMeds.length ? /* @__PURE__ */ React7.createElement(HBarList, { items: topMeds.map((m) => ({ label: m.name, value: m.qty })) }) : /* @__PURE__ */ React7.createElement(EmptyState, { compact: true, title: "No sales in range" }))), /* @__PURE__ */ React7.createElement("div", { className: "dash-grid" }, /* @__PURE__ */ React7.createElement(SectionCard, { title: "Recent Patients", icon: Users2, to: can("patients") ? "/patients" : void 0 }, !recentPatients ? /* @__PURE__ */ React7.createElement(EmptyState, { compact: true, title: "Loading\u2026" }) : recentPatients.length === 0 ? /* @__PURE__ */ React7.createElement(EmptyState, { compact: true, title: "No patients yet", action: /* @__PURE__ */ React7.createElement(Btn, { size: "sm", variant: "accent", onClick: () => navigate("/patients?new=1") }, "Register first patient") }) : /* @__PURE__ */ React7.createElement(React7.Fragment, null, recentPatients.map((p) => /* @__PURE__ */ React7.createElement(Row, { key: p.id, onClick: () => navigate(`/patients/${p.id}`) }, /* @__PURE__ */ React7.createElement("span", { className: "dr-name" }, p.name), /* @__PURE__ */ React7.createElement("span", { className: "dr-sub" }, /* @__PURE__ */ React7.createElement(UhidChip, { uhid: p.uhid, size: "sm" })), /* @__PURE__ */ React7.createElement("span", { className: "dr-right" }, fmtDate(p.reg_date)))))), /* @__PURE__ */ React7.createElement(SectionCard, { title: "Recent Bills", to: can("billing") ? "/billing" : void 0 }, !recentBills ? /* @__PURE__ */ React7.createElement(EmptyState, { compact: true, title: "Loading\u2026" }) : recentBills.length === 0 ? /* @__PURE__ */ React7.createElement(EmptyState, { compact: true, title: "No bills yet" }) : /* @__PURE__ */ React7.createElement(React7.Fragment, null, recentBills.map((b) => /* @__PURE__ */ React7.createElement(Row, { key: b.id, onClick: () => navigate(`/billing?bill=${b.id}`) }, /* @__PURE__ */ React7.createElement("span", { className: "dr-name" }, b.bill_no), /* @__PURE__ */ React7.createElement("span", { className: "dr-sub" }, b.patient_name, " \xB7 ", fmtTime2(b.time)), /* @__PURE__ */ React7.createElement("span", { className: "dr-right" }, money2(b.total), " ", /* @__PURE__ */ React7.createElement(Badge, { tone: b.status === "CANCELLED" ? "gray" : b.payment_status === "PAID" ? "green" : b.payment_status === "PARTIAL" ? "amber" : "red" }, b.status === "CANCELLED" ? "Cancelled" : b.payment_status)))))), /* @__PURE__ */ React7.createElement(SectionCard, { title: "Upcoming Appointments", to: can("appointments") ? "/appointments" : void 0 }, !upAppts ? /* @__PURE__ */ React7.createElement(EmptyState, { compact: true, title: "Loading\u2026" }) : upAppts.length === 0 ? /* @__PURE__ */ React7.createElement(EmptyState, { compact: true, title: "Nothing scheduled", action: can("appointments") ? /* @__PURE__ */ React7.createElement(Btn, { size: "sm", variant: "outline", onClick: () => navigate("/appointments") }, "Schedule") : null }) : /* @__PURE__ */ React7.createElement(React7.Fragment, null, upAppts.map((a) => /* @__PURE__ */ React7.createElement(Row, { key: a.id, onClick: () => navigate("/appointments") }, /* @__PURE__ */ React7.createElement("span", { className: "dr-name" }, a.patient_name || "\u2014"), /* @__PURE__ */ React7.createElement("span", { className: "dr-sub" }, /* @__PURE__ */ React7.createElement(Badge, { tone: a.date === todayStr() ? "teal" : "blue" }, a.date === todayStr() ? "Today" : "Tomorrow"), " ", fmtTime2(a.time + ":00")), /* @__PURE__ */ React7.createElement("span", { className: "dr-right" }, a.reason || ""))))), /* @__PURE__ */ React7.createElement(SectionCard, { title: "Low Stock Medicines", to: can("inventory") ? "/inventory" : void 0 }, !low ? /* @__PURE__ */ React7.createElement(EmptyState, { compact: true, title: "Loading\u2026" }) : low.length === 0 ? /* @__PURE__ */ React7.createElement(EmptyState, { compact: true, title: "All stocks healthy" }) : /* @__PURE__ */ React7.createElement(React7.Fragment, null, low.map((r) => /* @__PURE__ */ React7.createElement(Row, { key: r.medicine.id, onClick: () => navigate("/inventory") }, /* @__PURE__ */ React7.createElement("span", { className: "dr-name" }, r.medicine.name), /* @__PURE__ */ React7.createElement("span", { className: "dr-sub" }, /* @__PURE__ */ React7.createElement(Badge, { tone: "amber" }, r.available, " left"), " min ", r.min), /* @__PURE__ */ React7.createElement("span", { className: "dr-right" }))))), /* @__PURE__ */ React7.createElement(SectionCard, { title: "Expiring Medicines", to: can("inventory") ? "/inventory" : void 0 }, !expiring ? /* @__PURE__ */ React7.createElement(EmptyState, { compact: true, title: "Loading\u2026" }) : expiring.length === 0 ? /* @__PURE__ */ React7.createElement(EmptyState, { compact: true, title: "Nothing expiring soon" }) : /* @__PURE__ */ React7.createElement(React7.Fragment, null, expiring.map((b) => /* @__PURE__ */ React7.createElement(Row, { key: b.batch.id, onClick: () => navigate("/inventory") }, /* @__PURE__ */ React7.createElement("span", { className: "dr-name" }, b.med_name), /* @__PURE__ */ React7.createElement("span", { className: "dr-sub" }, "Batch ", b.batch.batch_no, " \xB7 ", /* @__PURE__ */ React7.createElement(Badge, { tone: b.days <= 30 ? "red" : "amber" }, b.days, "d")), /* @__PURE__ */ React7.createElement("span", { className: "dr-right" }, b.on_hand, " pcs"))))), /* @__PURE__ */ React7.createElement(SectionCard, { title: "Pending Payments", to: can("payments") ? "/payments" : void 0 }, !pending ? /* @__PURE__ */ React7.createElement(EmptyState, { compact: true, title: "Loading\u2026" }) : pending.length === 0 ? /* @__PURE__ */ React7.createElement(EmptyState, { compact: true, title: "All bills settled" }) : /* @__PURE__ */ React7.createElement(React7.Fragment, null, pending.map((b) => /* @__PURE__ */ React7.createElement(Row, { key: b.id, onClick: () => navigate("/payments") }, /* @__PURE__ */ React7.createElement("span", { className: "dr-name" }, b.bill_no), /* @__PURE__ */ React7.createElement("span", { className: "dr-sub" }, b.patient_name, " \xB7 ", fmtDate(b.date)), /* @__PURE__ */ React7.createElement("span", { className: "dr-right" }, /* @__PURE__ */ React7.createElement(Badge, { tone: "red" }, money2(b.total - (b.paid || 0))))))))));
+  ) : /* @__PURE__ */ React7.createElement(EmptyState, { compact: true, title: "Loading\u2026" })), /* @__PURE__ */ React7.createElement(Card, { title: "Patient Visits \u2014 last 7 days" }, visits7 ? /* @__PURE__ */ React7.createElement(BarChart, { labels: visits7.map((v) => v.label), series: [{ name: "Visits", color: "var(--navy-700)", data: visits7.map((v) => v.value) }] }) : /* @__PURE__ */ React7.createElement(EmptyState, { compact: true, title: "Loading\u2026" })), /* @__PURE__ */ React7.createElement(Card, { title: "Top Selling Medicines \u2014 last 30 days", sub: "By quantity dispensed" }, topMeds && topMeds.length ? /* @__PURE__ */ React7.createElement(HBarList, { items: topMeds.map((m) => ({ label: m.name, value: m.qty })) }) : /* @__PURE__ */ React7.createElement(EmptyState, { compact: true, title: "No sales in range" }))), /* @__PURE__ */ React7.createElement("div", { className: "dash-grid" }, /* @__PURE__ */ React7.createElement(SectionCard, { title: "Recent Patients", icon: Users2, to: can("patients") ? "/patients" : void 0 }, !recentPatients ? /* @__PURE__ */ React7.createElement(EmptyState, { compact: true, title: "Loading\u2026" }) : recentPatients.length === 0 ? /* @__PURE__ */ React7.createElement(EmptyState, { compact: true, title: "No patients yet", action: /* @__PURE__ */ React7.createElement(Btn, { size: "sm", variant: "accent", onClick: () => navigate("/patients?new=1") }, "Register first patient") }) : /* @__PURE__ */ React7.createElement(React7.Fragment, null, recentPatients.map((p) => /* @__PURE__ */ React7.createElement(Row, { key: p.id, onClick: () => navigate(`/patients/${p.id}`) }, /* @__PURE__ */ React7.createElement("span", { className: "dr-name" }, p.name), /* @__PURE__ */ React7.createElement("span", { className: "dr-sub" }, /* @__PURE__ */ React7.createElement(UhidChip, { uhid: p.uhid, size: "sm" })), /* @__PURE__ */ React7.createElement("span", { className: "dr-right" }, fmtDate(p.reg_date)))))), /* @__PURE__ */ React7.createElement(SectionCard, { title: "Recent Bills", to: can("billing") ? "/billing" : void 0 }, !recentBills ? /* @__PURE__ */ React7.createElement(EmptyState, { compact: true, title: "Loading\u2026" }) : recentBills.length === 0 ? /* @__PURE__ */ React7.createElement(EmptyState, { compact: true, title: "No bills yet" }) : /* @__PURE__ */ React7.createElement(React7.Fragment, null, recentBills.map((b) => /* @__PURE__ */ React7.createElement(Row, { key: b.id, onClick: () => navigate(`/billing?bill=${b.id}`) }, /* @__PURE__ */ React7.createElement("span", { className: "dr-name" }, b.bill_no), /* @__PURE__ */ React7.createElement("span", { className: "dr-sub" }, b.patient_name, " \xB7 ", fmtTime(b.time)), /* @__PURE__ */ React7.createElement("span", { className: "dr-right" }, money2(b.total), " ", /* @__PURE__ */ React7.createElement(Badge, { tone: b.status === "CANCELLED" ? "gray" : b.payment_status === "PAID" ? "green" : b.payment_status === "PARTIAL" ? "amber" : "red" }, b.status === "CANCELLED" ? "Cancelled" : b.payment_status)))))), /* @__PURE__ */ React7.createElement(SectionCard, { title: "Upcoming Appointments", to: can("appointments") ? "/appointments" : void 0 }, !upAppts ? /* @__PURE__ */ React7.createElement(EmptyState, { compact: true, title: "Loading\u2026" }) : upAppts.length === 0 ? /* @__PURE__ */ React7.createElement(EmptyState, { compact: true, title: "Nothing scheduled", action: can("appointments") ? /* @__PURE__ */ React7.createElement(Btn, { size: "sm", variant: "outline", onClick: () => navigate("/appointments") }, "Schedule") : null }) : /* @__PURE__ */ React7.createElement(React7.Fragment, null, upAppts.map((a) => /* @__PURE__ */ React7.createElement(Row, { key: a.id, onClick: () => navigate("/appointments") }, /* @__PURE__ */ React7.createElement("span", { className: "dr-name" }, a.patient_name || "\u2014"), /* @__PURE__ */ React7.createElement("span", { className: "dr-sub" }, /* @__PURE__ */ React7.createElement(Badge, { tone: a.date === todayStr() ? "teal" : "blue" }, a.date === todayStr() ? "Today" : "Tomorrow"), " ", fmtTime(a.time + ":00")), /* @__PURE__ */ React7.createElement("span", { className: "dr-right" }, a.reason || ""))))), /* @__PURE__ */ React7.createElement(SectionCard, { title: "Low Stock Medicines", to: can("inventory") ? "/inventory" : void 0 }, !low ? /* @__PURE__ */ React7.createElement(EmptyState, { compact: true, title: "Loading\u2026" }) : low.length === 0 ? /* @__PURE__ */ React7.createElement(EmptyState, { compact: true, title: "All stocks healthy" }) : /* @__PURE__ */ React7.createElement(React7.Fragment, null, low.map((r) => /* @__PURE__ */ React7.createElement(Row, { key: r.medicine.id, onClick: () => navigate("/inventory") }, /* @__PURE__ */ React7.createElement("span", { className: "dr-name" }, r.medicine.name), /* @__PURE__ */ React7.createElement("span", { className: "dr-sub" }, /* @__PURE__ */ React7.createElement(Badge, { tone: "amber" }, r.available, " left"), " min ", r.min), /* @__PURE__ */ React7.createElement("span", { className: "dr-right" }))))), /* @__PURE__ */ React7.createElement(SectionCard, { title: "Expiring Medicines", to: can("inventory") ? "/inventory" : void 0 }, !expiring ? /* @__PURE__ */ React7.createElement(EmptyState, { compact: true, title: "Loading\u2026" }) : expiring.length === 0 ? /* @__PURE__ */ React7.createElement(EmptyState, { compact: true, title: "Nothing expiring soon" }) : /* @__PURE__ */ React7.createElement(React7.Fragment, null, expiring.map((b) => /* @__PURE__ */ React7.createElement(Row, { key: b.batch.id, onClick: () => navigate("/inventory") }, /* @__PURE__ */ React7.createElement("span", { className: "dr-name" }, b.med_name), /* @__PURE__ */ React7.createElement("span", { className: "dr-sub" }, "Batch ", b.batch.batch_no, " \xB7 ", /* @__PURE__ */ React7.createElement(Badge, { tone: b.days <= 30 ? "red" : "amber" }, b.days, "d")), /* @__PURE__ */ React7.createElement("span", { className: "dr-right" }, b.on_hand, " pcs"))))), /* @__PURE__ */ React7.createElement(SectionCard, { title: "Pending Payments", to: can("payments") ? "/payments" : void 0 }, !pending ? /* @__PURE__ */ React7.createElement(EmptyState, { compact: true, title: "Loading\u2026" }) : pending.length === 0 ? /* @__PURE__ */ React7.createElement(EmptyState, { compact: true, title: "All bills settled" }) : /* @__PURE__ */ React7.createElement(React7.Fragment, null, pending.map((b) => /* @__PURE__ */ React7.createElement(Row, { key: b.id, onClick: () => navigate("/payments") }, /* @__PURE__ */ React7.createElement("span", { className: "dr-name" }, b.bill_no), /* @__PURE__ */ React7.createElement("span", { className: "dr-sub" }, b.patient_name, " \xB7 ", fmtDate(b.date)), /* @__PURE__ */ React7.createElement("span", { className: "dr-right" }, /* @__PURE__ */ React7.createElement(Badge, { tone: "red" }, money2(b.total - (b.paid || 0))))))))));
 }
 var Row;
 var init_Dashboard = __esm({
@@ -3669,7 +3714,7 @@ var init_csvTemplates = __esm({
       patients: {
         title: "Patients",
         filename: "heeva-patients-template.csv",
-        description: "Bulk register patients. Mandatory columns: Full Name, Age, Gender (M/F/Other), Mobile Number (10 digits). Historical Date & Time is optional in DD-MM-YYYY HH:mm format.",
+        description: "Bulk register patients. Mandatory columns: Full Name, Gender (M/F/Other). All other fields (Age, Mobile, Date & Time, Marital Status, Blood Group, Address) are optional.",
         headers: [
           "name",
           "date_time",
@@ -3705,10 +3750,10 @@ var init_csvTemplates = __esm({
         columns: [
           { key: "name", label: "Full Name", required: true },
           { key: "date_time", label: "Date & Time (DD-MM-YYYY HH:mm)", required: false },
-          { key: "age", label: "Age (Years)", required: true },
+          { key: "age", label: "Age (Years)", required: false },
           { key: "gender", label: "Gender (M/F/Other)", required: true },
           { key: "marital_status", label: "Marital Status (Single/Married/etc)", required: false },
-          { key: "mobile", label: "Mobile (10 digits)", required: true },
+          { key: "mobile", label: "Mobile (10 digits)", required: false },
           { key: "blood_group", label: "Blood Group", required: false },
           { key: "address", label: "Address", required: false }
         ]
@@ -4366,7 +4411,7 @@ var init_csvMapping = __esm({
       }
     };
     MODULE_REQUIRED_FIELDS = {
-      patients: ["name", "age", "gender", "mobile"],
+      patients: ["name", "gender"],
       medicines: ["name", "selling_price"],
       medicine_categories: ["name"],
       doctors: ["name"],
@@ -4508,11 +4553,14 @@ function validateCSVRows(type, rows, context = {}) {
           errors2.push("Full name must be at least 3 characters");
         }
         const rawAge = String(row.age ?? "").trim();
-        const age = parseInt(rawAge, 10);
-        if (!rawAge) {
-          errors2.push("Age is required");
-        } else if (isNaN(age) || age < 0 || age > 125) {
-          errors2.push("Age must be a valid number between 0 and 125");
+        let age = null;
+        if (rawAge !== "") {
+          const parsedAge = parseInt(rawAge, 10);
+          if (isNaN(parsedAge) || parsedAge < 0 || parsedAge > 125) {
+            errors2.push("Age must be a valid number between 0 and 125");
+          } else {
+            age = parsedAge;
+          }
         }
         const rawGender = String(row.gender || "").trim().toLowerCase();
         let gender = "";
@@ -4524,11 +4572,12 @@ function validateCSVRows(type, rows, context = {}) {
           gender = rawGender === "m" || rawGender === "male" ? "M" : rawGender === "f" || rawGender === "female" ? "F" : "Other";
         }
         const rawMobile = String(row.mobile || "").trim();
-        const mobile = cleanDigits(rawMobile);
-        if (!rawMobile) {
-          errors2.push("Mobile number is required");
-        } else if (!validMobile(mobile) || mobile.length !== 10) {
-          errors2.push("Mobile must be a valid 10-digit number");
+        let mobile = "";
+        if (rawMobile !== "") {
+          mobile = cleanDigits(rawMobile);
+          if (!validMobile(mobile) || mobile.length !== 10) {
+            errors2.push("Mobile must be a valid 10-digit number");
+          }
         }
         let bloodGroup = String(row.blood_group || "").trim().toUpperCase();
         if (bloodGroup && !BLOOD_GROUPS.has(bloodGroup)) {
@@ -4547,10 +4596,12 @@ function validateCSVRows(type, rows, context = {}) {
           }
         }
         const dedupKey = `${name.toLowerCase()}||${mobile}`;
-        if (seenMobileName.has(dedupKey)) {
-          errors2.push("Duplicate patient entry in this CSV file (same name & mobile)");
-        } else if (name && mobile) {
-          seenMobileName.add(dedupKey);
+        if (name && mobile) {
+          if (seenMobileName.has(dedupKey)) {
+            errors2.push("Duplicate patient entry in this CSV file (same name & mobile)");
+          } else {
+            seenMobileName.add(dedupKey);
+          }
         }
         if (errors2.length > 0) {
           invalidRows.push({ rowNum, row, errors: errors2 });
@@ -4967,8 +5018,9 @@ function CsvImportModal({
     setServerError(null);
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
-  const handleImport = async () => {
-    if (!validationResult || validationResult.summary.validCount === 0) return;
+  const handleImport = async (e) => {
+    if (e && e.preventDefault) e.preventDefault();
+    if (busy || !validationResult || validationResult.summary.validCount === 0) return;
     setBusy(true);
     setServerError(null);
     const mapping = TABLE_MAP[type] || { endpoint: type, dexie: type };
@@ -5039,14 +5091,15 @@ function CsvImportModal({
     {
       open,
       onClose: busy ? void 0 : onClose,
+      onSubmit: handleImport,
       title: `Import ${template.title} from CSV`,
       sub: "Upload RFC-4180 compliant CSV files with live preview, row validation, and error reporting.",
       width: "xl",
       footer: /* @__PURE__ */ React8.createElement(React8.Fragment, null, file && /* @__PURE__ */ React8.createElement(Btn, { variant: "ghost", onClick: resetFile, disabled: busy, style: { marginRight: "auto" } }, /* @__PURE__ */ React8.createElement(RefreshCw, { size: 14 }), " Select Different File"), /* @__PURE__ */ React8.createElement(Btn, { variant: "ghost", onClick: onClose, disabled: busy }, "Cancel"), /* @__PURE__ */ React8.createElement(
         Btn,
         {
+          type: "submit",
           variant: "accent",
-          onClick: handleImport,
           disabled: !validationResult || validationResult.summary.validCount === 0 || busy
         },
         busy ? "Importing\u2026" : validationResult ? `Import ${validationResult.summary.validCount} Valid Record${validationResult.summary.validCount === 1 ? "" : "s"}` : "Import Records"
@@ -5307,31 +5360,15 @@ function RegisterModal({ open, onClose, prefill = {} }) {
     if (!open) return null;
     const s = await getSettings();
     const year = (/* @__PURE__ */ new Date()).getFullYear();
-    const pad = Number(s.uhid_padding) || 6;
+    const includeYear = s.uhid_include_year === 1 || s.uhid_include_year === true;
+    const pad = Number(s.uhid_padding) || 4;
     const prefix = (s.uhid_prefix || "HC").trim().toUpperCase();
-    const key = s.uhid_include_year ? `UHID|${year}` : "UHID|ALL";
+    const key = includeYear ? `UHID|${year}` : "UHID|ALL";
     const row = await db_default.counters.get(key);
-    const n = row ? row.value + 1 : Number(s.uhid_start) || 1;
-    return `${prefix}${s.uhid_include_year ? `-${year}` : ""}-${String(n).padStart(pad, "0")}`;
+    const n = row ? row.value + 1 : Number(s.uhid_start) || 1001;
+    return `${prefix}${includeYear ? `-${year}` : ""}-${String(n).padStart(pad, "0")}`;
   }, [open]);
   const set = (k) => (e) => setF((x) => ({ ...x, [k]: e.target.value }));
-  const handleKeyDown = (e) => {
-    if (e.key !== "Enter") return;
-    const target = e.target;
-    if (!target || target.tagName !== "INPUT" || target.type === "submit" || target.type === "button") {
-      return;
-    }
-    e.preventDefault();
-    const form = target.closest(".form-grid");
-    if (!form) return;
-    const focusables = Array.from(
-      form.querySelectorAll('input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled])')
-    );
-    const idx = focusables.indexOf(target);
-    if (idx >= 0 && idx < focusables.length - 1) {
-      focusables[idx + 1].focus();
-    }
-  };
   const validate = () => {
     const e = {};
     if (!f.name || f.name.trim().length < 3) e.name = "Full name is required (min 3 characters)";
@@ -5345,7 +5382,9 @@ function RegisterModal({ open, onClose, prefill = {} }) {
     setErrs(e);
     return Object.keys(e).length === 0;
   };
-  const save = async () => {
+  const save = async (e) => {
+    if (e && e.preventDefault) e.preventDefault();
+    if (busy) return;
     if (!validate()) return;
     setBusy(true);
     try {
@@ -5353,8 +5392,8 @@ function RegisterModal({ open, onClose, prefill = {} }) {
       pushToast("success", `Patient registered with UHID ${p.uhid}`);
       onClose();
       navigate(`/patients/${p.id}`);
-    } catch (e) {
-      pushToast("error", e.message);
+    } catch (e2) {
+      pushToast("error", e2.message);
     } finally {
       setBusy(false);
     }
@@ -5364,12 +5403,13 @@ function RegisterModal({ open, onClose, prefill = {} }) {
     {
       open,
       onClose,
+      onSubmit: save,
       width: "md",
       title: "Register New Patient",
       sub: /* @__PURE__ */ React9.createElement("span", { className: "uhid-preview" }, "UHID will be assigned: ", /* @__PURE__ */ React9.createElement(UhidChip, { uhid: serverPreview || uhidPreview || "\u2026", size: "sm" }), " \u2014 permanent, unique, never changes"),
-      footer: /* @__PURE__ */ React9.createElement(React9.Fragment, null, /* @__PURE__ */ React9.createElement(Btn, { variant: "ghost", onClick: onClose }, "Cancel"), /* @__PURE__ */ React9.createElement(Btn, { variant: "accent", onClick: save, disabled: busy }, busy ? "Registering\u2026" : "Register patient"))
+      footer: /* @__PURE__ */ React9.createElement(React9.Fragment, null, /* @__PURE__ */ React9.createElement(Btn, { variant: "ghost", onClick: onClose }, "Cancel"), /* @__PURE__ */ React9.createElement(Btn, { type: "submit", variant: "accent", disabled: busy }, busy ? "Registering\u2026" : "Register patient"))
     },
-    /* @__PURE__ */ React9.createElement("div", { className: "form-grid", onKeyDown: handleKeyDown }, /* @__PURE__ */ React9.createElement(Field, { label: "Full Name", required: true, error: errs.name, className: "fg-2" }, /* @__PURE__ */ React9.createElement(Input, { value: f.name, onChange: set("name"), placeholder: "Enter full name", autoFocus: true })), /* @__PURE__ */ React9.createElement(Field, { label: "Age", required: true, error: errs.age }, /* @__PURE__ */ React9.createElement(Input, { type: "number", min: "0", max: "125", value: f.age, onChange: set("age"), placeholder: "Age in years" })), /* @__PURE__ */ React9.createElement(Field, { label: "Gender", required: true, error: errs.gender }, /* @__PURE__ */ React9.createElement(Select, { value: f.gender, onChange: set("gender") }, /* @__PURE__ */ React9.createElement("option", { value: "M" }, "M"), /* @__PURE__ */ React9.createElement("option", { value: "F" }, "F"), /* @__PURE__ */ React9.createElement("option", { value: "Other" }, "Other"))), /* @__PURE__ */ React9.createElement(Field, { label: "Marital Status" }, /* @__PURE__ */ React9.createElement(Select, { value: f.marital_status, onChange: set("marital_status") }, MARITAL_STATUSES.map((m) => /* @__PURE__ */ React9.createElement("option", { key: m, value: m }, m)))), /* @__PURE__ */ React9.createElement(Field, { label: "Mobile Number", required: true, error: errs.mobile }, /* @__PURE__ */ React9.createElement(Input, { value: f.mobile, onChange: set("mobile"), placeholder: "10-digit mobile", inputMode: "numeric" })), /* @__PURE__ */ React9.createElement(Field, { label: "Blood Group" }, /* @__PURE__ */ React9.createElement(Select, { value: f.blood_group, onChange: set("blood_group") }, BLOOD_GROUPS2.map((b) => /* @__PURE__ */ React9.createElement("option", { key: b, value: b }, b || "Unknown")))), /* @__PURE__ */ React9.createElement(Field, { label: "Address", className: "fg-2" }, /* @__PURE__ */ React9.createElement(Input, { value: f.address, onChange: set("address"), placeholder: "Full address" })))
+    /* @__PURE__ */ React9.createElement("div", { className: "form-grid" }, /* @__PURE__ */ React9.createElement(Field, { label: "Full Name", required: true, error: errs.name, className: "fg-2" }, /* @__PURE__ */ React9.createElement(Input, { value: f.name, onChange: set("name"), placeholder: "Enter full name", autoFocus: true })), /* @__PURE__ */ React9.createElement(Field, { label: "Age", required: true, error: errs.age }, /* @__PURE__ */ React9.createElement(Input, { type: "number", min: "0", max: "125", value: f.age, onChange: set("age"), placeholder: "Age in years" })), /* @__PURE__ */ React9.createElement(Field, { label: "Gender", required: true, error: errs.gender }, /* @__PURE__ */ React9.createElement(Select, { value: f.gender, onChange: set("gender") }, /* @__PURE__ */ React9.createElement("option", { value: "M" }, "M"), /* @__PURE__ */ React9.createElement("option", { value: "F" }, "F"), /* @__PURE__ */ React9.createElement("option", { value: "Other" }, "Other"))), /* @__PURE__ */ React9.createElement(Field, { label: "Marital Status" }, /* @__PURE__ */ React9.createElement(Select, { value: f.marital_status, onChange: set("marital_status") }, MARITAL_STATUSES.map((m) => /* @__PURE__ */ React9.createElement("option", { key: m, value: m }, m)))), /* @__PURE__ */ React9.createElement(Field, { label: "Mobile Number", required: true, error: errs.mobile }, /* @__PURE__ */ React9.createElement(Input, { value: f.mobile, onChange: set("mobile"), placeholder: "10-digit mobile", inputMode: "numeric" })), /* @__PURE__ */ React9.createElement(Field, { label: "Blood Group" }, /* @__PURE__ */ React9.createElement(Select, { value: f.blood_group, onChange: set("blood_group") }, BLOOD_GROUPS2.map((b) => /* @__PURE__ */ React9.createElement("option", { key: b, value: b }, b || "Unknown")))), /* @__PURE__ */ React9.createElement(Field, { label: "Address", className: "fg-2" }, /* @__PURE__ */ React9.createElement(Input, { value: f.address, onChange: set("address"), placeholder: "Full address" })))
   );
 }
 function Patients() {
@@ -5478,7 +5518,7 @@ function Patients() {
       sub: `${(patients || []).length} patient(s) \xB7 UHID-linked permanent records`,
       actions: /* @__PURE__ */ React9.createElement(React9.Fragment, null, /* @__PURE__ */ React9.createElement(Btn, { variant: "ghost", icon: Upload2, onClick: () => setImportOpen(true) }, "Import CSV"), /* @__PURE__ */ React9.createElement(Btn, { variant: "ghost", icon: Download3, onClick: exportCSV }, "Export CSV"), /* @__PURE__ */ React9.createElement(Btn, { variant: "accent", icon: UserPlus2, onClick: () => setReg(true) }, "+ ", t("new_patient", "New Patient")))
     }
-  ), /* @__PURE__ */ React9.createElement(Card, null, /* @__PURE__ */ React9.createElement("div", { className: "toolbar" }, /* @__PURE__ */ React9.createElement("div", { className: "toolbar-search" }, /* @__PURE__ */ React9.createElement(Search3, { size: 15 }), /* @__PURE__ */ React9.createElement("input", { className: "input", placeholder: "Search by name, UHID, mobile, or age\u2026", value: q, onChange: (e) => setQ(e.target.value) })), /* @__PURE__ */ React9.createElement(Select, { value: gender, onChange: (e) => setGender(e.target.value), className: "toolbar-select" }, /* @__PURE__ */ React9.createElement("option", { value: "" }, "All genders"), /* @__PURE__ */ React9.createElement("option", { value: "M" }, "M"), /* @__PURE__ */ React9.createElement("option", { value: "F" }, "F"), /* @__PURE__ */ React9.createElement("option", { value: "Other" }, "Other"))), /* @__PURE__ */ React9.createElement(
+  ), /* @__PURE__ */ React9.createElement(Card, null, /* @__PURE__ */ React9.createElement("div", { className: "toolbar" }, /* @__PURE__ */ React9.createElement("form", { onSubmit: (e) => e.preventDefault(), className: "toolbar-search" }, /* @__PURE__ */ React9.createElement(Search3, { size: 15 }), /* @__PURE__ */ React9.createElement("input", { className: "input", placeholder: "Search by name, UHID, mobile, or age\u2026", value: q, onChange: (e) => setQ(e.target.value) })), /* @__PURE__ */ React9.createElement(Select, { value: gender, onChange: (e) => setGender(e.target.value), className: "toolbar-select" }, /* @__PURE__ */ React9.createElement("option", { value: "" }, "All genders"), /* @__PURE__ */ React9.createElement("option", { value: "M" }, "M"), /* @__PURE__ */ React9.createElement("option", { value: "F" }, "F"), /* @__PURE__ */ React9.createElement("option", { value: "Other" }, "Other"))), /* @__PURE__ */ React9.createElement(
     DataTable,
     {
       columns: [
@@ -5595,7 +5635,7 @@ function billTypeLabel(items) {
   }
   return "COMBINED";
 }
-async function createBill({ patient_id, items, discount_mode = "amt", discount_value = 0, payments = [], when = null, doctor_id = null, doctor_name = null, doctor_phone = null, diagnosis = null, advice = null, next_visit = null }, userId) {
+async function createBill({ patient_id, items, discount_mode = "amt", discount_value = 0, payments = [], when = null, bill_date = null, doctor_id = null, doctor_name = null, doctor_phone = null, diagnosis = null, advice = null, next_visit = null }, userId) {
   const settings = await getSettings();
   return db_default.transaction("rw", [db_default.bills, db_default.bill_items, db_default.payments, db_default.batches, db_default.inventory_txns, db_default.counters, db_default.activity_logs, db_default.patients, db_default.medicines, db_default.services], async () => {
     const patient2 = await db_default.patients.get(patient_id);
@@ -5650,8 +5690,15 @@ async function createBill({ patient_id, items, discount_mode = "amt", discount_v
     const discRaw = discount_mode === "pct" ? subtotal * (Math.min(Number(discount_value) || 0, 100) / 100) : Number(discount_value) || 0;
     const discount = round2(Math.min(Math.max(discRaw, 0), subtotal));
     const total = round2(Math.max(0, subtotal - discount));
-    const now = when || nowISO();
-    const bill_no = await makeNo("BILL", settings.bill_prefix || "HC-BILL", new Date(now).getFullYear(), Number(settings.bill_padding) || 6);
+    const now = nowISO();
+    const systemDate = /* @__PURE__ */ new Date();
+    const selectedDate = bill_date || (when ? dkey(new Date(when)) : dkey(systemDate));
+    const pad2 = (n) => String(n).padStart(2, "0");
+    const hh = pad2(systemDate.getHours());
+    const mm = pad2(systemDate.getMinutes());
+    const ss = pad2(systemDate.getSeconds());
+    const billTime = `${selectedDate}T${hh}:${mm}:${ss}`;
+    const bill_no = await makeNo("BILL", settings.bill_prefix || "HC-BILL", new Date(billTime).getFullYear(), Number(settings.bill_padding) || 6);
     const bill2 = {
       id: uid(),
       bill_no,
@@ -5661,8 +5708,8 @@ async function createBill({ patient_id, items, discount_mode = "amt", discount_v
       patient_mobile: patient2.mobile || "",
       patient_age: ageLabel(patient2),
       patient_gender: patient2.gender || "",
-      date: dkey(new Date(now)),
-      time: now,
+      date: selectedDate,
+      time: billTime,
       doctor_name: doctor_name || settings.doctor_name || "",
       doctor_phone: doctor_phone || settings.doctor_phone || "",
       diagnosis: diagnosis ? diagnosis.trim() : null,
@@ -5721,7 +5768,7 @@ async function createBill({ patient_id, items, discount_mode = "amt", discount_v
         method: PAY_METHODS.includes(pay.method) ? pay.method : "Other",
         note: pay.note || "",
         by: userId || null,
-        at: now
+        at: billTime
       });
     }
     paid = Math.min(paid, total);
@@ -6009,7 +6056,9 @@ function AddVitalsModal({ open, onClose, patient: patient2, user: user3 }) {
   const [f, setF] = useState7({});
   const [busy, setBusy] = useState7(false);
   const [err, setErr] = useState7("");
-  const save = async () => {
+  const save = async (e) => {
+    if (e && e.preventDefault) e.preventDefault();
+    if (busy) return;
     setErr("");
     if (!Object.values(f).some((v) => v != null && v !== "")) {
       setErr("Enter at least one vital sign");
@@ -6021,8 +6070,8 @@ function AddVitalsModal({ open, onClose, patient: patient2, user: user3 }) {
       pushToast("success", "Vital signs saved");
       onClose();
       setF({});
-    } catch (e) {
-      setErr(e.message);
+    } catch (e2) {
+      setErr(e2.message);
     } finally {
       setBusy(false);
     }
@@ -6032,10 +6081,11 @@ function AddVitalsModal({ open, onClose, patient: patient2, user: user3 }) {
     {
       open,
       onClose,
+      onSubmit: save,
       title: "Record Vital Signs",
       sub: `${patient2.name} \xB7 ${patient2.uhid}`,
       width: "lg",
-      footer: /* @__PURE__ */ React10.createElement(React10.Fragment, null, /* @__PURE__ */ React10.createElement(Btn, { variant: "ghost", onClick: onClose }, "Cancel"), /* @__PURE__ */ React10.createElement(Btn, { variant: "accent", onClick: save, disabled: busy }, busy ? "Saving\u2026" : "Save vitals"))
+      footer: /* @__PURE__ */ React10.createElement(React10.Fragment, null, /* @__PURE__ */ React10.createElement(Btn, { variant: "ghost", onClick: onClose }, "Cancel"), /* @__PURE__ */ React10.createElement(Btn, { type: "submit", variant: "accent", disabled: busy }, busy ? "Saving\u2026" : "Save vitals"))
     },
     err && /* @__PURE__ */ React10.createElement("div", { className: "form-alert" }, err),
     /* @__PURE__ */ React10.createElement("div", { className: "form-grid" }, VITAL_DEFS.map((d) => /* @__PURE__ */ React10.createElement(Field, { key: d.key, label: d.label }, /* @__PURE__ */ React10.createElement(Input, { type: "number", step: d.step || 1, value: f[d.key] ?? "", onChange: (e) => setF((x) => ({ ...x, [d.key]: e.target.value === "" ? "" : Number(e.target.value) })) }))), /* @__PURE__ */ React10.createElement("p", { className: "vitals-note" }, "Date & time are recorded automatically. \u2191\u2193 arrows in the table show the trend vs. the previous reading."))
@@ -6063,22 +6113,9 @@ function EditPatientModal({ open, onClose, patient: patient2, user: user3 }) {
     });
   }, [open, patient2]);
   const set = (k) => (e) => setF((x) => ({ ...x, [k]: e.target.value }));
-  const handleKeyDown = (e) => {
-    if (e.key !== "Enter") return;
-    const target = e.target;
-    if (!target || target.tagName !== "INPUT" || target.type === "submit" || target.type === "button") return;
-    e.preventDefault();
-    const form = target.closest(".form-grid");
-    if (!form) return;
-    const focusables = Array.from(
-      form.querySelectorAll('input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled])')
-    );
-    const idx = focusables.indexOf(target);
-    if (idx >= 0 && idx < focusables.length - 1) {
-      focusables[idx + 1].focus();
-    }
-  };
-  const save = async () => {
+  const save = async (e) => {
+    if (e && e.preventDefault) e.preventDefault();
+    if (busy) return;
     setErr("");
     if (!f.name || f.name.trim().length < 3) {
       setErr("Name is required (min 3 characters)");
@@ -6097,8 +6134,8 @@ function EditPatientModal({ open, onClose, patient: patient2, user: user3 }) {
       }, user3.id);
       pushToast("success", "Patient updated");
       onClose();
-    } catch (e) {
-      setErr(e.message);
+    } catch (e2) {
+      setErr(e2.message);
     } finally {
       setBusy(false);
     }
@@ -6108,13 +6145,14 @@ function EditPatientModal({ open, onClose, patient: patient2, user: user3 }) {
     {
       open,
       onClose,
+      onSubmit: save,
       title: "Edit Patient",
       sub: /* @__PURE__ */ React10.createElement("span", null, "UHID ", /* @__PURE__ */ React10.createElement(UhidChip, { uhid: patient2?.uhid, size: "sm" }), " is permanent and cannot be changed"),
       width: "lg",
-      footer: /* @__PURE__ */ React10.createElement(React10.Fragment, null, /* @__PURE__ */ React10.createElement(Btn, { variant: "ghost", onClick: onClose }, "Cancel"), /* @__PURE__ */ React10.createElement(Btn, { onClick: save, disabled: busy }, busy ? "Saving\u2026" : "Save changes"))
+      footer: /* @__PURE__ */ React10.createElement(React10.Fragment, null, /* @__PURE__ */ React10.createElement(Btn, { variant: "ghost", onClick: onClose }, "Cancel"), /* @__PURE__ */ React10.createElement(Btn, { type: "submit", variant: "accent", disabled: busy }, busy ? "Saving\u2026" : "Save changes"))
     },
     err && /* @__PURE__ */ React10.createElement("div", { className: "form-alert" }, err),
-    /* @__PURE__ */ React10.createElement("div", { className: "form-grid", onKeyDown: handleKeyDown }, /* @__PURE__ */ React10.createElement(Field, { label: "Full Name", required: true, className: "fg-2" }, /* @__PURE__ */ React10.createElement(Input, { value: f.name || "", onChange: set("name") })), /* @__PURE__ */ React10.createElement(Field, { label: "Age", required: true }, /* @__PURE__ */ React10.createElement(Input, { type: "number", min: "0", max: "125", value: f.age ?? "", onChange: set("age") })), /* @__PURE__ */ React10.createElement(Field, { label: "Gender" }, /* @__PURE__ */ React10.createElement(Select, { value: f.gender || "M", onChange: set("gender") }, /* @__PURE__ */ React10.createElement("option", { value: "M" }, "M"), /* @__PURE__ */ React10.createElement("option", { value: "F" }, "F"), /* @__PURE__ */ React10.createElement("option", { value: "Other" }, "Other"))), /* @__PURE__ */ React10.createElement(Field, { label: "Marital Status" }, /* @__PURE__ */ React10.createElement(Select, { value: f.marital_status || "Single", onChange: set("marital_status") }, MARITAL_STATUSES2.map((m) => /* @__PURE__ */ React10.createElement("option", { key: m, value: m }, m)))), /* @__PURE__ */ React10.createElement(Field, { label: "Mobile" }, /* @__PURE__ */ React10.createElement(Input, { value: f.mobile || "", onChange: set("mobile") })), /* @__PURE__ */ React10.createElement(Field, { label: "Address", className: "fg-2" }, /* @__PURE__ */ React10.createElement(Input, { value: f.address || "", onChange: set("address") })), /* @__PURE__ */ React10.createElement(Field, { label: "PIN Code" }, /* @__PURE__ */ React10.createElement(Input, { value: f.pin || "", onChange: set("pin") })), /* @__PURE__ */ React10.createElement(Field, { label: "Blood Group" }, /* @__PURE__ */ React10.createElement(Select, { value: f.blood_group || "", onChange: set("blood_group") }, ["", "A+", "A\u2212", "B+", "B\u2212", "AB+", "AB\u2212", "O+", "O\u2212"].map((b) => /* @__PURE__ */ React10.createElement("option", { key: b, value: b }, b || "Unknown")))), /* @__PURE__ */ React10.createElement(Field, { label: "Allergies", className: "fg-2" }, /* @__PURE__ */ React10.createElement(Textarea, { rows: 2, value: f.allergies || "", onChange: set("allergies") })), /* @__PURE__ */ React10.createElement(Field, { label: "Conditions", className: "fg-2" }, /* @__PURE__ */ React10.createElement(Textarea, { rows: 2, value: f.conditions || "", onChange: set("conditions") })), /* @__PURE__ */ React10.createElement(Field, { label: "Current Medications", className: "fg-2" }, /* @__PURE__ */ React10.createElement(Textarea, { rows: 2, value: f.current_meds || "", onChange: set("current_meds") })), /* @__PURE__ */ React10.createElement(Field, { label: "Notes", className: "fg-2" }, /* @__PURE__ */ React10.createElement(Textarea, { rows: 2, value: f.notes || "", onChange: set("notes") })))
+    /* @__PURE__ */ React10.createElement("div", { className: "form-grid" }, /* @__PURE__ */ React10.createElement(Field, { label: "Full Name", required: true, className: "fg-2" }, /* @__PURE__ */ React10.createElement(Input, { value: f.name || "", onChange: set("name") })), /* @__PURE__ */ React10.createElement(Field, { label: "Age", required: true }, /* @__PURE__ */ React10.createElement(Input, { type: "number", min: "0", max: "125", value: f.age ?? "", onChange: set("age") })), /* @__PURE__ */ React10.createElement(Field, { label: "Gender" }, /* @__PURE__ */ React10.createElement(Select, { value: f.gender || "M", onChange: set("gender") }, /* @__PURE__ */ React10.createElement("option", { value: "M" }, "M"), /* @__PURE__ */ React10.createElement("option", { value: "F" }, "F"), /* @__PURE__ */ React10.createElement("option", { value: "Other" }, "Other"))), /* @__PURE__ */ React10.createElement(Field, { label: "Marital Status" }, /* @__PURE__ */ React10.createElement(Select, { value: f.marital_status || "Single", onChange: set("marital_status") }, MARITAL_STATUSES2.map((m) => /* @__PURE__ */ React10.createElement("option", { key: m, value: m }, m)))), /* @__PURE__ */ React10.createElement(Field, { label: "Mobile" }, /* @__PURE__ */ React10.createElement(Input, { value: f.mobile || "", onChange: set("mobile") })), /* @__PURE__ */ React10.createElement(Field, { label: "Address", className: "fg-2" }, /* @__PURE__ */ React10.createElement(Input, { value: f.address || "", onChange: set("address") })), /* @__PURE__ */ React10.createElement(Field, { label: "PIN Code" }, /* @__PURE__ */ React10.createElement(Input, { value: f.pin || "", onChange: set("pin") })), /* @__PURE__ */ React10.createElement(Field, { label: "Blood Group" }, /* @__PURE__ */ React10.createElement(Select, { value: f.blood_group || "", onChange: set("blood_group") }, ["", "A+", "A\u2212", "B+", "B\u2212", "AB+", "AB\u2212", "O+", "O\u2212"].map((b) => /* @__PURE__ */ React10.createElement("option", { key: b, value: b }, b || "Unknown")))), /* @__PURE__ */ React10.createElement(Field, { label: "Allergies", className: "fg-2" }, /* @__PURE__ */ React10.createElement(Textarea, { rows: 2, value: f.allergies || "", onChange: set("allergies") })), /* @__PURE__ */ React10.createElement(Field, { label: "Conditions", className: "fg-2" }, /* @__PURE__ */ React10.createElement(Textarea, { rows: 2, value: f.conditions || "", onChange: set("conditions") })), /* @__PURE__ */ React10.createElement(Field, { label: "Current Medications", className: "fg-2" }, /* @__PURE__ */ React10.createElement(Textarea, { rows: 2, value: f.current_meds || "", onChange: set("current_meds") })), /* @__PURE__ */ React10.createElement(Field, { label: "Notes", className: "fg-2" }, /* @__PURE__ */ React10.createElement(Textarea, { rows: 2, value: f.notes || "", onChange: set("notes") })))
   );
 }
 function PatientProfile() {
@@ -6561,7 +6599,9 @@ function NewConsultModal({ open, onClose, prefillPatient, onDone }) {
       setErr("");
     }
   }, [open]);
-  const save = async () => {
+  const save = async (e) => {
+    if (e && e.preventDefault) e.preventDefault();
+    if (busy) return;
     setErr("");
     if (!patient2) {
       setErr("Select a patient");
@@ -6592,8 +6632,8 @@ function NewConsultModal({ open, onClose, prefillPatient, onDone }) {
       }, user3.id);
       pushToast("success", `Consultation ${c.consultation_no} saved`);
       onDone && onDone(c, patient2);
-    } catch (e) {
-      setErr(e.message);
+    } catch (e2) {
+      setErr(e2.message);
     } finally {
       setBusy(false);
     }
@@ -6603,10 +6643,11 @@ function NewConsultModal({ open, onClose, prefillPatient, onDone }) {
     {
       open,
       onClose,
+      onSubmit: save,
       title: "New Consultation",
       width: "lg",
       sub: patient2 ? /* @__PURE__ */ React11.createElement("span", null, patient2.name, " \xB7 ", /* @__PURE__ */ React11.createElement(UhidChip, { uhid: patient2.uhid, size: "sm" }), " ", patient2.allergies && /* @__PURE__ */ React11.createElement(Badge, { tone: "amber" }, "\u26A0 ", patient2.allergies)) : "Select the patient being seen",
-      footer: /* @__PURE__ */ React11.createElement(React11.Fragment, null, /* @__PURE__ */ React11.createElement(Btn, { variant: "ghost", onClick: onClose }, "Cancel"), /* @__PURE__ */ React11.createElement(Btn, { variant: "accent", onClick: save, disabled: busy }, busy ? "Saving\u2026" : "Save consultation"))
+      footer: /* @__PURE__ */ React11.createElement(React11.Fragment, null, /* @__PURE__ */ React11.createElement(Btn, { variant: "ghost", onClick: onClose }, "Cancel"), /* @__PURE__ */ React11.createElement(Btn, { type: "submit", variant: "accent", disabled: busy }, busy ? "Saving\u2026" : "Save consultation"))
     },
     err && /* @__PURE__ */ React11.createElement("div", { className: "form-alert" }, err),
     /* @__PURE__ */ React11.createElement("div", { className: "form-grid" }, /* @__PURE__ */ React11.createElement(Field, { label: "Patient", required: true, className: "fg-3" }, /* @__PURE__ */ React11.createElement(Select, { value: patient2?.id || "", onChange: (e) => setPatient((patients || []).find((p) => p.id === e.target.value) || null) }, /* @__PURE__ */ React11.createElement("option", { value: "" }, "Search patient\u2026"), (patients || []).map((p) => /* @__PURE__ */ React11.createElement("option", { key: p.id, value: p.id }, p.name, " \u2014 ", p.uhid, p.mobile ? ` \xB7 ${p.mobile}` : "")))), /* @__PURE__ */ React11.createElement(Field, { label: "Doctor", required: true }, /* @__PURE__ */ React11.createElement(Select, { value: f.doctor_id || "", onChange: (e) => setF((x) => ({ ...x, doctor_id: e.target.value })) }, /* @__PURE__ */ React11.createElement("option", { value: "" }, "Select\u2026"), (doctors || []).map((d) => /* @__PURE__ */ React11.createElement("option", { key: d.id, value: d.id }, d.name)))), /* @__PURE__ */ React11.createElement("div", { className: "fg-row" }, /* @__PURE__ */ React11.createElement(Field, { label: "Date" }, /* @__PURE__ */ React11.createElement(Input, { type: "date", value: f.date || "", onChange: (e) => setF((x) => ({ ...x, date: e.target.value })) })), /* @__PURE__ */ React11.createElement(Field, { label: "Time" }, /* @__PURE__ */ React11.createElement(Input, { type: "time", value: f.time || "", onChange: (e) => setF((x) => ({ ...x, time: e.target.value })) }))), /* @__PURE__ */ React11.createElement(Field, { label: "Chief Complaint", required: true, className: "fg-2" }, /* @__PURE__ */ React11.createElement(Input, { value: f.chief || "", onChange: (e) => setF((x) => ({ ...x, chief: e.target.value })), placeholder: "e.g. Fever since 2 days" })), /* @__PURE__ */ React11.createElement(Field, { label: "Symptoms", className: "fg-2" }, /* @__PURE__ */ React11.createElement(Textarea, { rows: 2, value: f.symptoms || "", onChange: (e) => setF((x) => ({ ...x, symptoms: e.target.value })) })), /* @__PURE__ */ React11.createElement(Field, { label: "Diagnosis", className: "fg-2" }, /* @__PURE__ */ React11.createElement(Input, { value: f.diagnosis || "", onChange: (e) => setF((x) => ({ ...x, diagnosis: e.target.value })), placeholder: "Provisional / final diagnosis" })), /* @__PURE__ */ React11.createElement(Field, { label: "Clinical Notes", className: "fg-2" }, /* @__PURE__ */ React11.createElement(Textarea, { rows: 2, value: f.notes || "", onChange: (e) => setF((x) => ({ ...x, notes: e.target.value })) })), /* @__PURE__ */ React11.createElement(Field, { label: "Advice", className: "fg-2" }, /* @__PURE__ */ React11.createElement(Textarea, { rows: 2, value: f.advice || "", onChange: (e) => setF((x) => ({ ...x, advice: e.target.value })) })), /* @__PURE__ */ React11.createElement(Field, { label: "Follow-up Date", hint: "Optional" }, /* @__PURE__ */ React11.createElement(Input, { type: "date", value: f.follow_up || "", onChange: (e) => setF((x) => ({ ...x, follow_up: e.target.value })) }))),
@@ -6793,7 +6834,9 @@ function NewApptModal({ open, onClose, editing }) {
       setErr("");
     }
   }, [open, editing, doctors]);
-  const save = async () => {
+  const save = async (e) => {
+    if (e && e.preventDefault) e.preventDefault();
+    if (busy) return;
     setErr("");
     if (!patient2) {
       setErr("Select a patient");
@@ -6808,8 +6851,8 @@ function NewApptModal({ open, onClose, editing }) {
       const a = editing ? await updateAppointment2(editing.id, { patient_id: patient2.id, doctor_id: f.doctor_id, date: f.date, time: f.time, reason: f.reason }, user3.id) : await createAppointment2({ patient_id: patient2.id, doctor_id: f.doctor_id, date: f.date, time: f.time, reason: f.reason }, user3.id);
       pushToast("success", editing ? `Appointment ${a.appointment_no} updated` : `Appointment ${a.appointment_no} scheduled`);
       onClose();
-    } catch (e) {
-      setErr(e.message);
+    } catch (e2) {
+      setErr(e2.message);
     } finally {
       setBusy(false);
     }
@@ -6819,9 +6862,10 @@ function NewApptModal({ open, onClose, editing }) {
     {
       open,
       onClose,
+      onSubmit: save,
       title: editing ? "Edit Appointment" : "Schedule Appointment",
       width: "md",
-      footer: /* @__PURE__ */ React12.createElement(React12.Fragment, null, /* @__PURE__ */ React12.createElement(Btn, { variant: "ghost", onClick: onClose }, "Cancel"), /* @__PURE__ */ React12.createElement(Btn, { variant: "accent", onClick: save, disabled: busy }, busy ? "Saving\u2026" : "Schedule"))
+      footer: /* @__PURE__ */ React12.createElement(React12.Fragment, null, /* @__PURE__ */ React12.createElement(Btn, { variant: "ghost", onClick: onClose }, "Cancel"), /* @__PURE__ */ React12.createElement(Btn, { type: "submit", variant: "accent", disabled: busy }, busy ? "Saving\u2026" : "Schedule"))
     },
     err && /* @__PURE__ */ React12.createElement("div", { className: "form-alert" }, err),
     /* @__PURE__ */ React12.createElement("div", { className: "form-grid" }, /* @__PURE__ */ React12.createElement(Field, { label: "Patient", required: true, className: "fg-2" }, /* @__PURE__ */ React12.createElement(Select, { value: patient2?.id || "", onChange: (e) => setPatient((patients || []).find((p) => p.id === e.target.value) || null) }, /* @__PURE__ */ React12.createElement("option", { value: "" }, "Search patient\u2026"), patients.map((p) => /* @__PURE__ */ React12.createElement("option", { key: p.id, value: p.id }, p.name, " \u2014 ", p.uhid, p.mobile ? ` \xB7 ${p.mobile}` : "")))), /* @__PURE__ */ React12.createElement(Field, { label: "Doctor" }, /* @__PURE__ */ React12.createElement(Select, { value: f.doctor_id || "", onChange: (e) => setF((x) => ({ ...x, doctor_id: e.target.value })) }, (doctors || []).map((d) => /* @__PURE__ */ React12.createElement("option", { key: d.id, value: d.id }, d.name)))), /* @__PURE__ */ React12.createElement(Field, { label: "Date", required: true }, /* @__PURE__ */ React12.createElement(Input, { type: "date", value: f.date || "", onChange: (e) => setF((x) => ({ ...x, date: e.target.value })), min: dkey(/* @__PURE__ */ new Date()) })), /* @__PURE__ */ React12.createElement(Field, { label: "Time", required: true }, /* @__PURE__ */ React12.createElement(Input, { type: "time", value: f.time || "", onChange: (e) => setF((x) => ({ ...x, time: e.target.value })) })), /* @__PURE__ */ React12.createElement(Field, { label: "Reason", className: "fg-2" }, /* @__PURE__ */ React12.createElement(Textarea, { rows: 2, value: f.reason || "", onChange: (e) => setF((x) => ({ ...x, reason: e.target.value })), placeholder: "e.g. Diabetes review" })))
@@ -6879,10 +6923,10 @@ function Appointments() {
         setModal(true);
       } }, "+ Schedule Appointment")
     }
-  ), /* @__PURE__ */ React12.createElement("div", { className: "appt-daybar" }, /* @__PURE__ */ React12.createElement(IconBtn, { icon: ChevronLeft2, title: "Previous day", onClick: () => shift(-1) }), /* @__PURE__ */ React12.createElement("input", { type: "date", className: "input appt-date", value: day, onChange: (e) => setDay(e.target.value) }), /* @__PURE__ */ React12.createElement(IconBtn, { icon: ChevronRight3, title: "Next day", onClick: () => shift(1) }), /* @__PURE__ */ React12.createElement(Btn, { variant: "ghost", size: "sm", onClick: () => setDay(dkey(/* @__PURE__ */ new Date())) }, "Today"), /* @__PURE__ */ React12.createElement("span", { className: "appt-daylabel" }, isToday ? "Today" : fmtDate(day, { weekday: "long" }), " \xB7 ", dayAppts?.length ?? 0, " appointment(s)"), /* @__PURE__ */ React12.createElement("div", { className: "appt-counts" }, APPT_STATUSES.map((s) => counts[s] ? /* @__PURE__ */ React12.createElement(Badge, { key: s, tone: s === "completed" ? "green" : s === "cancelled" ? "gray" : s === "in_consultation" ? "navy" : s === "waiting" ? "amber" : "blue" }, NEXT_LABEL[s] || s, ": ", counts[s]) : null))), /* @__PURE__ */ React12.createElement("div", { className: "toolbar" }, /* @__PURE__ */ React12.createElement("div", { className: "toolbar-search" }, /* @__PURE__ */ React12.createElement(Search4, { size: 15 }), /* @__PURE__ */ React12.createElement("input", { className: "input", value: q, onChange: (e) => setQ(e.target.value), placeholder: "Search patient, UHID, mobile or appointment number" })), /* @__PURE__ */ React12.createElement(Select, { value: statusFilter, onChange: (e) => setStatusFilter(e.target.value), className: "toolbar-select" }, /* @__PURE__ */ React12.createElement("option", { value: "" }, "All statuses"), APPT_STATUSES.map((status) => /* @__PURE__ */ React12.createElement("option", { key: status, value: status }, status.replace("_", " "))))), /* @__PURE__ */ React12.createElement(Card, null, !dayAppts ? /* @__PURE__ */ React12.createElement(EmptyState, { compact: true, title: "Loading\u2026" }) : dayAppts.length === 0 ? /* @__PURE__ */ React12.createElement(EmptyState, { title: "No Appointments Found", message: "No appointments have been scheduled yet.", action: /* @__PURE__ */ React12.createElement(Btn, { size: "sm", variant: "accent", onClick: () => {
+  ), /* @__PURE__ */ React12.createElement("div", { className: "appt-daybar" }, /* @__PURE__ */ React12.createElement(IconBtn, { icon: ChevronLeft2, title: "Previous day", onClick: () => shift(-1) }), /* @__PURE__ */ React12.createElement("input", { type: "date", className: "input appt-date", value: day, onChange: (e) => setDay(e.target.value) }), /* @__PURE__ */ React12.createElement(IconBtn, { icon: ChevronRight3, title: "Next day", onClick: () => shift(1) }), /* @__PURE__ */ React12.createElement(Btn, { variant: "ghost", size: "sm", onClick: () => setDay(dkey(/* @__PURE__ */ new Date())) }, "Today"), /* @__PURE__ */ React12.createElement("span", { className: "appt-daylabel" }, isToday ? "Today" : fmtDate(day, { weekday: "long" }), " \xB7 ", dayAppts?.length ?? 0, " appointment(s)"), /* @__PURE__ */ React12.createElement("div", { className: "appt-counts" }, APPT_STATUSES.map((s) => counts[s] ? /* @__PURE__ */ React12.createElement(Badge, { key: s, tone: s === "completed" ? "green" : s === "cancelled" ? "gray" : s === "in_consultation" ? "navy" : s === "waiting" ? "amber" : "blue" }, NEXT_LABEL[s] || s, ": ", counts[s]) : null))), /* @__PURE__ */ React12.createElement("div", { className: "toolbar" }, /* @__PURE__ */ React12.createElement("form", { onSubmit: (e) => e.preventDefault(), className: "toolbar-search" }, /* @__PURE__ */ React12.createElement(Search4, { size: 15 }), /* @__PURE__ */ React12.createElement("input", { className: "input", value: q, onChange: (e) => setQ(e.target.value), placeholder: "Search patient, UHID, mobile or appointment number" })), /* @__PURE__ */ React12.createElement(Select, { value: statusFilter, onChange: (e) => setStatusFilter(e.target.value), className: "toolbar-select" }, /* @__PURE__ */ React12.createElement("option", { value: "" }, "All statuses"), APPT_STATUSES.map((status) => /* @__PURE__ */ React12.createElement("option", { key: status, value: status }, status.replace("_", " "))))), /* @__PURE__ */ React12.createElement(Card, null, !dayAppts ? /* @__PURE__ */ React12.createElement(EmptyState, { compact: true, title: "Loading\u2026" }) : dayAppts.length === 0 ? /* @__PURE__ */ React12.createElement(EmptyState, { title: "No Appointments Found", message: "No appointments have been scheduled yet.", action: /* @__PURE__ */ React12.createElement(Btn, { size: "sm", variant: "accent", onClick: () => {
     setEditing(null);
     setModal(true);
-  } }, "+ Schedule Appointment") }) : /* @__PURE__ */ React12.createElement("div", { className: "queue" }, dayAppts.map((a, i) => /* @__PURE__ */ React12.createElement("div", { key: a.id, className: `queue-item q-${a.status}` }, /* @__PURE__ */ React12.createElement("div", { className: "q-time" }, /* @__PURE__ */ React12.createElement("span", { className: "q-slotslot" }, i + 1), /* @__PURE__ */ React12.createElement("span", { className: "q-t" }, fmtTime2(a.time + ":00"))), /* @__PURE__ */ React12.createElement("div", { className: "q-main" }, /* @__PURE__ */ React12.createElement("span", { className: "q-name" }, a.patient?.name || "Unknown", a.status === "scheduled" && /* @__PURE__ */ React12.createElement("span", { className: "q-dot", title: "Scheduled" })), /* @__PURE__ */ React12.createElement("span", { className: "q-sub" }, /* @__PURE__ */ React12.createElement(UhidChip, { uhid: a.uhid, size: "sm" }), a.reason && /* @__PURE__ */ React12.createElement("span", null, "\xB7 ", a.reason), a.doctor && /* @__PURE__ */ React12.createElement("span", null, "\xB7 ", a.doctor.name))), /* @__PURE__ */ React12.createElement(ApptBadge, { status: a.status }), /* @__PURE__ */ React12.createElement("div", { className: "q-actions" }, !["completed", "cancelled", "no_show"].includes(a.status) && /* @__PURE__ */ React12.createElement(Btn, { size: "sm", variant: "ghost", icon: Pencil2, onClick: () => {
+  } }, "+ Schedule Appointment") }) : /* @__PURE__ */ React12.createElement("div", { className: "queue" }, dayAppts.map((a, i) => /* @__PURE__ */ React12.createElement("div", { key: a.id, className: `queue-item q-${a.status}` }, /* @__PURE__ */ React12.createElement("div", { className: "q-time" }, /* @__PURE__ */ React12.createElement("span", { className: "q-slotslot" }, i + 1), /* @__PURE__ */ React12.createElement("span", { className: "q-t" }, fmtTime(a.time + ":00"))), /* @__PURE__ */ React12.createElement("div", { className: "q-main" }, /* @__PURE__ */ React12.createElement("span", { className: "q-name" }, a.patient?.name || "Unknown", a.status === "scheduled" && /* @__PURE__ */ React12.createElement("span", { className: "q-dot", title: "Scheduled" })), /* @__PURE__ */ React12.createElement("span", { className: "q-sub" }, /* @__PURE__ */ React12.createElement(UhidChip, { uhid: a.uhid, size: "sm" }), a.reason && /* @__PURE__ */ React12.createElement("span", null, "\xB7 ", a.reason), a.doctor && /* @__PURE__ */ React12.createElement("span", null, "\xB7 ", a.doctor.name))), /* @__PURE__ */ React12.createElement(ApptBadge, { status: a.status }), /* @__PURE__ */ React12.createElement("div", { className: "q-actions" }, !["completed", "cancelled", "no_show"].includes(a.status) && /* @__PURE__ */ React12.createElement(Btn, { size: "sm", variant: "ghost", icon: Pencil2, onClick: () => {
     setEditing(a);
     setModal(true);
   } }, "Edit"), (NEXT[a.status] || []).map((s) => /* @__PURE__ */ React12.createElement(Btn, { key: s, size: "sm", variant: s === "cancelled" ? "ghost" : s === "completed" ? "accent" : "outline", disabled: busyId === a.id, onClick: () => advance(a, s) }, NEXT_LABEL[s])), a.status === "completed" && a.patient && /* @__PURE__ */ React12.createElement(Btn, { size: "sm", variant: "ghost", onClick: () => navigate(`/patients/${a.patient.id}`) }, "Open"), /* @__PURE__ */ React12.createElement(
@@ -7059,10 +7103,11 @@ function NewPrescriptionModal({ open, onClose, prefillPatient, onDone }) {
     {
       open,
       onClose,
+      onSubmit: save,
       title: "New Prescription",
       width: "lg",
       sub: patient2 ? /* @__PURE__ */ React13.createElement("span", null, patient2.name, " \xB7 ", /* @__PURE__ */ React13.createElement(UhidChip, { uhid: patient2.uhid, size: "sm" }), " \xB7 ", patient2.gender, " ", patient2.dob && `\xB7 DOB ${fmtDate(patient2.dob)}`) : "Select the patient",
-      footer: /* @__PURE__ */ React13.createElement(React13.Fragment, null, /* @__PURE__ */ React13.createElement(Btn, { variant: "ghost", onClick: onClose }, "Cancel"), /* @__PURE__ */ React13.createElement(Btn, { variant: "accent", onClick: save, disabled: busy }, busy ? "Saving\u2026" : "Save prescription"))
+      footer: /* @__PURE__ */ React13.createElement(React13.Fragment, null, /* @__PURE__ */ React13.createElement(Btn, { variant: "ghost", onClick: onClose }, "Cancel"), /* @__PURE__ */ React13.createElement(Btn, { type: "submit", variant: "accent", disabled: busy }, busy ? "Saving\u2026" : "Save prescription"))
     },
     err && /* @__PURE__ */ React13.createElement("div", { className: "form-alert" }, err),
     /* @__PURE__ */ React13.createElement("div", { className: "form-grid" }, /* @__PURE__ */ React13.createElement(Field, { label: "Patient", required: true, className: "fg-2" }, /* @__PURE__ */ React13.createElement(Select, { value: patient2?.id || "", onChange: (e) => setPatient(patients.find((p) => p.id === e.target.value) || null) }, /* @__PURE__ */ React13.createElement("option", { value: "" }, "Search patient\u2026"), patients.map((p) => /* @__PURE__ */ React13.createElement("option", { key: p.id, value: p.id }, p.name, " \u2014 ", p.uhid)))), /* @__PURE__ */ React13.createElement(Field, { label: "Attending Doctor", required: true }, /* @__PURE__ */ React13.createElement(Select, { value: selectedDoctorId, onChange: (e) => setSelectedDoctorId(e.target.value) }, /* @__PURE__ */ React13.createElement("option", { value: "" }, "Select Doctor\u2026"), doctors.map((d) => /* @__PURE__ */ React13.createElement("option", { key: d.id, value: d.id }, d.name, d.qualification ? ` \xB7 ${d.qualification}` : "")))), /* @__PURE__ */ React13.createElement(Field, { label: "Linked Consultation", hint: "Optional \u2014 prefills diagnosis" }, /* @__PURE__ */ React13.createElement(Select, { value: consult, onChange: (e) => setConsult(e.target.value) }, /* @__PURE__ */ React13.createElement("option", { value: "" }, "None"), (consults || []).map((c) => /* @__PURE__ */ React13.createElement("option", { key: c.id, value: c.id }, c.consultation_no, " \xB7 ", fmtDate(c.time), " \xB7 ", c.diagnosis || c.chief)))), /* @__PURE__ */ React13.createElement(Field, { label: "Diagnosis", className: "fg-2" }, /* @__PURE__ */ React13.createElement(Input, { value: diagnosis, onChange: (e) => setDiagnosis(e.target.value) })), /* @__PURE__ */ React13.createElement(Field, { label: "Advice / Counselling", className: "fg-2" }, /* @__PURE__ */ React13.createElement(Input, { value: advice, onChange: (e) => setAdvice(e.target.value), placeholder: "e.g. Complete full course, avoid driving" }))),
@@ -7121,7 +7166,7 @@ function Prescriptions() {
         setModal(true);
       } }, "+ New Prescription")
     }
-  ), /* @__PURE__ */ React13.createElement(Card, null, /* @__PURE__ */ React13.createElement("div", { className: "toolbar" }, /* @__PURE__ */ React13.createElement("div", { className: "toolbar-search grow" }, /* @__PURE__ */ React13.createElement("input", { className: "input", placeholder: "Search patient, UHID or prescription no\u2026", value: q, onChange: (e) => setQ(e.target.value) }))), /* @__PURE__ */ React13.createElement(
+  ), /* @__PURE__ */ React13.createElement(Card, null, /* @__PURE__ */ React13.createElement("div", { className: "toolbar" }, /* @__PURE__ */ React13.createElement("form", { onSubmit: (e) => e.preventDefault(), className: "toolbar-search grow" }, /* @__PURE__ */ React13.createElement("input", { className: "input", placeholder: "Search patient, UHID or prescription no\u2026", value: q, onChange: (e) => setQ(e.target.value) }))), /* @__PURE__ */ React13.createElement(
     DataTable,
     {
       columns: [
@@ -7238,7 +7283,9 @@ function BillViewer2({ full, onClose, allowCancel = true, allowPayment = true })
   const [busy, setBusy] = useState11(false);
   const balance = bill2.total - (bill2.paid || 0);
   const open = bill2.status === "completed";
-  const doPay = async () => {
+  const doPay = async (e) => {
+    if (e && e.preventDefault) e.preventDefault();
+    if (busy) return;
     setBusy(true);
     try {
       await recordPayment(bill2.id, { amount: Number(amount), method }, user3.id);
@@ -7246,8 +7293,8 @@ function BillViewer2({ full, onClose, allowCancel = true, allowPayment = true })
       await syncAlerts2(user3.id).catch(() => {
       });
       onClose();
-    } catch (e) {
-      pushToast("error", e.message);
+    } catch (e2) {
+      pushToast("error", e2.message);
     } finally {
       setBusy(false);
     }
@@ -7280,19 +7327,20 @@ function BillViewer2({ full, onClose, allowCancel = true, allowPayment = true })
         setPayOpen(true);
       } }, "Record Payment"), allowCancel && open && can("billing") && /* @__PURE__ */ React14.createElement(Btn, { variant: "danger", icon: XCircle3, onClick: () => setCancelOpen(true) }, "Cancel Bill"), /* @__PURE__ */ React14.createElement(Btn, { variant: "outline", icon: Download5, onClick: () => downloadReceipt(bill2, items, payments, settings) }, "Download Receipt"), /* @__PURE__ */ React14.createElement(Btn, { variant: "primary", icon: Printer3, onClick: () => printInvoiceA4(bill2, items, payments, settings) }, "A4 Payment Receipt"))
     },
-    /* @__PURE__ */ React14.createElement("div", { className: "bv-body" }, /* @__PURE__ */ React14.createElement("div", { className: "bv-meta" }, /* @__PURE__ */ React14.createElement(PaymentBadge, { status: bill2.status === "CANCELLED" ? "CANCELLED" : bill2.payment_status }), /* @__PURE__ */ React14.createElement(Badge, { tone: "navy" }, bill2.bill_type), /* @__PURE__ */ React14.createElement("span", null, fmtDateTime(bill2.time)), bill2.cancel_reason && /* @__PURE__ */ React14.createElement(Badge, { tone: "red" }, "Cancelled: ", bill2.cancel_reason)), bill2.diagnosis && /* @__PURE__ */ React14.createElement("div", { style: { marginTop: "10px", padding: "8px 12px", background: "var(--surface-2)", borderRadius: "6px", fontSize: "13px" } }, /* @__PURE__ */ React14.createElement("b", { style: { textTransform: "uppercase", letterSpacing: "0.04em", fontSize: "11px", color: "var(--text-2)" } }, "Diagnosis: "), /* @__PURE__ */ React14.createElement("span", { style: { fontWeight: 600, textTransform: "uppercase" } }, bill2.diagnosis)), /* @__PURE__ */ React14.createElement("table", { className: "table bv-table", style: { marginTop: "10px" } }, /* @__PURE__ */ React14.createElement("thead", null, /* @__PURE__ */ React14.createElement("tr", null, /* @__PURE__ */ React14.createElement("th", null, "Item"), /* @__PURE__ */ React14.createElement("th", null, "Dosage / Instructions"), /* @__PURE__ */ React14.createElement("th", { className: "th-right" }, "Qty"), /* @__PURE__ */ React14.createElement("th", { className: "th-right" }, "Price"), /* @__PURE__ */ React14.createElement("th", { className: "th-right" }, "Amount"))), /* @__PURE__ */ React14.createElement("tbody", null, items.map((it) => {
+    /* @__PURE__ */ React14.createElement("div", { className: "bv-body" }, /* @__PURE__ */ React14.createElement("div", { className: "bv-meta" }, /* @__PURE__ */ React14.createElement(PaymentBadge, { status: bill2.status === "CANCELLED" ? "CANCELLED" : bill2.payment_status }), /* @__PURE__ */ React14.createElement(Badge, { tone: "navy" }, bill2.bill_type), /* @__PURE__ */ React14.createElement("span", null, fmtDateTime(bill2.time || bill2.date)), bill2.cancel_reason && /* @__PURE__ */ React14.createElement(Badge, { tone: "red" }, "Cancelled: ", bill2.cancel_reason)), bill2.diagnosis && /* @__PURE__ */ React14.createElement("div", { style: { marginTop: "10px", padding: "8px 12px", background: "var(--surface-2)", borderRadius: "6px", fontSize: "13px" } }, /* @__PURE__ */ React14.createElement("b", { style: { textTransform: "uppercase", letterSpacing: "0.04em", fontSize: "11px", color: "var(--text-2)" } }, "Diagnosis: "), /* @__PURE__ */ React14.createElement("span", { style: { fontWeight: 600, textTransform: "uppercase" } }, bill2.diagnosis)), /* @__PURE__ */ React14.createElement("table", { className: "table bv-table", style: { marginTop: "10px" } }, /* @__PURE__ */ React14.createElement("thead", null, /* @__PURE__ */ React14.createElement("tr", null, /* @__PURE__ */ React14.createElement("th", null, "Item"), /* @__PURE__ */ React14.createElement("th", null, "Dosage / Instructions"), /* @__PURE__ */ React14.createElement("th", { className: "th-right" }, "Qty"), /* @__PURE__ */ React14.createElement("th", { className: "th-right" }, "Price"), /* @__PURE__ */ React14.createElement("th", { className: "th-right" }, "Amount"))), /* @__PURE__ */ React14.createElement("tbody", null, items.map((it) => {
       const timingFreqDur = [it.timing, it.frequency, it.duration].filter(Boolean).join(" - ");
       return /* @__PURE__ */ React14.createElement("tr", { key: it.id }, /* @__PURE__ */ React14.createElement("td", null, /* @__PURE__ */ React14.createElement("div", null, /* @__PURE__ */ React14.createElement("b", null, it.name), it.returned > 0 && /* @__PURE__ */ React14.createElement(Badge, { tone: "amber" }, " ", fmtQty(it.returned), " returned")), it.composition && /* @__PURE__ */ React14.createElement("div", { style: { fontSize: "11.5px", color: "var(--text-2)" } }, "Composition: ", it.composition), it.notes && /* @__PURE__ */ React14.createElement("div", { style: { fontSize: "11.5px", color: "var(--text-3)", fontStyle: "italic" } }, "Note: ", it.notes)), /* @__PURE__ */ React14.createElement("td", null, it.dosage ? /* @__PURE__ */ React14.createElement("div", null, /* @__PURE__ */ React14.createElement("b", null, it.dosage)) : null, timingFreqDur && /* @__PURE__ */ React14.createElement("div", { style: { fontSize: "12px", color: "var(--teal-700)" } }, timingFreqDur), !it.dosage && !timingFreqDur && /* @__PURE__ */ React14.createElement("span", { style: { color: "var(--text-3)" } }, "\u2014")), /* @__PURE__ */ React14.createElement("td", { className: "td-right" }, fmtQty(it.qty), it.unit && it.unit !== "service" ? " " + it.unit : ""), /* @__PURE__ */ React14.createElement("td", { className: "td-right" }, money2(it.price)), /* @__PURE__ */ React14.createElement("td", { className: "td-right" }, money2(it.amount)));
-    }))), (bill2.advice || bill2.next_visit) && /* @__PURE__ */ React14.createElement("div", { style: { margin: "12px 0", padding: "10px 12px", background: "var(--surface-2)", borderRadius: "6px", fontSize: "12.5px" } }, bill2.advice && /* @__PURE__ */ React14.createElement("div", { style: { marginBottom: bill2.next_visit ? "6px" : "0" } }, /* @__PURE__ */ React14.createElement("b", { style: { textTransform: "uppercase", fontSize: "11px", color: "var(--text-2)", display: "block" } }, "Advice / Instructions:"), /* @__PURE__ */ React14.createElement("div", { style: { whiteSpace: "pre-wrap", marginTop: "2px" } }, bill2.advice)), bill2.next_visit && /* @__PURE__ */ React14.createElement("div", null, /* @__PURE__ */ React14.createElement("b", { style: { textTransform: "uppercase", fontSize: "11px", color: "var(--text-2)" } }, "Next Visit / Follow-up: "), /* @__PURE__ */ React14.createElement("b", null, toDDMMYYYY2(bill2.next_visit) || bill2.next_visit))), /* @__PURE__ */ React14.createElement("div", { className: "bv-totals" }, /* @__PURE__ */ React14.createElement("div", { className: "kv" }, /* @__PURE__ */ React14.createElement("span", null, "Subtotal"), /* @__PURE__ */ React14.createElement("b", null, money2(bill2.subtotal))), /* @__PURE__ */ React14.createElement("div", { className: "kv" }, /* @__PURE__ */ React14.createElement("span", null, "Discount"), /* @__PURE__ */ React14.createElement("b", null, "\u2212 ", money2(bill2.discount))), /* @__PURE__ */ React14.createElement("div", { className: "kv kv-total" }, /* @__PURE__ */ React14.createElement("span", null, "Total Amount"), /* @__PURE__ */ React14.createElement("b", null, money2(bill2.total))), /* @__PURE__ */ React14.createElement("div", { className: "kv" }, /* @__PURE__ */ React14.createElement("span", null, "Paid"), /* @__PURE__ */ React14.createElement("b", null, money2(bill2.paid))), /* @__PURE__ */ React14.createElement("div", { className: "kv" }, /* @__PURE__ */ React14.createElement("span", null, "Balance"), /* @__PURE__ */ React14.createElement("b", null, money2(balance)))), payments.length > 0 && /* @__PURE__ */ React14.createElement("div", { className: "bv-pay" }, payments.map((x) => /* @__PURE__ */ React14.createElement("span", { key: x.id, className: "bpay-item" }, /* @__PURE__ */ React14.createElement(Badge, { tone: x.kind === "refund" ? "red" : "green" }, x.kind === "refund" ? "Refund" : x.method), " ", money2(x.amount), " \xB7 ", fmtDate(x.at)))))
+    }))), (bill2.advice || bill2.next_visit) && /* @__PURE__ */ React14.createElement("div", { style: { margin: "12px 0", padding: "10px 12px", background: "var(--surface-2)", borderRadius: "6px", fontSize: "12.5px" } }, bill2.advice && /* @__PURE__ */ React14.createElement("div", { style: { marginBottom: bill2.next_visit ? "6px" : "0" } }, /* @__PURE__ */ React14.createElement("b", { style: { textTransform: "uppercase", fontSize: "11px", color: "var(--text-2)", display: "block" } }, "Advice / Instructions:"), /* @__PURE__ */ React14.createElement("div", { style: { whiteSpace: "pre-wrap", marginTop: "2px" } }, bill2.advice)), bill2.next_visit && /* @__PURE__ */ React14.createElement("div", null, /* @__PURE__ */ React14.createElement("b", { style: { textTransform: "uppercase", fontSize: "11px", color: "var(--text-2)" } }, "Next Visit / Follow-up: "), /* @__PURE__ */ React14.createElement("b", null, toDDMMYYYY(bill2.next_visit) || bill2.next_visit))), /* @__PURE__ */ React14.createElement("div", { className: "bv-totals" }, /* @__PURE__ */ React14.createElement("div", { className: "kv" }, /* @__PURE__ */ React14.createElement("span", null, "Subtotal"), /* @__PURE__ */ React14.createElement("b", null, money2(bill2.subtotal))), /* @__PURE__ */ React14.createElement("div", { className: "kv" }, /* @__PURE__ */ React14.createElement("span", null, "Discount"), /* @__PURE__ */ React14.createElement("b", null, "\u2212 ", money2(bill2.discount))), /* @__PURE__ */ React14.createElement("div", { className: "kv kv-total" }, /* @__PURE__ */ React14.createElement("span", null, "Total Amount"), /* @__PURE__ */ React14.createElement("b", null, money2(bill2.total))), /* @__PURE__ */ React14.createElement("div", { className: "kv" }, /* @__PURE__ */ React14.createElement("span", null, "Paid"), /* @__PURE__ */ React14.createElement("b", null, money2(bill2.paid))), /* @__PURE__ */ React14.createElement("div", { className: "kv" }, /* @__PURE__ */ React14.createElement("span", null, "Balance"), /* @__PURE__ */ React14.createElement("b", null, money2(balance)))), payments.length > 0 && /* @__PURE__ */ React14.createElement("div", { className: "bv-pay" }, payments.map((x) => /* @__PURE__ */ React14.createElement("span", { key: x.id, className: "bpay-item" }, /* @__PURE__ */ React14.createElement(Badge, { tone: x.kind === "refund" ? "red" : "green" }, x.kind === "refund" ? "Refund" : x.method), " ", money2(x.amount), " \xB7 ", fmtDate(x.at)))))
   ), /* @__PURE__ */ React14.createElement(
     Modal,
     {
       open: payOpen,
       onClose: () => setPayOpen(false),
+      onSubmit: doPay,
       title: "Record payment",
       sub: `${bill2.bill_no} \xB7 balance ${money2(balance)}`,
       width: "sm",
-      footer: /* @__PURE__ */ React14.createElement(React14.Fragment, null, /* @__PURE__ */ React14.createElement(Btn, { variant: "ghost", onClick: () => setPayOpen(false) }, "Cancel"), /* @__PURE__ */ React14.createElement(Btn, { variant: "accent", onClick: doPay, disabled: busy || !(Number(amount) > 0) }, busy ? "Saving\u2026" : "Record"))
+      footer: /* @__PURE__ */ React14.createElement(React14.Fragment, null, /* @__PURE__ */ React14.createElement(Btn, { variant: "ghost", onClick: () => setPayOpen(false) }, "Cancel"), /* @__PURE__ */ React14.createElement(Btn, { type: "submit", variant: "accent", disabled: busy || !(Number(amount) > 0) }, busy ? "Saving\u2026" : "Record"))
     },
     /* @__PURE__ */ React14.createElement("div", { className: "stack" }, /* @__PURE__ */ React14.createElement(Field, { label: "Method" }, /* @__PURE__ */ React14.createElement(Select, { value: method, onChange: (e) => setMethod(e.target.value) }, PAY_METHODS.map((m) => /* @__PURE__ */ React14.createElement("option", { key: m }, m)))), /* @__PURE__ */ React14.createElement(Field, { label: `Amount (max ${money2(balance)})` }, /* @__PURE__ */ React14.createElement(Input, { type: "number", min: "0", step: "0.01", value: amount, onChange: (e) => setAmount(e.target.value) })), /* @__PURE__ */ React14.createElement(Btn, { size: "sm", variant: "ghost", onClick: () => setAmount(String(balance)) }, "Full balance ", money2(balance)))
   ), /* @__PURE__ */ React14.createElement(
@@ -7353,7 +7401,9 @@ function PaymentModal({ open, onClose, total, onComplete, defaultMethod }) {
   const paid = rows.reduce((s, r) => s + (Number(r.amount) || 0), 0);
   const remaining = round2(total - paid);
   const setRow = (i, k, v) => setRows((x) => x.map((r, j) => j === i ? { ...r, [k]: v } : r));
-  const complete = async () => {
+  const complete = async (e) => {
+    if (e && e.preventDefault) e.preventDefault();
+    if (busy) return;
     if (paid > total + 5e-3) {
       pushToast("warning", "Payments exceed bill total \u2014 remove excess");
       return;
@@ -7361,8 +7411,8 @@ function PaymentModal({ open, onClose, total, onComplete, defaultMethod }) {
     setBusy(true);
     try {
       await onComplete(rows.filter((r) => Number(r.amount) > 0));
-    } catch (e) {
-      pushToast("error", e.message);
+    } catch (e2) {
+      pushToast("error", e2.message);
       setBusy(false);
     }
   };
@@ -7371,6 +7421,7 @@ function PaymentModal({ open, onClose, total, onComplete, defaultMethod }) {
     {
       open,
       onClose,
+      onSubmit: complete,
       title: "Payment",
       sub: `Bill total ${fmtMoney(total)} \xB7 ${paid > 0 ? `collected ${fmtMoney(paid)}` : "no payment yet"}`,
       width: "md",
@@ -7382,7 +7433,7 @@ function PaymentModal({ open, onClose, total, onComplete, defaultMethod }) {
           pushToast("error", e.message);
           setBusy(false);
         }
-      } }, "Save as Pending"), /* @__PURE__ */ React15.createElement(Btn, { variant: "accent", size: "lg", disabled: busy || paid <= 0, onClick: complete }, busy ? "Completing\u2026" : `Complete \xB7 ${fmtMoney(paid)}`))
+      } }, "Save as Pending"), /* @__PURE__ */ React15.createElement(Btn, { type: "submit", variant: "accent", size: "lg", disabled: busy || paid <= 0 }, busy ? "Completing\u2026" : `Complete \xB7 ${fmtMoney(paid)}`))
     },
     /* @__PURE__ */ React15.createElement("div", { className: "pay-rows" }, rows.map((r, i) => /* @__PURE__ */ React15.createElement("div", { className: "pay-row", key: i }, /* @__PURE__ */ React15.createElement(Select, { value: r.method, onChange: (e) => setRow(i, "method", e.target.value) }, PAY_METHODS.map((m) => /* @__PURE__ */ React15.createElement("option", { key: m }, m))), /* @__PURE__ */ React15.createElement(Input, { type: "number", min: "0", step: "0.01", value: r.amount, onChange: (e) => setRow(i, "amount", e.target.value), placeholder: "Amount" }), /* @__PURE__ */ React15.createElement(Btn, { size: "sm", variant: "ghost", onClick: () => setRow(i, "amount", String(Math.max(0, remaining))) }, "Rest"), rows.length > 1 && /* @__PURE__ */ React15.createElement(Btn, { size: "sm", variant: "ghost", icon: Trash26, onClick: () => setRows((x) => x.filter((_, j) => j !== i)), title: "Remove payment" })))),
     /* @__PURE__ */ React15.createElement("div", { className: "pay-summary" }, /* @__PURE__ */ React15.createElement("span", null, "Collected: ", /* @__PURE__ */ React15.createElement("b", null, fmtMoney(paid))), /* @__PURE__ */ React15.createElement("span", null, "Remaining: ", /* @__PURE__ */ React15.createElement("b", { className: remaining > 5e-3 ? "pay-due" : "pay-ok" }, fmtMoney(remaining))), paid < total && /* @__PURE__ */ React15.createElement("span", { className: "pay-status" }, /* @__PURE__ */ React15.createElement(Badge, { tone: "amber" }, "Bill will be marked PARTIALLY PAID"))),
@@ -7400,6 +7451,7 @@ function Billing() {
   const [nextVisit, setNextVisit] = useState12("");
   const doctors = useLiveQuery8(() => db_default.doctors.filter((d) => d.active).toArray(), []) || [];
   const [selectedDoctorId, setSelectedDoctorId] = useState12("");
+  const [billDate, setBillDate] = useState12(todayStr());
   const stock = useLiveQuery8(() => stockMap(), []);
   const services = useLiveQuery8(() => db_default.services.where("active").equals(1).toArray(), []);
   const [tab, setTab] = useState12("medicines");
@@ -7512,6 +7564,7 @@ function Billing() {
     try {
       const { bill: bill2, items, payments: createdPayments } = await createBill({
         patient_id: patient2.id,
+        bill_date: billDate || todayStr(),
         doctor_id: selectedDoc?.id || null,
         doctor_name: selectedDoc?.name || settings.doctor_name || "",
         doctor_phone: selectedDoc?.phone || settings.doctor_phone || "",
@@ -7530,6 +7583,7 @@ function Billing() {
       setCart([]);
       setDiscVal("");
       setPatient(null);
+      setBillDate(todayStr());
       setDiagnosis("");
       setAdvice("");
       setNextVisit("");
@@ -7563,7 +7617,14 @@ function Billing() {
       getSearch: (p) => `${p.name} ${p.uhid} ${p.mobile}`,
       placeholder: "Search by UHID, name or mobile\u2026"
     }
-  ), /* @__PURE__ */ React15.createElement(Btn, { variant: "ghost", size: "sm", icon: UserPlus4, onClick: () => navigate("/patients?new=1") }, "New")), patient2 && /* @__PURE__ */ React15.createElement("div", { className: "pos-patient-info" }, /* @__PURE__ */ React15.createElement("span", { className: "ppi-name" }, patient2.name), /* @__PURE__ */ React15.createElement(UhidChip, { uhid: patient2.uhid, size: "sm" }), /* @__PURE__ */ React15.createElement("span", null, patient2.gender, patient2.age != null ? ` \xB7 Age ${patient2.age} Y` : patient2.dob ? ` \xB7 Age ${ageLabel(patient2)}` : "", patient2.blood_group ? ` \xB7 ${patient2.blood_group}` : ""), patient2.allergies && /* @__PURE__ */ React15.createElement("span", { className: "allergy-warn" }, /* @__PURE__ */ React15.createElement(AlertTriangle4, { size: 13 }), " ", patient2.allergies))), /* @__PURE__ */ React15.createElement(Card, { title: "Clinical Details", sub: "Diagnosis, advice & follow-up", pad: true, className: "pos-clinical-card" }, /* @__PURE__ */ React15.createElement(Field, { label: "Attending Doctor", style: { marginBottom: "8px" } }, /* @__PURE__ */ React15.createElement(Select, { value: selectedDoctorId, onChange: (e) => setSelectedDoctorId(e.target.value) }, /* @__PURE__ */ React15.createElement("option", { value: "" }, settings.doctor_name ? `${settings.doctor_name} (Clinic Default)` : "Select Doctor\u2026"), doctors.map((d) => /* @__PURE__ */ React15.createElement("option", { key: d.id, value: d.id }, d.name, d.qualification ? ` \xB7 ${d.qualification}` : "")))), /* @__PURE__ */ React15.createElement(Field, { label: "Diagnosis" }, /* @__PURE__ */ React15.createElement(
+  ), /* @__PURE__ */ React15.createElement(Btn, { variant: "ghost", size: "sm", icon: UserPlus4, onClick: () => navigate("/patients?new=1") }, "New")), patient2 && /* @__PURE__ */ React15.createElement("div", { className: "pos-patient-info" }, /* @__PURE__ */ React15.createElement("span", { className: "ppi-name" }, patient2.name), /* @__PURE__ */ React15.createElement(UhidChip, { uhid: patient2.uhid, size: "sm" }), /* @__PURE__ */ React15.createElement("span", null, patient2.gender, patient2.age != null ? ` \xB7 Age ${patient2.age} Y` : patient2.dob ? ` \xB7 Age ${ageLabel(patient2)}` : "", patient2.blood_group ? ` \xB7 ${patient2.blood_group}` : ""), patient2.allergies && /* @__PURE__ */ React15.createElement("span", { className: "allergy-warn" }, /* @__PURE__ */ React15.createElement(AlertTriangle4, { size: 13 }), " ", patient2.allergies)), /* @__PURE__ */ React15.createElement("div", { style: { marginTop: "12px" } }, /* @__PURE__ */ React15.createElement(Field, { label: "Bill Date" }, /* @__PURE__ */ React15.createElement(
+    Input,
+    {
+      type: "date",
+      value: billDate,
+      onChange: (e) => setBillDate(e.target.value)
+    }
+  )))), /* @__PURE__ */ React15.createElement(Card, { title: "Clinical Details", sub: "Diagnosis, advice & follow-up", pad: true, className: "pos-clinical-card" }, /* @__PURE__ */ React15.createElement(Field, { label: "Attending Doctor", style: { marginBottom: "8px" } }, /* @__PURE__ */ React15.createElement(Select, { value: selectedDoctorId, onChange: (e) => setSelectedDoctorId(e.target.value) }, /* @__PURE__ */ React15.createElement("option", { value: "" }, settings.doctor_name ? `${settings.doctor_name} (Clinic Default)` : "Select Doctor\u2026"), doctors.map((d) => /* @__PURE__ */ React15.createElement("option", { key: d.id, value: d.id }, d.name, d.qualification ? ` \xB7 ${d.qualification}` : "")))), /* @__PURE__ */ React15.createElement(Field, { label: "Diagnosis" }, /* @__PURE__ */ React15.createElement(
     Input,
     {
       value: diagnosis,
@@ -7585,7 +7646,24 @@ function Billing() {
       onChange: (e) => setAdvice(e.target.value),
       placeholder: "Patient instructions, ice packs, exercise, diet (English / Gujarati)\u2026"
     }
-  ))), /* @__PURE__ */ React15.createElement(Card, { pad: true, className: "pos-catalog" }, /* @__PURE__ */ React15.createElement("div", { className: "pos-tabs" }, /* @__PURE__ */ React15.createElement("button", { className: `pos-tab ${tab === "medicines" ? "pos-tab-on" : ""}`, onClick: () => setTab("medicines") }, /* @__PURE__ */ React15.createElement(Pill3, { size: 15 }), " Medicines"), /* @__PURE__ */ React15.createElement("button", { className: `pos-tab ${tab === "consultation" ? "pos-tab-on" : ""}`, onClick: () => setTab("consultation") }, /* @__PURE__ */ React15.createElement(Stethoscope5, { size: 15 }), " Consultation"), /* @__PURE__ */ React15.createElement("button", { className: `pos-tab ${tab === "services" ? "pos-tab-on" : ""}`, onClick: () => setTab("services") }, /* @__PURE__ */ React15.createElement(Sparkles, { size: 15 }), " Services")), tab === "medicines" && /* @__PURE__ */ React15.createElement("div", { className: "pos-medlist-wrap" }, /* @__PURE__ */ React15.createElement("div", { className: "pos-medsearch" }, /* @__PURE__ */ React15.createElement(Search5, { size: 14 }), /* @__PURE__ */ React15.createElement(Input, { value: medQ, onChange: (e) => setMedQ(e.target.value), placeholder: "Search medicine by name or generic\u2026", autoFocus: true })), /* @__PURE__ */ React15.createElement("div", { className: "pos-medlist" }, medsList.length === 0 && /* @__PURE__ */ React15.createElement("div", { className: "pos-none" }, "No medicines match"), medsList.map(({ medicine: m, available, next_expiry }) => {
+  ))), /* @__PURE__ */ React15.createElement(Card, { pad: true, className: "pos-catalog" }, /* @__PURE__ */ React15.createElement("div", { className: "pos-tabs" }, /* @__PURE__ */ React15.createElement("button", { className: `pos-tab ${tab === "medicines" ? "pos-tab-on" : ""}`, onClick: () => setTab("medicines") }, /* @__PURE__ */ React15.createElement(Pill3, { size: 15 }), " Medicines"), /* @__PURE__ */ React15.createElement("button", { className: `pos-tab ${tab === "consultation" ? "pos-tab-on" : ""}`, onClick: () => setTab("consultation") }, /* @__PURE__ */ React15.createElement(Stethoscope5, { size: 15 }), " Consultation"), /* @__PURE__ */ React15.createElement("button", { className: `pos-tab ${tab === "services" ? "pos-tab-on" : ""}`, onClick: () => setTab("services") }, /* @__PURE__ */ React15.createElement(Sparkles, { size: 15 }), " Services")), tab === "medicines" && /* @__PURE__ */ React15.createElement("div", { className: "pos-medlist-wrap" }, /* @__PURE__ */ React15.createElement("div", { className: "pos-medsearch" }, /* @__PURE__ */ React15.createElement(Search5, { size: 14 }), /* @__PURE__ */ React15.createElement(
+    Input,
+    {
+      value: medQ,
+      onChange: (e) => setMedQ(e.target.value),
+      onKeyDown: (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          if (medsList.length > 0) {
+            addMedicine(medsList[0].medicine);
+            setMedQ("");
+          }
+        }
+      },
+      placeholder: "Search medicine by name or generic\u2026",
+      autoFocus: true
+    }
+  )), /* @__PURE__ */ React15.createElement("div", { className: "pos-medlist" }, medsList.length === 0 && /* @__PURE__ */ React15.createElement("div", { className: "pos-none" }, "No medicines match"), medsList.map(({ medicine: m, available, next_expiry }) => {
     const left = available - cartQty(m.id);
     const exp = next_expiry ? daysUntil(next_expiry) : null;
     return /* @__PURE__ */ React15.createElement("button", { key: m.id, className: "pos-med", onClick: () => addMedicine(m), disabled: left <= 0 }, /* @__PURE__ */ React15.createElement("span", { className: "pos-med-name" }, m.name, m.strength && /* @__PURE__ */ React15.createElement("span", { className: "cell-sub" }, " ", m.strength)), /* @__PURE__ */ React15.createElement("span", { className: "pos-med-right" }, /* @__PURE__ */ React15.createElement(Badge, { tone: left <= 0 ? "red" : left <= (m.min_stock || 0) ? "amber" : "green" }, left <= 0 ? "OUT" : `${left} ${m.unit}`), exp != null && exp <= 90 && /* @__PURE__ */ React15.createElement(Badge, { tone: exp <= 30 ? "red" : "amber" }, "exp ", exp, "d"), /* @__PURE__ */ React15.createElement("b", null, money2(m.selling_price))));
@@ -7677,7 +7755,25 @@ function Billing() {
       value: it.notes || "",
       onChange: (e) => setInstruction(i, "notes", e.target.value)
     }
-  ))))))), /* @__PURE__ */ React15.createElement("div", { className: "cart-totals" }, /* @__PURE__ */ React15.createElement("div", { className: "kv" }, /* @__PURE__ */ React15.createElement("span", null, "Subtotal"), /* @__PURE__ */ React15.createElement("b", null, money2(subtotal))), /* @__PURE__ */ React15.createElement("div", { className: "cart-disc" }, /* @__PURE__ */ React15.createElement("span", { className: "kv-label" }, "Discount"), /* @__PURE__ */ React15.createElement(Seg, { size: "sm", value: discMode, onChange: setDiscMode, options: [{ value: "amt", label: "\u20B9" }, { value: "pct", label: "%" }] }), /* @__PURE__ */ React15.createElement(Input, { className: "cart-disc-input", type: "number", min: "0", value: discVal, onChange: (e) => setDiscVal(e.target.value), placeholder: "0" }), /* @__PURE__ */ React15.createElement("b", null, "\u2212 ", money2(disc))), /* @__PURE__ */ React15.createElement("div", { className: "kv kv-total" }, /* @__PURE__ */ React15.createElement("span", null, "TOTAL AMOUNT"), /* @__PURE__ */ React15.createElement("b", null, money2(total)))), /* @__PURE__ */ React15.createElement("div", { className: "cart-actions" }, /* @__PURE__ */ React15.createElement(
+  ))))))), /* @__PURE__ */ React15.createElement("div", { className: "cart-totals" }, /* @__PURE__ */ React15.createElement("div", { className: "kv" }, /* @__PURE__ */ React15.createElement("span", null, "Subtotal"), /* @__PURE__ */ React15.createElement("b", null, money2(subtotal))), /* @__PURE__ */ React15.createElement("div", { className: "cart-disc" }, /* @__PURE__ */ React15.createElement("span", { className: "kv-label" }, "Discount"), /* @__PURE__ */ React15.createElement(Seg, { size: "sm", value: discMode, onChange: setDiscMode, options: [{ value: "amt", label: "\u20B9" }, { value: "pct", label: "%" }] }), /* @__PURE__ */ React15.createElement(
+    Input,
+    {
+      className: "cart-disc-input",
+      type: "number",
+      min: "0",
+      value: discVal,
+      onChange: (e) => setDiscVal(e.target.value),
+      onKeyDown: (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          if (patient2 && cart.length > 0 && !busy) {
+            setPayOpen(true);
+          }
+        }
+      },
+      placeholder: "0"
+    }
+  ), /* @__PURE__ */ React15.createElement("b", null, "\u2212 ", money2(disc))), /* @__PURE__ */ React15.createElement("div", { className: "kv kv-total" }, /* @__PURE__ */ React15.createElement("span", null, "TOTAL AMOUNT"), /* @__PURE__ */ React15.createElement("b", null, money2(total)))), /* @__PURE__ */ React15.createElement("div", { className: "cart-actions" }, /* @__PURE__ */ React15.createElement(
     Btn,
     {
       variant: "accent",
@@ -7726,7 +7822,9 @@ function PayModal({ bill: bill2, onClose }) {
   const [busy, setBusy] = useState13(false);
   const [err, setErr] = useState13("");
   const money2 = (v) => fmtMoney(v, settings.currency);
-  const doPay = async () => {
+  const doPay = async (e) => {
+    if (e && e.preventDefault) e.preventDefault();
+    if (busy) return;
     setErr("");
     setBusy(true);
     try {
@@ -7735,8 +7833,8 @@ function PayModal({ bill: bill2, onClose }) {
       await syncAlerts2(user3.id).catch(() => {
       });
       onClose();
-    } catch (e) {
-      setErr(e.message);
+    } catch (e2) {
+      setErr(e2.message);
       setBusy(false);
     }
   };
@@ -7745,10 +7843,11 @@ function PayModal({ bill: bill2, onClose }) {
     {
       open: true,
       onClose,
+      onSubmit: doPay,
       title: `Record Payment \u2014 ${bill2.bill.bill_no}`,
       width: "sm",
       sub: `${bill2.bill.patient_name} \xB7 balance ${money2(bill2.balance)}`,
-      footer: /* @__PURE__ */ React16.createElement(React16.Fragment, null, /* @__PURE__ */ React16.createElement(Btn, { variant: "ghost", onClick: onClose }, "Cancel"), /* @__PURE__ */ React16.createElement(Btn, { variant: "accent", onClick: doPay, disabled: busy || !(Number(amount) > 0) }, busy ? "Saving\u2026" : `Record ${money2(Number(amount) || 0)}`))
+      footer: /* @__PURE__ */ React16.createElement(React16.Fragment, null, /* @__PURE__ */ React16.createElement(Btn, { variant: "ghost", onClick: onClose }, "Cancel"), /* @__PURE__ */ React16.createElement(Btn, { type: "submit", variant: "accent", disabled: busy || !(Number(amount) > 0) }, busy ? "Saving\u2026" : `Record ${money2(Number(amount) || 0)}`))
     },
     err && /* @__PURE__ */ React16.createElement("div", { className: "form-alert" }, err),
     /* @__PURE__ */ React16.createElement("div", { className: "stack" }, /* @__PURE__ */ React16.createElement(Field, { label: "Payment Method", required: true }, /* @__PURE__ */ React16.createElement(Select, { value: method, onChange: (e) => setMethod(e.target.value) }, PAY_METHODS.map((m) => /* @__PURE__ */ React16.createElement("option", { key: m }, m)))), /* @__PURE__ */ React16.createElement(Field, { label: `Amount (max ${money2(bill2.balance)})`, required: true }, /* @__PURE__ */ React16.createElement(Input, { type: "number", min: "0", max: bill2.balance, step: "0.01", value: amount, onChange: (e) => setAmount(e.target.value) })), /* @__PURE__ */ React16.createElement("div", { className: "pay-actions" }, /* @__PURE__ */ React16.createElement(Btn, { size: "sm", variant: "ghost", onClick: () => setAmount(String(bill2.balance)) }, "Full balance"), /* @__PURE__ */ React16.createElement(Btn, { size: "sm", variant: "ghost", onClick: () => setAmount(String(Math.round(bill2.balance / 2 * 100) / 100)) }, "Half"), /* @__PURE__ */ React16.createElement(Btn, { size: "sm", variant: "ghost", onClick: () => setAmount("") }, "Custom\u2026")), /* @__PURE__ */ React16.createElement(Field, { label: "Note (optional)" }, /* @__PURE__ */ React16.createElement(Input, { value: note, onChange: (e) => setNote(e.target.value), placeholder: "e.g. received at counter" })))
@@ -7815,7 +7914,7 @@ function Payments() {
       sub: `Outstanding: ${money2(outstanding?.amount || 0)} across ${outstanding?.count ?? "\u2026"} open bill(s) \xB7 ${outstanding?.pending ?? 0} pending \xB7 ${outstanding?.partial ?? 0} partial`,
       actions: /* @__PURE__ */ React16.createElement(Btn, { variant: "ghost", icon: Download7, onClick: exportCSV }, "Export CSV")
     }
-  ), /* @__PURE__ */ React16.createElement(Card, null, /* @__PURE__ */ React16.createElement("div", { className: "toolbar" }, /* @__PURE__ */ React16.createElement(Select, { value: statusF, onChange: (e) => setStatusF(e.target.value), className: "toolbar-select" }, /* @__PURE__ */ React16.createElement("option", { value: "open" }, "Open (Pending + Partial)"), /* @__PURE__ */ React16.createElement("option", { value: "pending" }, "Pending only"), /* @__PURE__ */ React16.createElement("option", { value: "partial" }, "Partial only"), /* @__PURE__ */ React16.createElement("option", { value: "paid" }, "Paid"), /* @__PURE__ */ React16.createElement("option", { value: "all" }, "All")), /* @__PURE__ */ React16.createElement("div", { className: "toolbar-search" }, /* @__PURE__ */ React16.createElement(Search6, { size: 15 }), /* @__PURE__ */ React16.createElement(Input, { value: q, onChange: (e) => setQ(e.target.value), placeholder: "Bill #, patient, UHID\u2026" })), /* @__PURE__ */ React16.createElement(Input, { type: "date", className: "toolbar-date", value: from, onChange: (e) => setFrom(e.target.value) }), /* @__PURE__ */ React16.createElement("span", { className: "range-dash" }, "\u2192"), /* @__PURE__ */ React16.createElement(Input, { type: "date", className: "toolbar-date", value: to, onChange: (e) => setTo(e.target.value) })), /* @__PURE__ */ React16.createElement(
+  ), /* @__PURE__ */ React16.createElement(Card, null, /* @__PURE__ */ React16.createElement("div", { className: "toolbar" }, /* @__PURE__ */ React16.createElement(Select, { value: statusF, onChange: (e) => setStatusF(e.target.value), className: "toolbar-select" }, /* @__PURE__ */ React16.createElement("option", { value: "open" }, "Open (Pending + Partial)"), /* @__PURE__ */ React16.createElement("option", { value: "pending" }, "Pending only"), /* @__PURE__ */ React16.createElement("option", { value: "partial" }, "Partial only"), /* @__PURE__ */ React16.createElement("option", { value: "paid" }, "Paid"), /* @__PURE__ */ React16.createElement("option", { value: "all" }, "All")), /* @__PURE__ */ React16.createElement("form", { onSubmit: (e) => e.preventDefault(), className: "toolbar-search" }, /* @__PURE__ */ React16.createElement(Search6, { size: 15 }), /* @__PURE__ */ React16.createElement(Input, { value: q, onChange: (e) => setQ(e.target.value), placeholder: "Bill #, patient, UHID\u2026" })), /* @__PURE__ */ React16.createElement(Input, { type: "date", className: "toolbar-date", value: from, onChange: (e) => setFrom(e.target.value) }), /* @__PURE__ */ React16.createElement("span", { className: "range-dash" }, "\u2192"), /* @__PURE__ */ React16.createElement(Input, { type: "date", className: "toolbar-date", value: to, onChange: (e) => setTo(e.target.value) })), /* @__PURE__ */ React16.createElement(
     DataTable,
     {
       columns: [
@@ -7925,7 +8024,9 @@ function MedFormModal({ open, onClose, editing }) {
     }
   }, [open, editing]);
   const set = (k) => (e) => setF((x) => ({ ...x, [k]: e.target.value }));
-  const save = async () => {
+  const save = async (e) => {
+    if (e && e.preventDefault) e.preventDefault();
+    if (busy) return;
     setErr("");
     if (!f.name.trim()) {
       setErr("Medicine name is required");
@@ -7951,8 +8052,8 @@ function MedFormModal({ open, onClose, editing }) {
         pushToast("success", `${f.name} added to the medicine master`);
       }
       onClose();
-    } catch (e) {
-      setErr(e.message);
+    } catch (e2) {
+      setErr(e2.message);
     } finally {
       setBusy(false);
     }
@@ -7962,9 +8063,10 @@ function MedFormModal({ open, onClose, editing }) {
     {
       open,
       onClose,
+      onSubmit: save,
       title: editing ? `Edit ${editing.name}` : "Add Medicine",
       width: "lg",
-      footer: /* @__PURE__ */ React17.createElement(React17.Fragment, null, /* @__PURE__ */ React17.createElement(Btn, { variant: "ghost", onClick: onClose }, "Cancel"), /* @__PURE__ */ React17.createElement(Btn, { variant: "accent", onClick: save, disabled: busy }, busy ? "Saving\u2026" : editing ? "Save changes" : "Add medicine"))
+      footer: /* @__PURE__ */ React17.createElement(React17.Fragment, null, /* @__PURE__ */ React17.createElement(Btn, { variant: "ghost", onClick: onClose }, "Cancel"), /* @__PURE__ */ React17.createElement(Btn, { type: "submit", variant: "accent", disabled: busy }, busy ? "Saving\u2026" : editing ? "Save changes" : "Add medicine"))
     },
     err && /* @__PURE__ */ React17.createElement("div", { className: "form-alert" }, err),
     /* @__PURE__ */ React17.createElement("div", { className: "form-grid" }, /* @__PURE__ */ React17.createElement(Field, { label: "Medicine Name (Brand)", required: true, className: "fg-2" }, /* @__PURE__ */ React17.createElement(Input, { value: f.name, onChange: set("name"), placeholder: "e.g. Dolo 650" })), /* @__PURE__ */ React17.createElement(Field, { label: "Generic Name", className: "fg-2" }, /* @__PURE__ */ React17.createElement(Input, { value: f.generic, onChange: set("generic"), placeholder: "e.g. Paracetamol 650mg" })), /* @__PURE__ */ React17.createElement(Field, { label: "Category" }, /* @__PURE__ */ React17.createElement(Select, { value: f.category || "", onChange: set("category") }, /* @__PURE__ */ React17.createElement("option", { value: "" }, "Select category\u2026"), (cats || []).map((c) => /* @__PURE__ */ React17.createElement("option", { key: c.id, value: c.name }, c.name)))), /* @__PURE__ */ React17.createElement(Field, { label: "Type" }, /* @__PURE__ */ React17.createElement(Select, { value: f.type, onChange: set("type") }, MEDICINE_TYPES.map((t) => /* @__PURE__ */ React17.createElement("option", { key: t }, t)))), /* @__PURE__ */ React17.createElement(Field, { label: "Strength" }, /* @__PURE__ */ React17.createElement(Input, { value: f.strength, onChange: set("strength"), placeholder: "e.g. 650 mg" })), /* @__PURE__ */ React17.createElement(Field, { label: "Unit" }, /* @__PURE__ */ React17.createElement(Input, { value: f.unit, onChange: set("unit"), placeholder: "strip / bottle / vial" })), /* @__PURE__ */ React17.createElement(Field, { label: "Purchase Price (\u20B9)" }, /* @__PURE__ */ React17.createElement(Input, { type: "number", min: "0", step: "0.01", value: f.purchase_price, onChange: set("purchase_price") })), /* @__PURE__ */ React17.createElement(Field, { label: "Selling Price (\u20B9)", required: true }, /* @__PURE__ */ React17.createElement(Input, { type: "number", min: "0", step: "0.01", value: f.selling_price, onChange: set("selling_price") })), /* @__PURE__ */ React17.createElement(Field, { label: "Minimum Stock Level", hint: `Default: ${settings.low_stock_default}` }, /* @__PURE__ */ React17.createElement(Input, { type: "number", min: "0", value: f.min_stock, onChange: set("min_stock") })), /* @__PURE__ */ React17.createElement(Field, { label: "Storage Location" }, /* @__PURE__ */ React17.createElement(Input, { value: f.location, onChange: set("location"), placeholder: "e.g. Shelf A-2 / Fridge" })), /* @__PURE__ */ React17.createElement(Field, { label: "Description", className: "fg-2" }, /* @__PURE__ */ React17.createElement(Textarea, { rows: 2, value: f.description, onChange: set("description") })))
@@ -7981,7 +8083,9 @@ function CategoryModal({ open, onClose, editing }) {
       setErr("");
     }
   }, [open, editing]);
-  const save = async () => {
+  const save = async (e) => {
+    if (e && e.preventDefault) e.preventDefault();
+    if (busy) return;
     setErr("");
     if (!name.trim()) {
       setErr("Category name is required");
@@ -7997,8 +8101,8 @@ function CategoryModal({ open, onClose, editing }) {
         pushToast("success", `Category ${name.trim()} added`);
       }
       onClose();
-    } catch (e) {
-      setErr(e.message);
+    } catch (e2) {
+      setErr(e2.message);
     } finally {
       setBusy(false);
     }
@@ -8008,9 +8112,10 @@ function CategoryModal({ open, onClose, editing }) {
     {
       open,
       onClose,
+      onSubmit: save,
       title: editing ? `Edit Category` : "Add Medicine Category",
       width: "sm",
-      footer: /* @__PURE__ */ React17.createElement(React17.Fragment, null, /* @__PURE__ */ React17.createElement(Btn, { variant: "ghost", onClick: onClose }, "Cancel"), /* @__PURE__ */ React17.createElement(Btn, { variant: "accent", onClick: save, disabled: busy }, busy ? "Saving\u2026" : "Save Category"))
+      footer: /* @__PURE__ */ React17.createElement(React17.Fragment, null, /* @__PURE__ */ React17.createElement(Btn, { variant: "ghost", onClick: onClose }, "Cancel"), /* @__PURE__ */ React17.createElement(Btn, { type: "submit", variant: "accent", disabled: busy }, busy ? "Saving\u2026" : "Save Category"))
     },
     err && /* @__PURE__ */ React17.createElement("div", { className: "form-alert" }, err),
     /* @__PURE__ */ React17.createElement(Field, { label: "Category Name", required: true }, /* @__PURE__ */ React17.createElement(Input, { value: name, onChange: (e) => setName(e.target.value), placeholder: "e.g. Antibiotics", autoFocus: true }))
@@ -8114,7 +8219,7 @@ function Medicines() {
         { key: "categories", label: "Medicine Categories", badge: cats?.length }
       ]
     }
-  ), activeTab === "medicines" && /* @__PURE__ */ React17.createElement(Card, null, /* @__PURE__ */ React17.createElement("div", { className: "toolbar" }, /* @__PURE__ */ React17.createElement("div", { className: "toolbar-search grow" }, /* @__PURE__ */ React17.createElement(Search7, { size: 15 }), /* @__PURE__ */ React17.createElement("input", { className: "input", placeholder: "Search name, generic or code\u2026", value: q, onChange: (e) => setQ(e.target.value) })), /* @__PURE__ */ React17.createElement(Select, { value: catF, onChange: (e) => setCatF(e.target.value), className: "toolbar-select" }, /* @__PURE__ */ React17.createElement("option", { value: "" }, "All categories"), (cats || []).map((c) => /* @__PURE__ */ React17.createElement("option", { key: c.id, value: c.name }, c.name))), /* @__PURE__ */ React17.createElement(Select, { value: typeF, onChange: (e) => setTypeF(e.target.value), className: "toolbar-select" }, /* @__PURE__ */ React17.createElement("option", { value: "" }, "All types"), MEDICINE_TYPES.map((t) => /* @__PURE__ */ React17.createElement("option", { key: t }, t))), /* @__PURE__ */ React17.createElement(Select, { value: statusF, onChange: (e) => setStatusF(e.target.value), className: "toolbar-select" }, /* @__PURE__ */ React17.createElement("option", { value: "active" }, "Active"), /* @__PURE__ */ React17.createElement("option", { value: "archived" }, "Archived"), /* @__PURE__ */ React17.createElement("option", { value: "all" }, "All"))), /* @__PURE__ */ React17.createElement(
+  ), activeTab === "medicines" && /* @__PURE__ */ React17.createElement(Card, null, /* @__PURE__ */ React17.createElement("div", { className: "toolbar" }, /* @__PURE__ */ React17.createElement("form", { onSubmit: (e) => e.preventDefault(), className: "toolbar-search grow" }, /* @__PURE__ */ React17.createElement(Search7, { size: 15 }), /* @__PURE__ */ React17.createElement("input", { className: "input", placeholder: "Search name, generic or code\u2026", value: q, onChange: (e) => setQ(e.target.value) })), /* @__PURE__ */ React17.createElement(Select, { value: catF, onChange: (e) => setCatF(e.target.value), className: "toolbar-select" }, /* @__PURE__ */ React17.createElement("option", { value: "" }, "All categories"), (cats || []).map((c) => /* @__PURE__ */ React17.createElement("option", { key: c.id, value: c.name }, c.name))), /* @__PURE__ */ React17.createElement(Select, { value: typeF, onChange: (e) => setTypeF(e.target.value), className: "toolbar-select" }, /* @__PURE__ */ React17.createElement("option", { value: "" }, "All types"), MEDICINE_TYPES.map((t) => /* @__PURE__ */ React17.createElement("option", { key: t }, t))), /* @__PURE__ */ React17.createElement(Select, { value: statusF, onChange: (e) => setStatusF(e.target.value), className: "toolbar-select" }, /* @__PURE__ */ React17.createElement("option", { value: "active" }, "Active"), /* @__PURE__ */ React17.createElement("option", { value: "archived" }, "Archived"), /* @__PURE__ */ React17.createElement("option", { value: "all" }, "All"))), /* @__PURE__ */ React17.createElement(
     DataTable,
     {
       columns: [
@@ -8332,7 +8437,9 @@ function AdjustModal({ open, onClose }) {
       setErr("");
     }
   }, [open]);
-  const save = async () => {
+  const save = async (e) => {
+    if (e && e.preventDefault) e.preventDefault();
+    if (busy) return;
     setErr("");
     if (!med) {
       setErr("Select a medicine");
@@ -8349,8 +8456,8 @@ function AdjustModal({ open, onClose }) {
       await syncAlerts(user3.id).catch(() => {
       });
       onClose();
-    } catch (e) {
-      setErr(e.message);
+    } catch (e2) {
+      setErr(e2.message);
     } finally {
       setBusy(false);
     }
@@ -8360,10 +8467,11 @@ function AdjustModal({ open, onClose }) {
     {
       open,
       onClose,
+      onSubmit: save,
       title: "Stock Adjustment",
       width: "md",
       sub: "Creates an immutable ledger entry. Stock can never go negative.",
-      footer: /* @__PURE__ */ React18.createElement(React18.Fragment, null, /* @__PURE__ */ React18.createElement(Btn, { variant: "ghost", onClick: onClose }, "Cancel"), /* @__PURE__ */ React18.createElement(Btn, { variant: "primary", onClick: save, disabled: busy }, busy ? "Saving\u2026" : "Record adjustment"))
+      footer: /* @__PURE__ */ React18.createElement(React18.Fragment, null, /* @__PURE__ */ React18.createElement(Btn, { variant: "ghost", onClick: onClose }, "Cancel"), /* @__PURE__ */ React18.createElement(Btn, { type: "submit", variant: "primary", disabled: busy }, busy ? "Saving\u2026" : "Record adjustment"))
     },
     err && /* @__PURE__ */ React18.createElement("div", { className: "form-alert" }, err),
     /* @__PURE__ */ React18.createElement("div", { className: "stack" }, /* @__PURE__ */ React18.createElement(Field, { label: "Medicine", required: true }, /* @__PURE__ */ React18.createElement(Select, { value: med?.id || "", onChange: (e) => {
@@ -8403,7 +8511,9 @@ function BatchModal({ open, onClose, editing }) {
       setErr("");
     }
   }, [open, editing, meds]);
-  const save = async () => {
+  const save = async (e) => {
+    if (e && e.preventDefault) e.preventDefault();
+    if (busy) return;
     setErr("");
     if (!medId) {
       setErr("Select a medicine");
@@ -8439,8 +8549,8 @@ function BatchModal({ open, onClose, editing }) {
         pushToast("success", `Batch ${batchNo} created`);
       }
       onClose();
-    } catch (e) {
-      setErr(e.message);
+    } catch (e2) {
+      setErr(e2.message);
     } finally {
       setBusy(false);
     }
@@ -8450,9 +8560,10 @@ function BatchModal({ open, onClose, editing }) {
     {
       open,
       onClose,
+      onSubmit: save,
       title: editing ? `Edit Batch ${editing.batch_no}` : "Add Medicine Batch",
       width: "md",
-      footer: /* @__PURE__ */ React18.createElement(React18.Fragment, null, /* @__PURE__ */ React18.createElement(Btn, { variant: "ghost", onClick: onClose }, "Cancel"), /* @__PURE__ */ React18.createElement(Btn, { variant: "accent", onClick: save, disabled: busy }, busy ? "Saving\u2026" : editing ? "Save changes" : "Add batch"))
+      footer: /* @__PURE__ */ React18.createElement(React18.Fragment, null, /* @__PURE__ */ React18.createElement(Btn, { variant: "ghost", onClick: onClose }, "Cancel"), /* @__PURE__ */ React18.createElement(Btn, { type: "submit", variant: "accent", disabled: busy }, busy ? "Saving\u2026" : editing ? "Save changes" : "Add batch"))
     },
     err && /* @__PURE__ */ React18.createElement("div", { className: "form-alert" }, err),
     /* @__PURE__ */ React18.createElement("div", { className: "form-grid" }, /* @__PURE__ */ React18.createElement(Field, { label: "Medicine", required: true, className: "fg-2" }, /* @__PURE__ */ React18.createElement(Select, { value: medId, onChange: (e) => setMedId(e.target.value), disabled: !!editing }, (meds || []).map((m) => /* @__PURE__ */ React18.createElement("option", { key: m.id, value: m.id }, m.name, " (", m.type, ")")))), /* @__PURE__ */ React18.createElement(Field, { label: "Batch Number", required: true }, /* @__PURE__ */ React18.createElement(Input, { value: batchNo, onChange: (e) => setBatchNo(e.target.value), placeholder: "BATCH-01" })), !editing && /* @__PURE__ */ React18.createElement(Field, { label: "Quantity (initial stock)", required: true }, /* @__PURE__ */ React18.createElement(Input, { type: "number", min: "1", value: qty, onChange: (e) => setQty(e.target.value) })), /* @__PURE__ */ React18.createElement(Field, { label: "Mfg Date" }, /* @__PURE__ */ React18.createElement(Input, { type: "date", value: mfgDate, onChange: (e) => setMfgDate(e.target.value) })), /* @__PURE__ */ React18.createElement(Field, { label: "Expiry Date", required: true }, /* @__PURE__ */ React18.createElement(Input, { type: "date", value: expiry, onChange: (e) => setExpiry(e.target.value) })), /* @__PURE__ */ React18.createElement(Field, { label: "Purchase Price (\u20B9)" }, /* @__PURE__ */ React18.createElement(Input, { type: "number", min: "0", step: "0.01", value: price, onChange: (e) => setPrice(e.target.value), placeholder: "0.00" })))
@@ -8737,7 +8848,9 @@ function ReturnModal({ open, onClose }) {
     setBill(found || null);
     setRetQty({});
   }, [billId, returnableBills]);
-  const save = async () => {
+  const save = async (e) => {
+    if (e && e.preventDefault) e.preventDefault();
+    if (busy) return;
     setErr("");
     if (!bill2) {
       setErr("Select a bill");
@@ -8755,8 +8868,8 @@ function ReturnModal({ open, onClose }) {
       await syncAlerts2(user3.id).catch(() => {
       });
       onClose();
-    } catch (e) {
-      setErr(e.message);
+    } catch (e2) {
+      setErr(e2.message);
     } finally {
       setBusy(false);
     }
@@ -8766,10 +8879,11 @@ function ReturnModal({ open, onClose }) {
     {
       open,
       onClose,
+      onSubmit: save,
       title: "New Return",
       width: "lg",
       sub: "Medicines returned by the patient are restored to their original batches (RETURN ledger entry)",
-      footer: /* @__PURE__ */ React19.createElement(React19.Fragment, null, /* @__PURE__ */ React19.createElement(Btn, { variant: "ghost", onClick: onClose }, "Cancel"), /* @__PURE__ */ React19.createElement(Btn, { variant: "danger", onClick: save, disabled: busy }, busy ? "Processing\u2026" : "Process Return"))
+      footer: /* @__PURE__ */ React19.createElement(React19.Fragment, null, /* @__PURE__ */ React19.createElement(Btn, { variant: "ghost", onClick: onClose }, "Cancel"), /* @__PURE__ */ React19.createElement(Btn, { type: "submit", variant: "danger", disabled: busy }, busy ? "Processing\u2026" : "Process Return"))
     },
     err && /* @__PURE__ */ React19.createElement("div", { className: "form-alert" }, err),
     /* @__PURE__ */ React19.createElement("div", { className: "stack" }, /* @__PURE__ */ React19.createElement(Field, { label: "Bill", required: true }, /* @__PURE__ */ React19.createElement(Select, { value: billId, onChange: (e) => setBillId(e.target.value) }, /* @__PURE__ */ React19.createElement("option", { value: "" }, "Select bill with medicine items\u2026"), (returnableBills || []).map((x) => /* @__PURE__ */ React19.createElement("option", { key: x.bill.id, value: x.bill.id }, x.bill.bill_no, " \xB7 ", x.bill.patient_name, " \xB7 ", fmtDate(x.bill.date), " \xB7 ", fmtMoney(x.bill.total, settings.currency))))), bill2 && /* @__PURE__ */ React19.createElement("div", { className: "ret-lines" }, bill2.medLines.map((l) => {
@@ -8795,7 +8909,7 @@ function Returns() {
       sub: "Patient medicine returns \u2014 restock to original batches with optional refund",
       actions: /* @__PURE__ */ React19.createElement(Btn, { variant: "accent", icon: Plus9, onClick: () => setModal(true) }, "+ New Return")
     }
-  ), /* @__PURE__ */ React19.createElement(Card, null, /* @__PURE__ */ React19.createElement("div", { className: "toolbar" }, /* @__PURE__ */ React19.createElement("input", { className: "input", placeholder: "Search return #, bill #, patient\u2026", value: q, onChange: (e) => setQ(e.target.value) })), /* @__PURE__ */ React19.createElement(
+  ), /* @__PURE__ */ React19.createElement(Card, null, /* @__PURE__ */ React19.createElement("div", { className: "toolbar" }, /* @__PURE__ */ React19.createElement("form", { onSubmit: (e) => e.preventDefault(), style: { width: "100%" } }, /* @__PURE__ */ React19.createElement("input", { className: "input", placeholder: "Search return #, bill #, patient\u2026", value: q, onChange: (e) => setQ(e.target.value) }))), /* @__PURE__ */ React19.createElement(
     DataTable,
     {
       columns: [
@@ -8926,7 +9040,9 @@ function Expenses() {
     if (catF) list = list.filter((e) => e.category === catF);
     return list.sort((a, b) => b.date.localeCompare(a.date));
   }, [statusF, catF]);
-  const save = async () => {
+  const save = async (e) => {
+    if (e && e.preventDefault) e.preventDefault();
+    if (busy) return;
     setErr("");
     if (!(Number(f.amount) > 0)) {
       setErr("Enter a valid amount");
@@ -8938,8 +9054,8 @@ function Expenses() {
       pushToast("success", "Expense recorded");
       setModal(false);
       setF({ category: "Rent", amount: "", date: dkey(/* @__PURE__ */ new Date()), description: "", method: "Cash" });
-    } catch (e) {
-      setErr(e.message);
+    } catch (e2) {
+      setErr(e2.message);
     } finally {
       setBusy(false);
     }
@@ -8998,9 +9114,10 @@ function Expenses() {
     {
       open: modal,
       onClose: () => setModal(false),
+      onSubmit: save,
       title: "Record Expense",
       width: "md",
-      footer: /* @__PURE__ */ React20.createElement(React20.Fragment, null, /* @__PURE__ */ React20.createElement(Btn, { variant: "ghost", onClick: () => setModal(false) }, "Cancel"), /* @__PURE__ */ React20.createElement(Btn, { variant: "accent", onClick: save, disabled: busy }, busy ? "Saving\u2026" : "Save expense"))
+      footer: /* @__PURE__ */ React20.createElement(React20.Fragment, null, /* @__PURE__ */ React20.createElement(Btn, { variant: "ghost", onClick: () => setModal(false) }, "Cancel"), /* @__PURE__ */ React20.createElement(Btn, { type: "submit", variant: "accent", disabled: busy }, busy ? "Saving\u2026" : "Save expense"))
     },
     err && /* @__PURE__ */ React20.createElement("div", { className: "form-alert" }, err),
     /* @__PURE__ */ React20.createElement("div", { className: "form-grid" }, /* @__PURE__ */ React20.createElement(Field, { label: "Category", required: true }, /* @__PURE__ */ React20.createElement(Select, { value: f.category, onChange: (e) => setF((x) => ({ ...x, category: e.target.value })) }, EXPENSE_CATEGORIES.map((c) => /* @__PURE__ */ React20.createElement("option", { key: c }, c)))), /* @__PURE__ */ React20.createElement(Field, { label: "Amount (\u20B9)", required: true }, /* @__PURE__ */ React20.createElement(Input, { type: "number", min: "0", step: "0.01", value: f.amount, onChange: (e) => setF((x) => ({ ...x, amount: e.target.value })) })), /* @__PURE__ */ React20.createElement(Field, { label: "Date" }, /* @__PURE__ */ React20.createElement(Input, { type: "date", value: f.date, onChange: (e) => setF((x) => ({ ...x, date: e.target.value })) })), /* @__PURE__ */ React20.createElement(Field, { label: "Payment Method" }, /* @__PURE__ */ React20.createElement(Select, { value: f.method, onChange: (e) => setF((x) => ({ ...x, method: e.target.value })) }, ["Cash", "UPI", "Card", "Bank Transfer", "Other"].map((m) => /* @__PURE__ */ React20.createElement("option", { key: m }, m)))), /* @__PURE__ */ React20.createElement(Field, { label: "Description", className: "fg-2" }, /* @__PURE__ */ React20.createElement(Textarea, { rows: 2, value: f.description, onChange: (e) => setF((x) => ({ ...x, description: e.target.value })) })))
@@ -9149,7 +9266,7 @@ function PatientsTab({ from, to, setFrom, setTo, settings }) {
     },
     /* @__PURE__ */ React21.createElement(RangeBar, { from, to, setFrom, setTo }),
     data && /* @__PURE__ */ React21.createElement("div", { className: "rep-summary" }, /* @__PURE__ */ React21.createElement("span", { className: "cat-chip" }, /* @__PURE__ */ React21.createElement(UserPlus5, { size: 13 }), " New patients: ", /* @__PURE__ */ React21.createElement("b", null, data.new_patients.length)), /* @__PURE__ */ React21.createElement("span", { className: "cat-chip" }, /* @__PURE__ */ React21.createElement(Users3, { size: 13 }), " Unique patients visited: ", /* @__PURE__ */ React21.createElement("b", null, data.unique_visits)), /* @__PURE__ */ React21.createElement("span", { className: "cat-chip" }, "Total visits: ", /* @__PURE__ */ React21.createElement("b", null, data.total_visits)), /* @__PURE__ */ React21.createElement("span", { className: "cat-chip" }, /* @__PURE__ */ React21.createElement(RotateCcw, { size: 13 }), " Returning: ", /* @__PURE__ */ React21.createElement("b", null, data.returning.length))),
-    /* @__PURE__ */ React21.createElement("div", { style: { margin: "14px 0 8px 0", maxWidth: 360 } }, /* @__PURE__ */ React21.createElement(
+    /* @__PURE__ */ React21.createElement("form", { onSubmit: (e) => e.preventDefault(), style: { margin: "14px 0 8px 0", maxWidth: 360 } }, /* @__PURE__ */ React21.createElement(
       Input,
       {
         value: q,
@@ -9293,7 +9410,7 @@ function MedicinesTab({ from, to, setFrom, setTo, settings }) {
       settings
     });
   };
-  return /* @__PURE__ */ React21.createElement("div", { className: "rep-stacks" }, /* @__PURE__ */ React21.createElement("div", { style: { margin: "0 0 14px 0", maxWidth: 360 } }, /* @__PURE__ */ React21.createElement(
+  return /* @__PURE__ */ React21.createElement("div", { className: "rep-stacks" }, /* @__PURE__ */ React21.createElement("form", { onSubmit: (e) => e.preventDefault(), style: { margin: "0 0 14px 0", maxWidth: 360 } }, /* @__PURE__ */ React21.createElement(
     Input,
     {
       value: q,
@@ -9467,7 +9584,7 @@ function FinancialTab({ from, to, setFrom, setTo, settings }) {
         empty: /* @__PURE__ */ React21.createElement(EmptyState, { compact: true, icon: "\u{1F4B0}", title: "No expenses in range" })
       }
     ))),
-    /* @__PURE__ */ React21.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 14, marginBottom: 8, flexWrap: "wrap", gap: 8 } }, /* @__PURE__ */ React21.createElement("h4", { className: "sub-head", style: { margin: 0 } }, "Pending Payments (", filteredPending.length, ")"), /* @__PURE__ */ React21.createElement("div", { style: { maxWidth: 300, flex: 1 } }, /* @__PURE__ */ React21.createElement(
+    /* @__PURE__ */ React21.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 14, marginBottom: 8, flexWrap: "wrap", gap: 8 } }, /* @__PURE__ */ React21.createElement("h4", { className: "sub-head", style: { margin: 0 } }, "Pending Payments (", filteredPending.length, ")"), /* @__PURE__ */ React21.createElement("form", { onSubmit: (e) => e.preventDefault(), style: { maxWidth: 300, flex: 1 } }, /* @__PURE__ */ React21.createElement(
       Input,
       {
         value: q,
@@ -9610,7 +9727,9 @@ function DoctorModal({ open, onClose, editing }) {
     setError("");
   }, [open, editing]);
   const set = (key) => (event) => setForm((value) => ({ ...value, [key]: event.target.value }));
-  const save = async () => {
+  const save = async (e) => {
+    if (e && e.preventDefault) e.preventDefault();
+    if (busy) return;
     setError("");
     if (!form.name.trim()) {
       setError("Doctor name is required");
@@ -9622,8 +9741,8 @@ function DoctorModal({ open, onClose, editing }) {
       else await createDoctor(form, me.id);
       pushToast("success", `${form.name} ${editing ? "updated" : "added to doctors directory"}`);
       onClose();
-    } catch (e) {
-      setError(e.message);
+    } catch (e2) {
+      setError(e2.message);
     } finally {
       setBusy(false);
     }
@@ -9633,9 +9752,10 @@ function DoctorModal({ open, onClose, editing }) {
     {
       open,
       onClose,
+      onSubmit: save,
       title: editing ? `Edit ${editing.name}` : "Add Doctor",
       width: "md",
-      footer: /* @__PURE__ */ React23.createElement(React23.Fragment, null, /* @__PURE__ */ React23.createElement(Btn, { variant: "ghost", onClick: onClose }, "Cancel"), /* @__PURE__ */ React23.createElement(Btn, { variant: "accent", onClick: save, disabled: busy }, busy ? "Saving\u2026" : "Save Doctor"))
+      footer: /* @__PURE__ */ React23.createElement(React23.Fragment, null, /* @__PURE__ */ React23.createElement(Btn, { variant: "ghost", onClick: onClose }, "Cancel"), /* @__PURE__ */ React23.createElement(Btn, { type: "submit", variant: "accent", disabled: busy }, busy ? "Saving\u2026" : "Save Doctor"))
     },
     error && /* @__PURE__ */ React23.createElement("div", { className: "form-alert" }, error),
     /* @__PURE__ */ React23.createElement("div", { className: "form-grid" }, /* @__PURE__ */ React23.createElement(Field, { label: "Doctor Full Name", required: true, className: "fg-2" }, /* @__PURE__ */ React23.createElement(Input, { value: form.name, onChange: set("name") })), /* @__PURE__ */ React23.createElement(Field, { label: "Qualification" }, /* @__PURE__ */ React23.createElement(Input, { value: form.qualification, onChange: set("qualification") })), /* @__PURE__ */ React23.createElement(Field, { label: "Specialization" }, /* @__PURE__ */ React23.createElement(Input, { value: form.specialization, onChange: set("specialization") })), /* @__PURE__ */ React23.createElement(Field, { label: "Phone / Mobile" }, /* @__PURE__ */ React23.createElement(Input, { value: form.phone, onChange: set("phone") })), /* @__PURE__ */ React23.createElement(Field, { label: "Email Address" }, /* @__PURE__ */ React23.createElement(Input, { type: "email", value: form.email, onChange: set("email") })))
@@ -9723,8 +9843,13 @@ import {
   Trash2 as Trash211,
   Pencil as Pencil6
 } from "lucide-react";
-function Section({ icon: Icon, title, sub, children }) {
-  return /* @__PURE__ */ React24.createElement(Card, { title, sub, actions: /* @__PURE__ */ React24.createElement("span", { className: "set-ic" }, /* @__PURE__ */ React24.createElement(Icon, { size: 17 })) }, children);
+function Section({ icon: Icon, title, sub, onSubmit, children }) {
+  return /* @__PURE__ */ React24.createElement(Card, { title, sub, actions: /* @__PURE__ */ React24.createElement("span", { className: "set-ic" }, /* @__PURE__ */ React24.createElement(Icon, { size: 17 })) }, onSubmit ? /* @__PURE__ */ React24.createElement("form", { onSubmit: (e) => {
+    e.preventDefault();
+    const active = document.activeElement;
+    if (active && active.tagName === "TEXTAREA") return;
+    onSubmit(e);
+  } }, children) : children);
 }
 function SettingsPage() {
   const { settings, updateSettings, user: user3, pushToast, theme, setTheme, lang, setLang } = useApp();
@@ -9746,6 +9871,36 @@ function SettingsPage() {
   const logoRef = useRef3(null);
   const importRef = useRef3(null);
   const services = useLiveQuery17(() => db_default.services.toArray(), []) || [];
+  const saveService = async (e) => {
+    if (e && e.preventDefault) e.preventDefault();
+    if (serviceBusy || !serviceForm.name.trim() || !serviceForm.price) return;
+    setServiceBusy(true);
+    setServiceError("");
+    try {
+      if (editingService) {
+        await updateService(editingService.id, {
+          name: serviceForm.name,
+          type: serviceForm.type,
+          price: Number(serviceForm.price),
+          description: serviceForm.description
+        }, user3?.id);
+        pushToast("success", "Service updated successfully");
+      } else {
+        await createService({
+          name: serviceForm.name,
+          type: serviceForm.type,
+          price: Number(serviceForm.price),
+          description: serviceForm.description
+        }, user3?.id);
+        pushToast("success", "New service added");
+      }
+      setServiceModal(false);
+    } catch (err) {
+      setServiceError(err.message);
+    } finally {
+      setServiceBusy(false);
+    }
+  };
   useEffect14(() => {
     const t = params.get("tab");
     if (t) setTab(t);
@@ -9874,7 +10029,7 @@ function SettingsPage() {
     const pad = Number(f.uhid_padding) || 6;
     return `${(f.uhid_prefix || "HC").toUpperCase()}${f.uhid_include_year ? `-${year}` : ""}-${String(n).padStart(pad, "0")}`;
   })();
-  return /* @__PURE__ */ React24.createElement("div", { className: "page" }, /* @__PURE__ */ React24.createElement(PageHeader, { title: "Settings", sub: "Configure the clinic profile, numbering, inventory rules and app behaviour" }), msg && /* @__PURE__ */ React24.createElement("div", { className: "set-msg" }, "\u2713 ", msg), /* @__PURE__ */ React24.createElement("div", { className: "tabs rep-tabs" }, tabDefs.map((t) => /* @__PURE__ */ React24.createElement("button", { key: t.key, className: `tab ${tab === t.key ? "tab-active" : ""}`, onClick: () => setTab(t.key) }, /* @__PURE__ */ React24.createElement(t.icon, { size: 14 }), " ", t.label))), tab === "clinic" && /* @__PURE__ */ React24.createElement(Section, { icon: Building2, title: "Clinic Profile", sub: "Shown on payment receipts and prescription letterheads" }, /* @__PURE__ */ React24.createElement("div", { className: "form-grid" }, /* @__PURE__ */ React24.createElement(Field, { label: "Clinic Name", className: "fg-2" }, /* @__PURE__ */ React24.createElement(Input, { value: f.clinic_name, onChange: set("clinic_name") })), /* @__PURE__ */ React24.createElement(Field, { label: "Tagline", className: "fg-2" }, /* @__PURE__ */ React24.createElement(Input, { value: f.tagline, onChange: set("tagline") })), /* @__PURE__ */ React24.createElement(Field, { label: "Doctor Name" }, /* @__PURE__ */ React24.createElement(Input, { value: f.doctor_name, onChange: set("doctor_name") })), /* @__PURE__ */ React24.createElement(Field, { label: "Doctor Phone" }, /* @__PURE__ */ React24.createElement(Input, { value: f.doctor_phone, onChange: set("doctor_phone"), placeholder: "e.g. 9913974000" })), /* @__PURE__ */ React24.createElement(Field, { label: "Qualifications" }, /* @__PURE__ */ React24.createElement(Input, { value: f.doctor_qual, onChange: set("doctor_qual") })), /* @__PURE__ */ React24.createElement(Field, { label: "Role" }, /* @__PURE__ */ React24.createElement(Input, { value: f.doctor_role, onChange: set("doctor_role") })), /* @__PURE__ */ React24.createElement(Field, { label: "Phone" }, /* @__PURE__ */ React24.createElement(Input, { value: f.phone, onChange: set("phone") })), /* @__PURE__ */ React24.createElement(Field, { label: "Email", className: "fg-2" }, /* @__PURE__ */ React24.createElement(Input, { value: f.email, onChange: set("email") })), /* @__PURE__ */ React24.createElement(Field, { label: "Address", className: "fg-2" }, /* @__PURE__ */ React24.createElement(Textarea, { rows: 2, value: f.address, onChange: set("address") })), /* @__PURE__ */ React24.createElement(Field, { label: "Receipt Footer", className: "fg-2" }, /* @__PURE__ */ React24.createElement(Input, { value: f.receipt_footer, onChange: set("receipt_footer") })), /* @__PURE__ */ React24.createElement(Field, { label: "Logo", hint: "PNG/JPG \u2014 used on A4 documents" }, /* @__PURE__ */ React24.createElement("div", { className: "logo-row" }, f.logo ? /* @__PURE__ */ React24.createElement("img", { src: f.logo, alt: "logo", className: "logo-preview" }) : /* @__PURE__ */ React24.createElement(Logo, { size: 44 }), /* @__PURE__ */ React24.createElement("input", { type: "file", accept: "image/*", hidden: true, ref: logoRef, onChange: (e) => e.target.files?.[0] && uploadLogo(e.target.files[0]) }), /* @__PURE__ */ React24.createElement(Btn, { size: "sm", variant: "ghost", onClick: () => logoRef.current?.click() }, "Upload"), f.logo && /* @__PURE__ */ React24.createElement(Btn, { size: "sm", variant: "ghost", onClick: () => setF((x) => ({ ...x, logo: "" })) }, "Remove")))), /* @__PURE__ */ React24.createElement("div", { className: "set-save" }, /* @__PURE__ */ React24.createElement(Btn, { variant: "accent", disabled: busy, onClick: () => save(["clinic_name", "tagline", "doctor_name", "doctor_phone", "doctor_qual", "doctor_role", "address", "phone", "email", "receipt_footer", "logo"]) }, busy ? "Saving\u2026" : "Save clinic profile"))), tab === "billing" && /* @__PURE__ */ React24.createElement(Section, { icon: ReceiptText6, title: "Billing Settings", sub: "Currency, bill numbering and default payment method" }, /* @__PURE__ */ React24.createElement("div", { className: "form-grid" }, /* @__PURE__ */ React24.createElement(Field, { label: "Currency Symbol" }, /* @__PURE__ */ React24.createElement(Input, { value: f.currency, onChange: set("currency") })), /* @__PURE__ */ React24.createElement(Field, { label: "Bill Number Prefix" }, /* @__PURE__ */ React24.createElement(Input, { value: f.bill_prefix, onChange: set("bill_prefix") })), /* @__PURE__ */ React24.createElement(Field, { label: "Bill Number Padding" }, /* @__PURE__ */ React24.createElement(Input, { type: "number", min: "3", max: "10", value: f.bill_padding, onChange: set("bill_padding") })), /* @__PURE__ */ React24.createElement(Field, { label: "Default Payment Method" }, /* @__PURE__ */ React24.createElement(Select, { value: f.default_payment, onChange: set("default_payment") }, ["Cash", "UPI", "Card", "Bank Transfer", "Other"].map((m) => /* @__PURE__ */ React24.createElement("option", { key: m }, m)))), /* @__PURE__ */ React24.createElement("div", { className: "set-preview" }, /* @__PURE__ */ React24.createElement("span", { className: "set-preview-label" }, "Next bill number preview"), /* @__PURE__ */ React24.createElement(Badge, { tone: "navy", className: "set-preview-badge" }, f.bill_prefix, "-", (/* @__PURE__ */ new Date()).getFullYear(), "-000001"))), /* @__PURE__ */ React24.createElement("div", { className: "set-save" }, /* @__PURE__ */ React24.createElement(Btn, { variant: "accent", disabled: busy, onClick: () => save(["currency", "bill_prefix", "bill_padding", "default_payment"]) }, busy ? "Saving\u2026" : "Save billing settings")), /* @__PURE__ */ React24.createElement("div", { style: { marginTop: 28, paddingTop: 20, borderTop: "1px solid var(--border)" } }, /* @__PURE__ */ React24.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 } }, /* @__PURE__ */ React24.createElement("div", null, /* @__PURE__ */ React24.createElement("h4", { style: { margin: 0, fontSize: 15, fontWeight: 700 } }, "Clinic Billable Services"), /* @__PURE__ */ React24.createElement("div", { style: { fontSize: 12, color: "var(--text-3)" } }, "Standard consultation fees, laboratory tests, and clinical procedures")), /* @__PURE__ */ React24.createElement(
+  return /* @__PURE__ */ React24.createElement("div", { className: "page" }, /* @__PURE__ */ React24.createElement(PageHeader, { title: "Settings", sub: "Configure the clinic profile, numbering, inventory rules and app behaviour" }), msg && /* @__PURE__ */ React24.createElement("div", { className: "set-msg" }, "\u2713 ", msg), /* @__PURE__ */ React24.createElement("div", { className: "tabs rep-tabs" }, tabDefs.map((t) => /* @__PURE__ */ React24.createElement("button", { key: t.key, className: `tab ${tab === t.key ? "tab-active" : ""}`, onClick: () => setTab(t.key) }, /* @__PURE__ */ React24.createElement(t.icon, { size: 14 }), " ", t.label))), tab === "clinic" && /* @__PURE__ */ React24.createElement(Section, { icon: Building2, title: "Clinic Profile", sub: "Shown on payment receipts and prescription letterheads", onSubmit: () => save(["clinic_name", "tagline", "doctor_name", "doctor_phone", "doctor_qual", "doctor_role", "address", "phone", "email", "receipt_footer", "logo"]) }, /* @__PURE__ */ React24.createElement("div", { className: "form-grid" }, /* @__PURE__ */ React24.createElement(Field, { label: "Clinic Name", className: "fg-2" }, /* @__PURE__ */ React24.createElement(Input, { value: f.clinic_name, onChange: set("clinic_name") })), /* @__PURE__ */ React24.createElement(Field, { label: "Tagline", className: "fg-2" }, /* @__PURE__ */ React24.createElement(Input, { value: f.tagline, onChange: set("tagline") })), /* @__PURE__ */ React24.createElement(Field, { label: "Doctor Name" }, /* @__PURE__ */ React24.createElement(Input, { value: f.doctor_name, onChange: set("doctor_name") })), /* @__PURE__ */ React24.createElement(Field, { label: "Doctor Phone" }, /* @__PURE__ */ React24.createElement(Input, { value: f.doctor_phone, onChange: set("doctor_phone"), placeholder: "e.g. 9913974000" })), /* @__PURE__ */ React24.createElement(Field, { label: "Qualifications" }, /* @__PURE__ */ React24.createElement(Input, { value: f.doctor_qual, onChange: set("doctor_qual") })), /* @__PURE__ */ React24.createElement(Field, { label: "Role" }, /* @__PURE__ */ React24.createElement(Input, { value: f.doctor_role, onChange: set("doctor_role") })), /* @__PURE__ */ React24.createElement(Field, { label: "Phone" }, /* @__PURE__ */ React24.createElement(Input, { value: f.phone, onChange: set("phone") })), /* @__PURE__ */ React24.createElement(Field, { label: "Email", className: "fg-2" }, /* @__PURE__ */ React24.createElement(Input, { value: f.email, onChange: set("email") })), /* @__PURE__ */ React24.createElement(Field, { label: "Address", className: "fg-2" }, /* @__PURE__ */ React24.createElement(Textarea, { rows: 2, value: f.address, onChange: set("address") })), /* @__PURE__ */ React24.createElement(Field, { label: "Receipt Footer", className: "fg-2" }, /* @__PURE__ */ React24.createElement(Input, { value: f.receipt_footer, onChange: set("receipt_footer") })), /* @__PURE__ */ React24.createElement(Field, { label: "Logo", hint: "PNG/JPG \u2014 used on A4 documents" }, /* @__PURE__ */ React24.createElement("div", { className: "logo-row" }, f.logo ? /* @__PURE__ */ React24.createElement("img", { src: f.logo, alt: "logo", className: "logo-preview" }) : /* @__PURE__ */ React24.createElement(Logo, { size: 44 }), /* @__PURE__ */ React24.createElement("input", { type: "file", accept: "image/*", hidden: true, ref: logoRef, onChange: (e) => e.target.files?.[0] && uploadLogo(e.target.files[0]) }), /* @__PURE__ */ React24.createElement(Btn, { size: "sm", variant: "ghost", onClick: () => logoRef.current?.click() }, "Upload"), f.logo && /* @__PURE__ */ React24.createElement(Btn, { size: "sm", variant: "ghost", onClick: () => setF((x) => ({ ...x, logo: "" })) }, "Remove")))), /* @__PURE__ */ React24.createElement("div", { className: "set-save" }, /* @__PURE__ */ React24.createElement(Btn, { type: "submit", variant: "accent", disabled: busy }, busy ? "Saving\u2026" : "Save clinic profile"))), tab === "billing" && /* @__PURE__ */ React24.createElement(Section, { icon: ReceiptText6, title: "Billing Settings", sub: "Currency, bill numbering and default payment method", onSubmit: () => save(["currency", "bill_prefix", "bill_padding", "default_payment"]) }, /* @__PURE__ */ React24.createElement("div", { className: "form-grid" }, /* @__PURE__ */ React24.createElement(Field, { label: "Currency Symbol" }, /* @__PURE__ */ React24.createElement(Input, { value: f.currency, onChange: set("currency") })), /* @__PURE__ */ React24.createElement(Field, { label: "Bill Number Prefix" }, /* @__PURE__ */ React24.createElement(Input, { value: f.bill_prefix, onChange: set("bill_prefix") })), /* @__PURE__ */ React24.createElement(Field, { label: "Bill Number Padding" }, /* @__PURE__ */ React24.createElement(Input, { type: "number", min: "3", max: "10", value: f.bill_padding, onChange: set("bill_padding") })), /* @__PURE__ */ React24.createElement(Field, { label: "Default Payment Method" }, /* @__PURE__ */ React24.createElement(Select, { value: f.default_payment, onChange: set("default_payment") }, ["Cash", "UPI", "Card", "Bank Transfer", "Other"].map((m) => /* @__PURE__ */ React24.createElement("option", { key: m }, m)))), /* @__PURE__ */ React24.createElement("div", { className: "set-preview" }, /* @__PURE__ */ React24.createElement("span", { className: "set-preview-label" }, "Next bill number preview"), /* @__PURE__ */ React24.createElement(Badge, { tone: "navy", className: "set-preview-badge" }, f.bill_prefix, "-", (/* @__PURE__ */ new Date()).getFullYear(), "-000001"))), /* @__PURE__ */ React24.createElement("div", { className: "set-save" }, /* @__PURE__ */ React24.createElement(Btn, { type: "submit", variant: "accent", disabled: busy }, busy ? "Saving\u2026" : "Save billing settings")), /* @__PURE__ */ React24.createElement("div", { style: { marginTop: 28, paddingTop: 20, borderTop: "1px solid var(--border)" } }, /* @__PURE__ */ React24.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 } }, /* @__PURE__ */ React24.createElement("div", null, /* @__PURE__ */ React24.createElement("h4", { style: { margin: 0, fontSize: 15, fontWeight: 700 } }, "Clinic Billable Services"), /* @__PURE__ */ React24.createElement("div", { style: { fontSize: 12, color: "var(--text-3)" } }, "Standard consultation fees, laboratory tests, and clinical procedures")), /* @__PURE__ */ React24.createElement(
     Btn,
     {
       size: "sm",
@@ -9928,7 +10083,7 @@ function SettingsPage() {
       pageSize: 8,
       empty: /* @__PURE__ */ React24.createElement(EmptyState, { compact: true, title: "No clinic services configured", message: "Add consultation fees or medical services to include in patient bills." })
     }
-  ))), tab === "uhid" && /* @__PURE__ */ React24.createElement(Section, { icon: Fingerprint, title: "UHID Configuration", sub: "Unique Health Identification format \u2014 applied to NEW registrations only; existing UHIDs never change" }, /* @__PURE__ */ React24.createElement("div", { className: "form-grid" }, /* @__PURE__ */ React24.createElement(Field, { label: "UHID Prefix" }, /* @__PURE__ */ React24.createElement(Input, { value: f.uhid_prefix, onChange: set("uhid_prefix"), placeholder: "HC" })), /* @__PURE__ */ React24.createElement(Field, { label: "Include Registration Year" }, /* @__PURE__ */ React24.createElement(Toggle, { checked: !!f.uhid_include_year, onChange: setBool("uhid_include_year"), label: f.uhid_include_year ? "Yes \u2014 HC-2026-000001" : "No \u2014 HC-000001" })), /* @__PURE__ */ React24.createElement(Field, { label: "Number Padding (digits)" }, /* @__PURE__ */ React24.createElement(Input, { type: "number", min: "3", max: "10", value: f.uhid_padding, onChange: set("uhid_padding") })), /* @__PURE__ */ React24.createElement(Field, { label: "Starting Number", hint: "Applies to the first UHID of a new year/scope" }, /* @__PURE__ */ React24.createElement(Input, { type: "number", min: "1", value: f.uhid_start, onChange: set("uhid_start") })), /* @__PURE__ */ React24.createElement("div", { className: "set-preview fg-2" }, /* @__PURE__ */ React24.createElement("span", { className: "set-preview-label" }, "Next UHID preview"), /* @__PURE__ */ React24.createElement(Badge, { tone: "teal", className: "set-preview-badge" }, uhidPreview))), /* @__PURE__ */ React24.createElement("div", { className: "uhid-rules" }, /* @__PURE__ */ React24.createElement(ShieldCheck, { size: 16 }), /* @__PURE__ */ React24.createElement("span", null, "UHID is assigned once, permanently linked to the patient, stored with a unique database constraint, and appears on bills, prescriptions, receipts and history.")), /* @__PURE__ */ React24.createElement("div", { className: "set-save" }, /* @__PURE__ */ React24.createElement(Btn, { variant: "accent", disabled: busy, onClick: () => save(["uhid_prefix", "uhid_include_year", "uhid_padding", "uhid_start"]) }, busy ? "Saving\u2026" : "Save UHID settings"))), tab === "inventory" && /* @__PURE__ */ React24.createElement(Section, { icon: Boxes3, title: "Inventory Rules", sub: "Low-stock thresholds, expiry alert windows and batch selection" }, /* @__PURE__ */ React24.createElement("div", { className: "form-grid" }, /* @__PURE__ */ React24.createElement(Field, { label: "Default Low-Stock Level" }, /* @__PURE__ */ React24.createElement(Input, { type: "number", min: "0", value: f.low_stock_default, onChange: set("low_stock_default") })), /* @__PURE__ */ React24.createElement(Field, { label: "Expiry Alert Window 1 (days)" }, /* @__PURE__ */ React24.createElement(Input, { type: "number", min: "1", value: f.expiry_30, onChange: set("expiry_30") })), /* @__PURE__ */ React24.createElement(Field, { label: "Expiry Alert Window 2 (days)" }, /* @__PURE__ */ React24.createElement(Input, { type: "number", min: "1", value: f.expiry_60, onChange: set("expiry_60") })), /* @__PURE__ */ React24.createElement(Field, { label: "Expiry Alert Window 3 (days)" }, /* @__PURE__ */ React24.createElement(Input, { type: "number", min: "1", value: f.expiry_90, onChange: set("expiry_90") })), /* @__PURE__ */ React24.createElement(Field, { label: "FEFO (First Expired First Out)" }, /* @__PURE__ */ React24.createElement(Toggle, { checked: !!f.fefo, onChange: setBool("fefo"), label: f.fefo ? "Enabled \u2014 billing picks earliest-expiry batch" : "Disabled \u2014 FIFO by manufacturing date" }))), /* @__PURE__ */ React24.createElement("div", { className: "set-save" }, /* @__PURE__ */ React24.createElement(Btn, { variant: "accent", disabled: busy, onClick: () => save(["low_stock_default", "expiry_30", "expiry_60", "expiry_90", "fefo"]) }, busy ? "Saving\u2026" : "Save inventory rules"))), tab === "print" && /* @__PURE__ */ React24.createElement(Section, { icon: Printer7, title: "Print Settings", sub: "A4 landscape payment receipt with clinic and patient copies" }, /* @__PURE__ */ React24.createElement("div", { className: "set-preview" }, /* @__PURE__ */ React24.createElement("span", { className: "set-preview-label" }, "Available format"), /* @__PURE__ */ React24.createElement("div", { className: "set-chips" }, /* @__PURE__ */ React24.createElement(Badge, { tone: "teal" }, "A4 landscape \xB7 2 copies"), /* @__PURE__ */ React24.createElement(Badge, { tone: "gray" }, "Clinic copy"), /* @__PURE__ */ React24.createElement(Badge, { tone: "gray" }, "Patient copy")))), tab === "appearance" && /* @__PURE__ */ React24.createElement(Section, { icon: Palette, title: "Appearance", sub: "Theme and language" }, /* @__PURE__ */ React24.createElement("div", { className: "form-grid" }, /* @__PURE__ */ React24.createElement(Field, { label: "Theme" }, /* @__PURE__ */ React24.createElement("div", { className: "theme-opts" }, /* @__PURE__ */ React24.createElement(Btn, { variant: theme === "light" ? "primary" : "ghost", onClick: () => setTheme("light") }, "\u2600\uFE0F Light"), /* @__PURE__ */ React24.createElement(Btn, { variant: theme === "dark" ? "primary" : "ghost", onClick: () => setTheme("dark") }, "\u{1F319} Dark"))), /* @__PURE__ */ React24.createElement(Field, { label: "Language", hint: "Gujarati UI is in progress \u2014 English labels are used as fallback" }, /* @__PURE__ */ React24.createElement(Select, { value: lang, onChange: (e) => setLang(e.target.value) }, /* @__PURE__ */ React24.createElement("option", { value: "en" }, "English"), /* @__PURE__ */ React24.createElement("option", { value: "gu" }, "\u0A97\u0AC1\u0A9C\u0AB0\u0ABE\u0AA4\u0AC0 (Gujarati)"))))), tab === "data" && /* @__PURE__ */ React24.createElement(Section, { icon: Database, title: "Data, Backup & Maintenance", sub: "All data is stored locally on this device (offline-first). Export regular backups." }, /* @__PURE__ */ React24.createElement("div", { className: "data-grid" }, /* @__PURE__ */ React24.createElement("div", { className: "data-tile" }, /* @__PURE__ */ React24.createElement("span", null, "Patients"), /* @__PURE__ */ React24.createElement("b", null, counts?.patients ?? "\u2014")), /* @__PURE__ */ React24.createElement("div", { className: "data-tile" }, /* @__PURE__ */ React24.createElement("span", null, "Bills"), /* @__PURE__ */ React24.createElement("b", null, counts?.bills ?? "\u2014")), /* @__PURE__ */ React24.createElement("div", { className: "data-tile" }, /* @__PURE__ */ React24.createElement("span", null, "Medicines"), /* @__PURE__ */ React24.createElement("b", null, counts?.meds ?? "\u2014"))), /* @__PURE__ */ React24.createElement("div", { className: "data-actions" }, /* @__PURE__ */ React24.createElement(Btn, { variant: "outline", icon: Download13, onClick: exportBackup }, "Export Full Backup (JSON)"), /* @__PURE__ */ React24.createElement(Btn, { variant: "outline", icon: Upload6, onClick: () => importRef.current?.click() }, "Import Backup"), /* @__PURE__ */ React24.createElement("input", { type: "file", accept: "application/json", hidden: true, ref: importRef, onChange: (e) => {
+  ))), tab === "uhid" && /* @__PURE__ */ React24.createElement(Section, { icon: Fingerprint, title: "UHID Configuration", sub: "Unique Health Identification format \u2014 applied to NEW registrations only; existing UHIDs never change", onSubmit: () => save(["uhid_prefix", "uhid_include_year", "uhid_padding", "uhid_start"]) }, /* @__PURE__ */ React24.createElement("div", { className: "form-grid" }, /* @__PURE__ */ React24.createElement(Field, { label: "UHID Prefix" }, /* @__PURE__ */ React24.createElement(Input, { value: f.uhid_prefix, onChange: set("uhid_prefix"), placeholder: "HC" })), /* @__PURE__ */ React24.createElement(Field, { label: "Include Registration Year" }, /* @__PURE__ */ React24.createElement(Toggle, { checked: !!f.uhid_include_year, onChange: setBool("uhid_include_year"), label: f.uhid_include_year ? "Yes \u2014 HC-2026-000001" : "No \u2014 HC-000001" })), /* @__PURE__ */ React24.createElement(Field, { label: "Number Padding (digits)" }, /* @__PURE__ */ React24.createElement(Input, { type: "number", min: "3", max: "10", value: f.uhid_padding, onChange: set("uhid_padding") })), /* @__PURE__ */ React24.createElement(Field, { label: "Starting Number", hint: "Applies to the first UHID of a new year/scope" }, /* @__PURE__ */ React24.createElement(Input, { type: "number", min: "1", value: f.uhid_start, onChange: set("uhid_start") })), /* @__PURE__ */ React24.createElement("div", { className: "set-preview fg-2" }, /* @__PURE__ */ React24.createElement("span", { className: "set-preview-label" }, "Next UHID preview"), /* @__PURE__ */ React24.createElement(Badge, { tone: "teal", className: "set-preview-badge" }, uhidPreview))), /* @__PURE__ */ React24.createElement("div", { className: "uhid-rules" }, /* @__PURE__ */ React24.createElement(ShieldCheck, { size: 16 }), /* @__PURE__ */ React24.createElement("span", null, "UHID is assigned once, permanently linked to the patient, stored with a unique database constraint, and appears on bills, prescriptions, receipts and history.")), /* @__PURE__ */ React24.createElement("div", { className: "set-save" }, /* @__PURE__ */ React24.createElement(Btn, { type: "submit", variant: "accent", disabled: busy }, busy ? "Saving\u2026" : "Save UHID settings"))), tab === "inventory" && /* @__PURE__ */ React24.createElement(Section, { icon: Boxes3, title: "Inventory Rules", sub: "Low-stock thresholds, expiry alert windows and batch selection", onSubmit: () => save(["low_stock_default", "expiry_30", "expiry_60", "expiry_90", "fefo"]) }, /* @__PURE__ */ React24.createElement("div", { className: "form-grid" }, /* @__PURE__ */ React24.createElement(Field, { label: "Default Low-Stock Level" }, /* @__PURE__ */ React24.createElement(Input, { type: "number", min: "0", value: f.low_stock_default, onChange: set("low_stock_default") })), /* @__PURE__ */ React24.createElement(Field, { label: "Expiry Alert Window 1 (days)" }, /* @__PURE__ */ React24.createElement(Input, { type: "number", min: "1", value: f.expiry_30, onChange: set("expiry_30") })), /* @__PURE__ */ React24.createElement(Field, { label: "Expiry Alert Window 2 (days)" }, /* @__PURE__ */ React24.createElement(Input, { type: "number", min: "1", value: f.expiry_60, onChange: set("expiry_60") })), /* @__PURE__ */ React24.createElement(Field, { label: "Expiry Alert Window 3 (days)" }, /* @__PURE__ */ React24.createElement(Input, { type: "number", min: "1", value: f.expiry_90, onChange: set("expiry_90") })), /* @__PURE__ */ React24.createElement(Field, { label: "FEFO (First Expired First Out)" }, /* @__PURE__ */ React24.createElement(Toggle, { checked: !!f.fefo, onChange: setBool("fefo"), label: f.fefo ? "Enabled \u2014 billing picks earliest-expiry batch" : "Disabled \u2014 FIFO by manufacturing date" }))), /* @__PURE__ */ React24.createElement("div", { className: "set-save" }, /* @__PURE__ */ React24.createElement(Btn, { type: "submit", variant: "accent", disabled: busy }, busy ? "Saving\u2026" : "Save inventory rules"))), tab === "print" && /* @__PURE__ */ React24.createElement(Section, { icon: Printer7, title: "Print Settings", sub: "A4 landscape payment receipt with clinic and patient copies" }, /* @__PURE__ */ React24.createElement("div", { className: "set-preview" }, /* @__PURE__ */ React24.createElement("span", { className: "set-preview-label" }, "Available format"), /* @__PURE__ */ React24.createElement("div", { className: "set-chips" }, /* @__PURE__ */ React24.createElement(Badge, { tone: "teal" }, "A4 landscape \xB7 2 copies"), /* @__PURE__ */ React24.createElement(Badge, { tone: "gray" }, "Clinic copy"), /* @__PURE__ */ React24.createElement(Badge, { tone: "gray" }, "Patient copy")))), tab === "appearance" && /* @__PURE__ */ React24.createElement(Section, { icon: Palette, title: "Appearance", sub: "Theme and language" }, /* @__PURE__ */ React24.createElement("div", { className: "form-grid" }, /* @__PURE__ */ React24.createElement(Field, { label: "Theme" }, /* @__PURE__ */ React24.createElement("div", { className: "theme-opts" }, /* @__PURE__ */ React24.createElement(Btn, { variant: theme === "light" ? "primary" : "ghost", onClick: () => setTheme("light") }, "\u2600\uFE0F Light"), /* @__PURE__ */ React24.createElement(Btn, { variant: theme === "dark" ? "primary" : "ghost", onClick: () => setTheme("dark") }, "\u{1F319} Dark"))), /* @__PURE__ */ React24.createElement(Field, { label: "Language", hint: "Gujarati UI is in progress \u2014 English labels are used as fallback" }, /* @__PURE__ */ React24.createElement(Select, { value: lang, onChange: (e) => setLang(e.target.value) }, /* @__PURE__ */ React24.createElement("option", { value: "en" }, "English"), /* @__PURE__ */ React24.createElement("option", { value: "gu" }, "\u0A97\u0AC1\u0A9C\u0AB0\u0ABE\u0AA4\u0AC0 (Gujarati)"))))), tab === "data" && /* @__PURE__ */ React24.createElement(Section, { icon: Database, title: "Data, Backup & Maintenance", sub: "All data is stored locally on this device (offline-first). Export regular backups." }, /* @__PURE__ */ React24.createElement("div", { className: "data-grid" }, /* @__PURE__ */ React24.createElement("div", { className: "data-tile" }, /* @__PURE__ */ React24.createElement("span", null, "Patients"), /* @__PURE__ */ React24.createElement("b", null, counts?.patients ?? "\u2014")), /* @__PURE__ */ React24.createElement("div", { className: "data-tile" }, /* @__PURE__ */ React24.createElement("span", null, "Bills"), /* @__PURE__ */ React24.createElement("b", null, counts?.bills ?? "\u2014")), /* @__PURE__ */ React24.createElement("div", { className: "data-tile" }, /* @__PURE__ */ React24.createElement("span", null, "Medicines"), /* @__PURE__ */ React24.createElement("b", null, counts?.meds ?? "\u2014"))), /* @__PURE__ */ React24.createElement("div", { className: "data-actions" }, /* @__PURE__ */ React24.createElement(Btn, { variant: "outline", icon: Download13, onClick: exportBackup }, "Export Full Backup (JSON)"), /* @__PURE__ */ React24.createElement(Btn, { variant: "outline", icon: Upload6, onClick: () => importRef.current?.click() }, "Import Backup"), /* @__PURE__ */ React24.createElement("input", { type: "file", accept: "application/json", hidden: true, ref: importRef, onChange: (e) => {
     const f2 = e.target.files?.[0];
     if (f2) importBackup(f2);
     e.target.value = "";
@@ -10007,41 +10162,15 @@ function SettingsPage() {
     {
       open: serviceModal,
       onClose: () => setServiceModal(false),
+      onSubmit: saveService,
       title: editingService ? "Edit Clinic Service" : "Add New Service",
       width: "md",
       footer: /* @__PURE__ */ React24.createElement(React24.Fragment, null, /* @__PURE__ */ React24.createElement(Btn, { variant: "ghost", onClick: () => setServiceModal(false) }, "Cancel"), /* @__PURE__ */ React24.createElement(
         Btn,
         {
+          type: "submit",
           variant: "accent",
-          disabled: serviceBusy || !serviceForm.name.trim() || !serviceForm.price,
-          onClick: async () => {
-            setServiceBusy(true);
-            setServiceError("");
-            try {
-              if (editingService) {
-                await updateService(editingService.id, {
-                  name: serviceForm.name,
-                  type: serviceForm.type,
-                  price: Number(serviceForm.price),
-                  description: serviceForm.description
-                }, user3?.id);
-                pushToast("success", "Service updated successfully");
-              } else {
-                await createService({
-                  name: serviceForm.name,
-                  type: serviceForm.type,
-                  price: Number(serviceForm.price),
-                  description: serviceForm.description
-                }, user3?.id);
-                pushToast("success", "New service added");
-              }
-              setServiceModal(false);
-            } catch (err) {
-              setServiceError(err.message);
-            } finally {
-              setServiceBusy(false);
-            }
-          }
+          disabled: serviceBusy || !serviceForm.name.trim() || !serviceForm.price
         },
         serviceBusy ? "Saving\u2026" : editingService ? "Save Changes" : "Create Service"
       ))

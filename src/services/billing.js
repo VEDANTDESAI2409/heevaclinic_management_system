@@ -27,7 +27,7 @@ function billTypeLabel(items) {
  * payments: [{ amount, method, note? }]
  * Returns { bill, items, allocations } or throws (transaction rolls back).
  */
-export async function createBill({ patient_id, items, discount_mode = 'amt', discount_value = 0, payments = [], when = null, doctor_id = null, doctor_name = null, doctor_phone = null, diagnosis = null, advice = null, next_visit = null }, userId) {
+export async function createBill({ patient_id, items, discount_mode = 'amt', discount_value = 0, payments = [], when = null, bill_date = null, doctor_id = null, doctor_name = null, doctor_phone = null, diagnosis = null, advice = null, next_visit = null }, userId) {
   const settings = await getSettings();
   return db.transaction('rw', [db.bills, db.bill_items, db.payments, db.batches, db.inventory_txns, db.counters, db.activity_logs, db.patients, db.medicines, db.services], async () => {
     const patient = await db.patients.get(patient_id);
@@ -86,8 +86,16 @@ export async function createBill({ patient_id, items, discount_mode = 'amt', dis
     const discount = round2(Math.min(Math.max(discRaw, 0), subtotal));
     const total = round2(Math.max(0, subtotal - discount));
 
-    const now = when || nowISO();
-    const bill_no = await makeNo('BILL', settings.bill_prefix || 'HC-BILL', new Date(now).getFullYear(), Number(settings.bill_padding) || 6);
+    const now = nowISO();
+    const systemDate = new Date();
+    const selectedDate = bill_date || (when ? dkey(new Date(when)) : dkey(systemDate));
+    const pad2 = (n) => String(n).padStart(2, '0');
+    const hh = pad2(systemDate.getHours());
+    const mm = pad2(systemDate.getMinutes());
+    const ss = pad2(systemDate.getSeconds());
+    const billTime = `${selectedDate}T${hh}:${mm}:${ss}`;
+
+    const bill_no = await makeNo('BILL', settings.bill_prefix || 'HC-BILL', new Date(billTime).getFullYear(), Number(settings.bill_padding) || 6);
     const bill = {
       id: uid(),
       bill_no,
@@ -97,8 +105,8 @@ export async function createBill({ patient_id, items, discount_mode = 'amt', dis
       patient_mobile: patient.mobile || '',
       patient_age: ageLabel(patient),
       patient_gender: patient.gender || '',
-      date: dkey(new Date(now)),
-      time: now,
+      date: selectedDate,
+      time: billTime,
       doctor_name: doctor_name || settings.doctor_name || '',
       doctor_phone: doctor_phone || settings.doctor_phone || '',
       diagnosis: diagnosis ? diagnosis.trim() : null,
@@ -162,7 +170,7 @@ export async function createBill({ patient_id, items, discount_mode = 'amt', dis
         method: PAY_METHODS.includes(pay.method) ? pay.method : 'Other',
         note: pay.note || '',
         by: userId || null,
-        at: now,
+        at: billTime,
       });
     }
     paid = Math.min(paid, total);

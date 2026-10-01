@@ -80,7 +80,7 @@ export default function BillViewer({ full, onClose, allowCancel = true, allowPay
           <div className="bv-meta">
             <PaymentBadge status={bill.status === 'CANCELLED' ? 'CANCELLED' : bill.payment_status} />
             <Badge tone="navy">{bill.bill_type}</Badge>
-            <span>{fmtDateTime(bill.time)}</span>
+            <span>{fmtDateTime(bill.time || bill.date)}</span>
             {bill.cancel_reason && <Badge tone="red">Cancelled: {bill.cancel_reason}</Badge>}
           </div>
           {bill.diagnosis && (

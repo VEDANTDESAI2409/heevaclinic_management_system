@@ -35,9 +35,9 @@ export const DEFAULT_SETTINGS = {
   bill_padding: 6,
   default_payment: 'Cash',
   uhid_prefix: 'HC',
-  uhid_include_year: true,
-  uhid_padding: 6,
-  uhid_start: 1,
+  uhid_include_year: false,
+  uhid_padding: 4,
+  uhid_start: 1001,
   low_stock_default: 10,
   expiry_30: 30,
   expiry_60: 60,
@@ -86,15 +86,16 @@ export async function nextCounter(key, start = 1) {
 /** UHID generation — format configurable; UHID is permanent & unique */
 export async function makeUHID(settings, year = new Date().getFullYear()) {
   const s = settings || (await getSettings());
-  const key = s.uhid_include_year ? `UHID|${year}` : 'UHID|ALL';
-  let start = Number(s.uhid_start) || 1;
+  const includeYear = s.uhid_include_year === 1 || s.uhid_include_year === true;
+  const key = includeYear ? `UHID|${year}` : 'UHID|ALL';
+  let start = Number(s.uhid_start) || 1001;
   try {
     if (db.patients) {
       const records = await db.patients.toArray();
       let maxSuffix = 0;
       for (const p of records) {
         const uhid = String(p.uhid || '');
-        const match = uhid.match(/-(\d+)$/);
+        const match = includeYear ? uhid.match(/-(\d+)$/) : uhid.match(/^[A-Za-z]+-(\d+)$/);
         if (match) {
           const num = parseInt(match[1], 10);
           if (!isNaN(num) && num > maxSuffix) maxSuffix = num;
@@ -104,9 +105,9 @@ export async function makeUHID(settings, year = new Date().getFullYear()) {
     }
   } catch (_) {}
   const n = await nextCounter(key, start);
-  const pad = Number(s.uhid_padding) || 6;
+  const pad = Number(s.uhid_padding) || 4;
   const prefix = (s.uhid_prefix || 'HC').trim().toUpperCase();
-  return `${prefix}${s.uhid_include_year ? `-${year}` : ''}-${String(n).padStart(pad, '0')}`;
+  return `${prefix}${includeYear ? `-${year}` : ''}-${String(n).padStart(pad, '0')}`;
 }
 
 /** Year-scoped numbered reference: KIND → PREFIX, e.g. makeNo('BILL','HC-BILL',2026) → HC-BILL-2026-000001 */
