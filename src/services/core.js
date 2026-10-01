@@ -77,7 +77,8 @@ export function audit(userId, action, entity, entityId, detail = '') {
 /** Monotonic counter — must run inside a caller transaction */
 export async function nextCounter(key, start = 1) {
   const row = await db.counters.get(key);
-  const next = row ? row.value + 1 : start;
+  const current = row && row.value != null ? Number(row.value) : 0;
+  const next = Math.max(current + 1, start);
   await db.counters.put({ key, value: next });
   return next;
 }
@@ -86,7 +87,22 @@ export async function nextCounter(key, start = 1) {
 export async function makeUHID(settings, year = new Date().getFullYear()) {
   const s = settings || (await getSettings());
   const key = s.uhid_include_year ? `UHID|${year}` : 'UHID|ALL';
-  const start = Number(s.uhid_start) || 1;
+  let start = Number(s.uhid_start) || 1;
+  try {
+    if (db.patients) {
+      const records = await db.patients.toArray();
+      let maxSuffix = 0;
+      for (const p of records) {
+        const uhid = String(p.uhid || '');
+        const match = uhid.match(/-(\d+)$/);
+        if (match) {
+          const num = parseInt(match[1], 10);
+          if (!isNaN(num) && num > maxSuffix) maxSuffix = num;
+        }
+      }
+      if (maxSuffix >= start) start = maxSuffix + 1;
+    }
+  } catch (_) {}
   const n = await nextCounter(key, start);
   const pad = Number(s.uhid_padding) || 6;
   const prefix = (s.uhid_prefix || 'HC').trim().toUpperCase();
@@ -95,13 +111,66 @@ export async function makeUHID(settings, year = new Date().getFullYear()) {
 
 /** Year-scoped numbered reference: KIND → PREFIX, e.g. makeNo('BILL','HC-BILL',2026) → HC-BILL-2026-000001 */
 export async function makeNo(kind, prefix, year = new Date().getFullYear(), padding = 6, start = 1) {
-  const n = await nextCounter(`${kind}|${year}`, start);
+  let effectiveStart = start;
+  try {
+    let tbl = null;
+    let field = null;
+    if (kind === 'BILL') { tbl = db.bills; field = 'bill_no'; }
+    else if (kind === 'APT') { tbl = db.appointments; field = 'appointment_no'; }
+    else if (kind === 'CNS') { tbl = db.consultations; field = 'consultation_no'; }
+    else if (kind === 'RX') { tbl = db.prescriptions; field = 'prescription_no'; }
+    else if (kind === 'RET') { tbl = db.returns; field = 'return_no'; }
+    else if (kind === 'EXP') { tbl = db.expenses; field = 'expense_no'; }
+
+    if (tbl && field) {
+      const records = await tbl.toArray();
+      let maxSuffix = 0;
+      for (const r of records) {
+        const val = String(r[field] || '');
+        if (val.includes(String(year))) {
+          const m = val.match(/(\d+)$/);
+          if (m) {
+            const num = parseInt(m[1], 10);
+            if (!isNaN(num) && num > maxSuffix) maxSuffix = num;
+          }
+        }
+      }
+      if (maxSuffix >= effectiveStart) effectiveStart = maxSuffix + 1;
+    }
+  } catch (_) {}
+  const n = await nextCounter(`${kind}|${year}`, effectiveStart);
   return `${prefix}-${year}-${String(n).padStart(padding, '0')}`;
 }
 
 /** Un-scoped code: MD-0001, SUP-0001 … */
 export async function makeCode(kind, prefix, padding = 4, start = 1) {
-  const n = await nextCounter(`${kind}|ALL`, start);
+  let effectiveStart = start;
+  try {
+    if (kind === 'MED' && db.medicines) {
+      const records = await db.medicines.toArray();
+      let maxSuffix = 0;
+      for (const r of records) {
+        const m = String(r.medicine_code || '').match(/(\d+)$/);
+        if (m) {
+          const num = parseInt(m[1], 10);
+          if (!isNaN(num) && num > maxSuffix) maxSuffix = num;
+        }
+      }
+      if (maxSuffix >= effectiveStart) effectiveStart = maxSuffix + 1;
+    } else if (kind === 'SVC' && db.services) {
+      const records = await db.services.toArray();
+      let maxSuffix = 0;
+      for (const r of records) {
+        const m = String(r.service_code || '').match(/(\d+)$/);
+        if (m) {
+          const num = parseInt(m[1], 10);
+          if (!isNaN(num) && num > maxSuffix) maxSuffix = num;
+        }
+      }
+      if (maxSuffix >= effectiveStart) effectiveStart = maxSuffix + 1;
+    }
+  } catch (_) {}
+  const n = await nextCounter(`${kind}|ALL`, effectiveStart);
   return `${prefix}-${String(n).padStart(padding, '0')}`;
 }
 

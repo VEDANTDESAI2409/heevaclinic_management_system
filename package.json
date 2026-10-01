@@ -19,7 +19,8 @@
     "test:multi-device": "node --import ./scripts/fidb-first.mjs scripts/test-multi-device.mjs",
     "test:medicines": "node --import ./scripts/fidb-first.mjs scripts/test-medicine-sync-and-persistence.mjs",
     "test:csv": "node scripts/test-global-csv-regression.mjs",
-    "test": "npm run test:uhid && npm run smoke && npm run render && npm run test:multi-device && npm run test:medicines && npm run test:csv"
+    "test:migration": "node --import ./scripts/fidb-first.mjs scripts/test-dexie-v7-migration.mjs",
+    "test": "npm run test:uhid && npm run smoke && npm run render && npm run test:multi-device && npm run test:medicines && npm run test:csv && npm run test:migration"
   },
   "dependencies": {
     "@fontsource-variable/inter": "^5.1.0",

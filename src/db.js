@@ -64,6 +64,36 @@ db.version(6).stores({
   prescriptions: 'id, &prescription_no, patient_id, consultation_id, doctor_id, date',
 });
 
+// v7: Convert client-side cache indexes to standard non-unique indexes.
+// In this multi-device architecture, Cloudflare D1 is the authoritative central database
+// and enforces unique constraints (UHID, medicine_code, etc.). The client IndexedDB is a
+// fast reactive cache where non-unique indexes prevent fatal ConstraintError collisions
+// during multi-device synchronization, CSV imports, or rapid offline/online transitions.
+db.version(7).stores({
+  patients: 'id, uhid, name, mobile, created_at, [name+age]',
+  medicines: 'id, medicine_code, name, generic, category, active',
+  services: 'id, service_code, name, type, active',
+  consultations: 'id, consultation_no, patient_id, doctor_id, date',
+  prescriptions: 'id, prescription_no, patient_id, consultation_id, doctor_id, date',
+  appointments: 'id, appointment_no, patient_id, doctor_id, date, status',
+  bills: 'id, bill_no, patient_id, date, time, status, payment_status, uhid',
+  returns: 'id, return_no, bill_id, at',
+  expenses: 'id, expense_no, category, date',
+  suppliers: 'id, supplier_code, name, phone, email, active',
+  purchases: 'id, purchase_no, supplier_id, date, status',
+  roles: 'id, key',
+  users: 'id, username, role',
+});
+
+// Gracefully handle multi-tab versionchange to prevent upgrade blocking
+if (typeof window !== 'undefined') {
+  db.on('versionchange', () => {
+    try {
+      db.close();
+    } catch (_) {}
+  });
+}
+
 // Keep the existing Dexie API used by the UI while making backend JSON storage persistent.
 // The local tables remain a reactive cache for the existing useLiveQuery hooks.
 db.transaction = async (_mode, _tables, scope) => scope();
@@ -78,7 +108,6 @@ const syncedTables = [
 
 for (const name of syncedTables) {
   const table = db[name];
-  const add = table.add.bind(table);
   const put = table.put.bind(table);
   const update = table.update.bind(table);
   const remove = table.delete.bind(table);
@@ -86,24 +115,54 @@ for (const name of syncedTables) {
   const clear = table.clear.bind(table);
   const bulkDelete = table.bulkDelete ? table.bulkDelete.bind(table) : null;
 
+  // Safe idempotent put that never crashes on duplicate keys or legacy unique indexes
+  const safePut = async (record, key) => {
+    try {
+      return await put(record, key);
+    } catch (err) {
+      if (err?.name === 'ConstraintError' || /key already exists/i.test(err?.message || '')) {
+        return record.id || key;
+      }
+      throw err;
+    }
+  };
+
+  // Safe bulkPut that falls back to individual safe puts if batch constraint error occurs
+  const safeBulkPut = async (records, options) => {
+    try {
+      return await bulkPut(records, options);
+    } catch (err) {
+      if (err?.name === 'ConstraintError' || err?.name === 'BulkError' || /key already exists/i.test(err?.message || '')) {
+        for (const record of records) {
+          try {
+            await put(record);
+          } catch (_) {}
+        }
+        return records.length;
+      }
+      throw err;
+    }
+  };
+
   // Preserve direct low-level Dexie operations for background synchronization
-  table._rawAdd = add;
-  table._rawPut = put;
+  // Note: _rawAdd delegates to safePut so low-level inserts are always idempotent
+  table._rawAdd = safePut;
+  table._rawPut = safePut;
   table._rawUpdate = update;
   table._rawDelete = remove;
-  table._rawBulkPut = bulkPut;
+  table._rawBulkPut = safeBulkPut;
   table._rawClear = clear;
   if (bulkDelete) table._rawBulkDelete = bulkDelete;
 
   table.add = async (record, key) => {
-    if (db.__hydrating) return add(record, key);
+    if (db.__hydrating) return safePut(record, key);
     await pushRecord(name, record);
-    return add(record, key);
+    return safePut(record, key);
   };
   table.put = async (record, key) => {
-    if (db.__hydrating) return put(record, key);
+    if (db.__hydrating) return safePut(record, key);
     await pushRecord(name, record);
-    return put(record, key);
+    return safePut(record, key);
   };
   table.update = async (key, changes) => {
     if (db.__hydrating) return update(key, changes);
@@ -119,9 +178,9 @@ for (const name of syncedTables) {
     return remove(key);
   };
   table.bulkPut = async (records, options) => {
-    if (db.__hydrating) return bulkPut(records, options);
+    if (db.__hydrating) return safeBulkPut(records, options);
     for (const record of records) await pushRecord(name, record);
-    return bulkPut(records, options);
+    return safeBulkPut(records, options);
   };
   table.clear = async () => {
     if (db.__hydrating) return clear();

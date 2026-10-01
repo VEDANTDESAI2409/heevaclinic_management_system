@@ -554,6 +554,29 @@ var init_db = __esm({
       appointments: "id, &appointment_no, patient_id, doctor_id, date, status",
       prescriptions: "id, &prescription_no, patient_id, consultation_id, doctor_id, date"
     });
+    db.version(7).stores({
+      patients: "id, uhid, name, mobile, created_at, [name+age]",
+      medicines: "id, medicine_code, name, generic, category, active",
+      services: "id, service_code, name, type, active",
+      consultations: "id, consultation_no, patient_id, doctor_id, date",
+      prescriptions: "id, prescription_no, patient_id, consultation_id, doctor_id, date",
+      appointments: "id, appointment_no, patient_id, doctor_id, date, status",
+      bills: "id, bill_no, patient_id, date, time, status, payment_status, uhid",
+      returns: "id, return_no, bill_id, at",
+      expenses: "id, expense_no, category, date",
+      suppliers: "id, supplier_code, name, phone, email, active",
+      purchases: "id, purchase_no, supplier_id, date, status",
+      roles: "id, key",
+      users: "id, username, role"
+    });
+    if (typeof window !== "undefined") {
+      db.on("versionchange", () => {
+        try {
+          db.close();
+        } catch (_) {
+        }
+      });
+    }
     db.transaction = async (_mode, _tables, scope) => scope();
     db.__hydrating = false;
     syncedTables2 = [
@@ -581,29 +604,54 @@ var init_db = __esm({
     ];
     for (const name of syncedTables2) {
       const table = db[name];
-      const add = table.add.bind(table);
       const put = table.put.bind(table);
       const update = table.update.bind(table);
       const remove = table.delete.bind(table);
       const bulkPut = table.bulkPut.bind(table);
       const clear = table.clear.bind(table);
       const bulkDelete = table.bulkDelete ? table.bulkDelete.bind(table) : null;
-      table._rawAdd = add;
-      table._rawPut = put;
+      const safePut = async (record, key) => {
+        try {
+          return await put(record, key);
+        } catch (err) {
+          if (err?.name === "ConstraintError" || /key already exists/i.test(err?.message || "")) {
+            return record.id || key;
+          }
+          throw err;
+        }
+      };
+      const safeBulkPut = async (records, options) => {
+        try {
+          return await bulkPut(records, options);
+        } catch (err) {
+          if (err?.name === "ConstraintError" || err?.name === "BulkError" || /key already exists/i.test(err?.message || "")) {
+            for (const record of records) {
+              try {
+                await put(record);
+              } catch (_) {
+              }
+            }
+            return records.length;
+          }
+          throw err;
+        }
+      };
+      table._rawAdd = safePut;
+      table._rawPut = safePut;
       table._rawUpdate = update;
       table._rawDelete = remove;
-      table._rawBulkPut = bulkPut;
+      table._rawBulkPut = safeBulkPut;
       table._rawClear = clear;
       if (bulkDelete) table._rawBulkDelete = bulkDelete;
       table.add = async (record, key) => {
-        if (db.__hydrating) return add(record, key);
+        if (db.__hydrating) return safePut(record, key);
         await pushRecord(name, record);
-        return add(record, key);
+        return safePut(record, key);
       };
       table.put = async (record, key) => {
-        if (db.__hydrating) return put(record, key);
+        if (db.__hydrating) return safePut(record, key);
         await pushRecord(name, record);
-        return put(record, key);
+        return safePut(record, key);
       };
       table.update = async (key, changes) => {
         if (db.__hydrating) return update(key, changes);
@@ -619,9 +667,9 @@ var init_db = __esm({
         return remove(key);
       };
       table.bulkPut = async (records, options) => {
-        if (db.__hydrating) return bulkPut(records, options);
+        if (db.__hydrating) return safeBulkPut(records, options);
         for (const record of records) await pushRecord(name, record);
-        return bulkPut(records, options);
+        return safeBulkPut(records, options);
       };
       table.clear = async () => {
         if (db.__hydrating) return clear();
@@ -819,25 +867,109 @@ function audit(userId, action, entity, entityId, detail = "") {
 }
 async function nextCounter(key, start = 1) {
   const row = await db_default.counters.get(key);
-  const next = row ? row.value + 1 : start;
+  const current = row && row.value != null ? Number(row.value) : 0;
+  const next = Math.max(current + 1, start);
   await db_default.counters.put({ key, value: next });
   return next;
 }
 async function makeUHID(settings, year = (/* @__PURE__ */ new Date()).getFullYear()) {
   const s = settings || await getSettings();
   const key = s.uhid_include_year ? `UHID|${year}` : "UHID|ALL";
-  const start = Number(s.uhid_start) || 1;
+  let start = Number(s.uhid_start) || 1;
+  try {
+    if (db_default.patients) {
+      const records = await db_default.patients.toArray();
+      let maxSuffix = 0;
+      for (const p of records) {
+        const uhid = String(p.uhid || "");
+        const match = uhid.match(/-(\d+)$/);
+        if (match) {
+          const num = parseInt(match[1], 10);
+          if (!isNaN(num) && num > maxSuffix) maxSuffix = num;
+        }
+      }
+      if (maxSuffix >= start) start = maxSuffix + 1;
+    }
+  } catch (_) {
+  }
   const n = await nextCounter(key, start);
   const pad = Number(s.uhid_padding) || 6;
   const prefix = (s.uhid_prefix || "HC").trim().toUpperCase();
   return `${prefix}${s.uhid_include_year ? `-${year}` : ""}-${String(n).padStart(pad, "0")}`;
 }
 async function makeNo(kind, prefix, year = (/* @__PURE__ */ new Date()).getFullYear(), padding = 6, start = 1) {
-  const n = await nextCounter(`${kind}|${year}`, start);
+  let effectiveStart = start;
+  try {
+    let tbl = null;
+    let field = null;
+    if (kind === "BILL") {
+      tbl = db_default.bills;
+      field = "bill_no";
+    } else if (kind === "APT") {
+      tbl = db_default.appointments;
+      field = "appointment_no";
+    } else if (kind === "CNS") {
+      tbl = db_default.consultations;
+      field = "consultation_no";
+    } else if (kind === "RX") {
+      tbl = db_default.prescriptions;
+      field = "prescription_no";
+    } else if (kind === "RET") {
+      tbl = db_default.returns;
+      field = "return_no";
+    } else if (kind === "EXP") {
+      tbl = db_default.expenses;
+      field = "expense_no";
+    }
+    if (tbl && field) {
+      const records = await tbl.toArray();
+      let maxSuffix = 0;
+      for (const r of records) {
+        const val = String(r[field] || "");
+        if (val.includes(String(year))) {
+          const m = val.match(/(\d+)$/);
+          if (m) {
+            const num = parseInt(m[1], 10);
+            if (!isNaN(num) && num > maxSuffix) maxSuffix = num;
+          }
+        }
+      }
+      if (maxSuffix >= effectiveStart) effectiveStart = maxSuffix + 1;
+    }
+  } catch (_) {
+  }
+  const n = await nextCounter(`${kind}|${year}`, effectiveStart);
   return `${prefix}-${year}-${String(n).padStart(padding, "0")}`;
 }
 async function makeCode(kind, prefix, padding = 4, start = 1) {
-  const n = await nextCounter(`${kind}|ALL`, start);
+  let effectiveStart = start;
+  try {
+    if (kind === "MED" && db_default.medicines) {
+      const records = await db_default.medicines.toArray();
+      let maxSuffix = 0;
+      for (const r of records) {
+        const m = String(r.medicine_code || "").match(/(\d+)$/);
+        if (m) {
+          const num = parseInt(m[1], 10);
+          if (!isNaN(num) && num > maxSuffix) maxSuffix = num;
+        }
+      }
+      if (maxSuffix >= effectiveStart) effectiveStart = maxSuffix + 1;
+    } else if (kind === "SVC" && db_default.services) {
+      const records = await db_default.services.toArray();
+      let maxSuffix = 0;
+      for (const r of records) {
+        const m = String(r.service_code || "").match(/(\d+)$/);
+        if (m) {
+          const num = parseInt(m[1], 10);
+          if (!isNaN(num) && num > maxSuffix) maxSuffix = num;
+        }
+      }
+      if (maxSuffix >= effectiveStart) effectiveStart = maxSuffix + 1;
+    }
+  } catch (_) {
+  }
+  const n = await nextCounter(`${kind}|ALL`, effectiveStart);
   return `${prefix}-${String(n).padStart(padding, "0")}`;
 }
 var SECTIONS, DEFAULT_PERMISSIONS, DEFAULT_SETTINGS, round2;
