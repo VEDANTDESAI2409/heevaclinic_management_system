@@ -584,18 +584,18 @@ async function nextCounter(key, start = 1) {
   await db_default.counters.put({ key, value: next });
   return next;
 }
-async function makeUHID(settings, year = (/* @__PURE__ */ new Date()).getFullYear()) {
+async function makeUHID(settings) {
   const s = settings || await getSettings();
-  const includeYear = s.uhid_include_year === 1 || s.uhid_include_year === true;
-  const key = includeYear ? `UHID|${year}` : "UHID|ALL";
-  let start = Number(s.uhid_start) || 1001;
+  const prefix = (s.uhid_prefix || "HC").trim().toUpperCase();
+  const key = "UHID|SEQUENCE";
+  let start = 1001;
   try {
     if (db_default.patients) {
       const records = await db_default.patients.toArray();
       let maxSuffix = 0;
       for (const p of records) {
         const uhid = String(p.uhid || "");
-        const match = includeYear ? uhid.match(/-(\d+)$/) : uhid.match(/^[A-Za-z]+-(\d+)$/);
+        const match = uhid.match(/^[A-Za-z]+-(\d+)$/);
         if (match) {
           const num = parseInt(match[1], 10);
           if (!isNaN(num) && num > maxSuffix) maxSuffix = num;
@@ -606,9 +606,11 @@ async function makeUHID(settings, year = (/* @__PURE__ */ new Date()).getFullYea
   } catch (_) {
   }
   const n = await nextCounter(key, start);
-  const pad = Number(s.uhid_padding) || 4;
-  const prefix = (s.uhid_prefix || "HC").trim().toUpperCase();
-  return `${prefix}${includeYear ? `-${year}` : ""}-${String(n).padStart(pad, "0")}`;
+  try {
+    await db_default.counters.put({ key: "UHID|ALL", value: n });
+  } catch (_) {
+  }
+  return `${prefix}-${n}`;
 }
 async function makeNo(kind, prefix, year = (/* @__PURE__ */ new Date()).getFullYear(), padding = 6, start = 1) {
   let effectiveStart = start;
@@ -795,11 +797,11 @@ async function registerPatient(data, userId, { temp = false } = {}) {
         db_default.__hydrating = true;
         try {
           await db_default.patients.put(serverPatient);
-          const year = (/* @__PURE__ */ new Date()).getFullYear();
-          const key = settings.uhid_include_year ? `UHID|${year}` : "UHID|ALL";
-          const match = serverPatient.uhid.match(/-(\d+)$/);
+          const match = serverPatient.uhid.match(/^[A-Za-z]+-(\d+)$/);
           if (match) {
-            await db_default.counters.put({ key, value: Number(match[1]) });
+            const val = Number(match[1]);
+            await db_default.counters.put({ key: "UHID|SEQUENCE", value: val });
+            await db_default.counters.put({ key: "UHID|ALL", value: val });
           }
         } finally {
           db_default.__hydrating = prevHydrating;
@@ -884,28 +886,10 @@ async function clearAllPatients(userId) {
     }
   }
   return db_default.transaction("rw", [db_default.patients, db_default.patient_vitals, db_default.counters, db_default.activity_logs], async () => {
-    const settings = await getSettings();
+    await db_default.counters.put({ key: "UHID|SEQUENCE", value: 1e3 });
+    await db_default.counters.put({ key: "UHID|ALL", value: 1e3 });
     const year = (/* @__PURE__ */ new Date()).getFullYear();
-    const includeYear = settings.uhid_include_year === 1 || settings.uhid_include_year === true;
-    const key = includeYear ? `UHID|${year}` : "UHID|ALL";
-    const start = Number(settings.uhid_start) || 1001;
-    let maxExisting = 0;
-    try {
-      const records = await db_default.patients.toArray();
-      for (const p of records) {
-        const uhid = String(p.uhid || "");
-        const match = includeYear ? uhid.match(/-(\d+)$/) : uhid.match(/^[A-Za-z]+-(\d+)$/);
-        if (match) {
-          const num = parseInt(match[1], 10);
-          if (!isNaN(num) && num > maxExisting) maxExisting = num;
-        }
-      }
-    } catch (_) {
-    }
-    const counterRow = await db_default.counters.get(key);
-    const currentCounter = counterRow && counterRow.value != null ? Number(counterRow.value) : 0;
-    const finalCounterVal = Math.max(currentCounter, maxExisting, start - 1);
-    await db_default.counters.put({ key, value: finalCounterVal });
+    await db_default.counters.put({ key: `UHID|${year}`, value: 0 });
     clearRecentMutationsFor("patients");
     clearRecentMutationsFor("patient_vitals");
     await db_default.patient_vitals.clear();
@@ -919,7 +903,7 @@ async function clearAllPatients(userId) {
       } catch (_) {
       }
     }
-    return { ok: true, counterPreserved: finalCounterVal };
+    return { ok: true, reset: true };
   });
 }
 async function addVitals(patientId, v, userId) {
@@ -964,7 +948,7 @@ var init_patients = __esm({
 });
 
 // worker/db/tables.js
-var tableAliases, resolveCollection, tableColumns;
+var tableAliases, resolveCollection, allowedCollections, tableColumns;
 var init_tables = __esm({
   "worker/db/tables.js"() {
     tableAliases = {
@@ -973,6 +957,34 @@ var init_tables = __esm({
       inventory_txns: "inventory_transactions"
     };
     resolveCollection = (name) => tableAliases[name] || name;
+    allowedCollections = /* @__PURE__ */ new Set([
+      "clinic_settings",
+      "settings",
+      "counters",
+      "patients",
+      "patient_vitals",
+      "doctors",
+      "consultations",
+      "appointments",
+      "medicines",
+      "medicine_categories",
+      "medicine_batches",
+      "batches",
+      "inventory_transactions",
+      "inventory_txns",
+      "medicine_stock_history",
+      "services",
+      "prescriptions",
+      "prescription_items",
+      "bills",
+      "bill_items",
+      "payments",
+      "expenses",
+      "returns",
+      "return_items",
+      "notifications",
+      "activity_logs"
+    ]);
     tableColumns = {
       clinic_settings: [
         "id",
@@ -1537,22 +1549,17 @@ var init_d1Client = __esm({
       },
       async getNextUhidPreview(db3) {
         const settingsRow = await db3.prepare("SELECT * FROM clinic_settings LIMIT 1").first() || {};
-        const year = (/* @__PURE__ */ new Date()).getFullYear();
-        const includeYear = settingsRow.uhid_include_year === 1 || settingsRow.uhid_include_year === true;
-        const counterKey = includeYear ? `UHID|${year}` : "UHID|ALL";
-        const pad = Number(settingsRow.uhid_padding) || 4;
         const prefix = (settingsRow.uhid_prefix || "HC").trim().toUpperCase();
-        const start = Number(settingsRow.uhid_start) || 1001;
         const countRow = await db3.prepare("SELECT COUNT(*) as count FROM patients").first();
         const patientCount = countRow ? Number(countRow.count) : 0;
-        const counterRow = await db3.prepare("SELECT * FROM counters WHERE key = ? OR id = ? LIMIT 1").bind(counterKey, counterKey).first();
+        const counterRow = await db3.prepare("SELECT * FROM counters WHERE key = ? OR id = ? OR key = ? OR id = ? LIMIT 1").bind("UHID|SEQUENCE", "UHID|SEQUENCE", "UHID|ALL", "UHID|ALL").first();
         let maxExisting = 0;
         try {
           const existingRows = await db3.prepare("SELECT uhid FROM patients WHERE uhid LIKE ?").bind(`${prefix}-%`).all();
           if (existingRows && existingRows.results) {
             for (const r of existingRows.results) {
               const uhidStr = String(r.uhid || "");
-              const m = includeYear ? uhidStr.match(/-(\d+)$/) : uhidStr.match(/^[A-Za-z]+-(\d+)$/);
+              const m = uhidStr.match(/^[A-Za-z]+-(\d+)$/);
               if (m) {
                 const val = parseInt(m[1], 10);
                 if (!isNaN(val) && val > maxExisting) maxExisting = val;
@@ -1561,18 +1568,15 @@ var init_d1Client = __esm({
           }
         } catch (_) {
         }
-        const counterVal = counterRow && counterRow.value != null ? Number(counterRow.value) : 0;
-        const base = Math.max(counterVal, maxExisting);
-        const nextNumber = base >= start ? base + 1 : start;
-        const nextUhid = `${prefix}${includeYear ? `-${year}` : ""}-${String(nextNumber).padStart(pad, "0")}`;
+        const counterVal = counterRow && counterRow.value != null ? Number(counterRow.value) : 1e3;
+        const base = Math.max(counterVal, maxExisting, 1e3);
+        const nextNumber = base + 1;
+        const nextUhid = `${prefix}-${nextNumber}`;
         return {
           ok: true,
           nextUhid,
           nextNumber,
-          counterKey,
-          pad,
           prefix,
-          year,
           patientCount
         };
       },
@@ -1586,24 +1590,19 @@ var init_d1Client = __esm({
           return this.update(db3, "patients", id, item);
         }
         const settingsRow = await db3.prepare("SELECT * FROM clinic_settings LIMIT 1").first() || {};
-        const year = (/* @__PURE__ */ new Date()).getFullYear();
-        const includeYear = settingsRow.uhid_include_year === 1 || settingsRow.uhid_include_year === true;
-        const counterKey = includeYear ? `UHID|${year}` : "UHID|ALL";
-        const pad = Number(settingsRow.uhid_padding) || 4;
         const prefix = (settingsRow.uhid_prefix || "HC").trim().toUpperCase();
-        const start = Number(settingsRow.uhid_start) || 1001;
         const itemAge = item.age !== void 0 && item.age !== null && item.age !== "" ? Number(item.age) : item.dob ? Math.max(0, Math.floor((Date.now() - new Date(item.dob).getTime()) / (365.25 * 24 * 3600 * 1e3))) : null;
         const itemCreatedAt = item.created_at || now;
         const itemRegDate = item.reg_date || itemCreatedAt.slice(0, 10) || today;
         for (let attempt = 0; attempt < 5; attempt++) {
-          const counterRow = await db3.prepare("SELECT * FROM counters WHERE key = ? OR id = ? LIMIT 1").bind(counterKey, counterKey).first();
+          const counterRow = await db3.prepare("SELECT * FROM counters WHERE key = ? OR id = ? OR key = ? OR id = ? LIMIT 1").bind("UHID|SEQUENCE", "UHID|SEQUENCE", "UHID|ALL", "UHID|ALL").first();
           let maxExisting = 0;
           try {
             const existingRows = await db3.prepare("SELECT uhid FROM patients WHERE uhid LIKE ?").bind(`${prefix}-%`).all();
             if (existingRows && existingRows.results) {
               for (const r of existingRows.results) {
                 const uhidStr = String(r.uhid || "");
-                const m = includeYear ? uhidStr.match(/-(\d+)$/) : uhidStr.match(/^[A-Za-z]+-(\d+)$/);
+                const m = uhidStr.match(/^[A-Za-z]+-(\d+)$/);
                 if (m) {
                   const val = parseInt(m[1], 10);
                   if (!isNaN(val) && val > maxExisting) maxExisting = val;
@@ -1612,15 +1611,15 @@ var init_d1Client = __esm({
             }
           } catch (_) {
           }
-          const counterVal = counterRow && counterRow.value != null ? Number(counterRow.value) : 0;
-          const base = Math.max(counterVal, maxExisting);
-          let nextVal = base >= start ? base + 1 : start;
+          const counterVal = counterRow && counterRow.value != null ? Number(counterRow.value) : 1e3;
+          const base = Math.max(counterVal, maxExisting, 1e3);
+          let nextVal = base + 1;
           if (attempt > 0) nextVal += attempt;
           let uhid = item.uhid ? String(item.uhid).trim() : null;
           if (!uhid) {
-            uhid = `${prefix}${includeYear ? `-${year}` : ""}-${String(nextVal).padStart(pad, "0")}`;
+            uhid = `${prefix}-${nextVal}`;
           } else {
-            const match = includeYear ? uhid.match(/-(\d+)$/) : uhid.match(/^[A-Za-z]+-(\d+)$/);
+            const match = uhid.match(/^[A-Za-z]+-(\d+)$/);
             if (match) {
               const numInUhid = Number(match[1]);
               if (!isNaN(numInUhid) && numInUhid > nextVal) {
@@ -1654,14 +1653,21 @@ var init_d1Client = __esm({
           const placeholders = cols.map(() => "?");
           const values = cols.map((c) => filtered[c]);
           const batchStmts = [
-            // 1. Atomically update UHID counter
+            // 1. Atomically update UHID sequence counter (both UHID|SEQUENCE and legacy UHID|ALL)
             db3.prepare(`
           INSERT INTO counters (id, key, value, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?)
+          VALUES ('UHID|SEQUENCE', 'UHID|SEQUENCE', ?, ?, ?)
           ON CONFLICT(id) DO UPDATE SET
             value = CASE WHEN excluded.value > counters.value THEN excluded.value ELSE counters.value END,
             updated_at = excluded.updated_at
-        `).bind(counterKey, counterKey, nextVal, now, now),
+        `).bind(nextVal, now, now),
+            db3.prepare(`
+          INSERT INTO counters (id, key, value, created_at, updated_at)
+          VALUES ('UHID|ALL', 'UHID|ALL', ?, ?, ?)
+          ON CONFLICT(id) DO UPDATE SET
+            value = CASE WHEN excluded.value > counters.value THEN excluded.value ELSE counters.value END,
+            updated_at = excluded.updated_at
+        `).bind(nextVal, now, now),
             // 2. Insert patient record
             db3.prepare(`INSERT INTO patients ("${cols.join('", "')}") VALUES (${placeholders.join(", ")})`).bind(...values),
             // 3. Atomically increment DB_VERSION for instant multi-device sync
@@ -1848,20 +1854,15 @@ var init_d1Client = __esm({
         }
         if (actual === "patients") {
           const settingsRow = await db3.prepare("SELECT * FROM clinic_settings LIMIT 1").first() || {};
-          const year = (/* @__PURE__ */ new Date()).getFullYear();
-          const includeYear = settingsRow.uhid_include_year === 1 || settingsRow.uhid_include_year === true;
-          const counterKey = includeYear ? `UHID|${year}` : "UHID|ALL";
-          const pad = Number(settingsRow.uhid_padding) || 4;
           const prefix = (settingsRow.uhid_prefix || "HC").trim().toUpperCase();
-          const start = Number(settingsRow.uhid_start) || 1001;
-          const counterRow = await db3.prepare("SELECT * FROM counters WHERE key = ? OR id = ? LIMIT 1").bind(counterKey, counterKey).first();
-          let counterVal = counterRow && counterRow.value != null ? Number(counterRow.value) : 0;
+          const counterRow = await db3.prepare("SELECT * FROM counters WHERE key = ? OR id = ? OR key = ? OR id = ? LIMIT 1").bind("UHID|SEQUENCE", "UHID|SEQUENCE", "UHID|ALL", "UHID|ALL").first();
+          let counterVal = counterRow && counterRow.value != null ? Number(counterRow.value) : 1e3;
           let maxExistingSuffix = 0;
           try {
             const existingUhids = await db3.prepare("SELECT uhid FROM patients WHERE uhid LIKE ?").bind(`${prefix}-%`).all();
             if (existingUhids && existingUhids.results) {
               for (const row of existingUhids.results) {
-                const match = includeYear ? String(row.uhid || "").match(/-(\d+)$/) : String(row.uhid || "").match(/^[A-Za-z]+-(\d+)$/);
+                const match = String(row.uhid || "").match(/^[A-Za-z]+-(\d+)$/);
                 if (match) {
                   const num = parseInt(match[1], 10);
                   if (!isNaN(num) && num > maxExistingSuffix) {
@@ -1872,7 +1873,7 @@ var init_d1Client = __esm({
             }
           } catch (_) {
           }
-          counterVal = Math.max(counterVal, maxExistingSuffix, start - 1);
+          counterVal = Math.max(counterVal, maxExistingSuffix, 1e3);
           const newPatients = [];
           const skipped = [];
           const batchStmts = [];
@@ -1883,7 +1884,7 @@ var init_d1Client = __esm({
               continue;
             }
             counterVal++;
-            const uhid = item.uhid || `${prefix}${includeYear ? `-${year}` : ""}-${String(counterVal).padStart(pad, "0")}`;
+            const uhid = item.uhid || `${prefix}-${counterVal}`;
             const itemCreatedAt = parseHistoricalDateTime(item.created_at || item.date_time, now);
             const itemRegDate = item.reg_date || (itemCreatedAt ? itemCreatedAt.slice(0, 10) : today);
             const p = {
@@ -1916,13 +1917,14 @@ var init_d1Client = __esm({
             );
           }
           const updatedCounter = {
-            id: counterKey,
-            key: counterKey,
+            id: "UHID|SEQUENCE",
+            key: "UHID|SEQUENCE",
             value: counterVal,
             updated_at: now
           };
           batchStmts.push(
-            db3.prepare("INSERT OR REPLACE INTO counters (id, key, value, updated_at) VALUES (?, ?, ?, ?)").bind(counterKey, counterKey, counterVal, now)
+            db3.prepare("INSERT OR REPLACE INTO counters (id, key, value, updated_at) VALUES (?, ?, ?, ?)").bind("UHID|SEQUENCE", "UHID|SEQUENCE", counterVal, now),
+            db3.prepare("INSERT OR REPLACE INTO counters (id, key, value, updated_at) VALUES (?, ?, ?, ?)").bind("UHID|ALL", "UHID|ALL", counterVal, now)
           );
           if (batchStmts.length > 0) {
             await db3.batch(batchStmts);
@@ -2288,6 +2290,175 @@ var init_d1Client = __esm({
   }
 });
 
+// worker/routes/genericCrud.js
+var genericCrud_exports = {};
+__export(genericCrud_exports, {
+  handleClearPatients: () => handleClearPatients,
+  handleCreate: () => handleCreate,
+  handleDelete: () => handleDelete,
+  handleGetAll: () => handleGetAll,
+  handleGetById: () => handleGetById,
+  handleGetNextUhid: () => handleGetNextUhid,
+  handleUpdate: () => handleUpdate
+});
+async function handleGetAll(table, env) {
+  if (!allowedCollections.has(table)) {
+    return Response.json({ error: `Unknown collection: ${table}` }, { status: 404 });
+  }
+  try {
+    const rows = await d1Client.getAll(env.DB, table);
+    return Response.json(rows, { status: 200, headers: noCacheHeaders });
+  } catch (error) {
+    console.error(`[Worker D1 API] Error reading ${table}:`, error);
+    return Response.json({ error: error.message || "Operation failed" }, { status: 500, headers: noCacheHeaders });
+  }
+}
+async function handleGetById(table, id, env) {
+  if (!allowedCollections.has(table)) {
+    return Response.json({ error: `Unknown collection: ${table}` }, { status: 404 });
+  }
+  try {
+    const row = await d1Client.getById(env.DB, table, id);
+    if (!row) {
+      return Response.json({ error: "Record not found" }, { status: 404, headers: noCacheHeaders });
+    }
+    return Response.json(row, { status: 200, headers: noCacheHeaders });
+  } catch (error) {
+    console.error(`[Worker D1 API] Error reading ${table}/${id}:`, error);
+    return Response.json({ error: error.message || "Operation failed" }, { status: 500, headers: noCacheHeaders });
+  }
+}
+async function handleCreate(table, body, env) {
+  if (!allowedCollections.has(table)) {
+    return Response.json({ error: `Unknown collection: ${table}` }, { status: 404 });
+  }
+  try {
+    const actual = resolveCollection(table);
+    if (actual === "clinic_settings" && body?.key) {
+      const result = await d1Client.updateClinicSetting(env.DB, body.key, body.value);
+      return Response.json(result, { status: 201 });
+    }
+    const created = await d1Client.create(env.DB, actual, body || {});
+    return Response.json(created, { status: 201 });
+  } catch (error) {
+    console.error(`[Worker D1 API] Error creating in ${table}:`, error);
+    return Response.json({ error: error.message || "Operation failed" }, { status: 500 });
+  }
+}
+async function handleUpdate(table, id, body, env) {
+  if (!allowedCollections.has(table)) {
+    return Response.json({ error: `Unknown collection: ${table}` }, { status: 404 });
+  }
+  try {
+    const actual = resolveCollection(table);
+    if (actual === "clinic_settings" && body?.key) {
+      const result = await d1Client.updateClinicSetting(env.DB, body.key, body.value);
+      return Response.json(result, { status: 200 });
+    }
+    const updated = await d1Client.update(env.DB, actual, id, body || {});
+    return Response.json(updated, { status: 200 });
+  } catch (error) {
+    console.error(`[Worker D1 API] Error updating ${table}/${id}:`, error);
+    return Response.json({ error: error.message || "Operation failed" }, { status: 500 });
+  }
+}
+async function handleDelete(table, id, env) {
+  if (!allowedCollections.has(table)) {
+    return Response.json({ error: `Unknown collection: ${table}` }, { status: 404 });
+  }
+  try {
+    await d1Client.remove(env.DB, table, id);
+    return new Response(null, { status: 204 });
+  } catch (error) {
+    console.error(`[Worker D1 API] Error deleting ${table}/${id}:`, error);
+    return Response.json({ error: error.message || "Operation failed" }, { status: 500 });
+  }
+}
+async function handleGetNextUhid(env) {
+  try {
+    const preview = await d1Client.getNextUhidPreview(env.DB);
+    return Response.json(preview, { status: 200, headers: noCacheHeaders });
+  } catch (error) {
+    console.error("[Worker D1 API] Error getting next UHID preview:", error);
+    return Response.json({ error: error.message || "Operation failed" }, { status: 500, headers: noCacheHeaders });
+  }
+}
+async function handleClearPatients(body, env) {
+  const confirmation = String(body?.confirmation || "").trim();
+  if (confirmation !== "DELETE PATIENTS") {
+    return Response.json(
+      { error: 'Confirmation phrase "DELETE PATIENTS" is required.' },
+      { status: 400, headers: noCacheHeaders }
+    );
+  }
+  const db3 = env.DB;
+  if (!db3) {
+    return Response.json({ error: "Database binding (DB) is unavailable." }, { status: 500, headers: noCacheHeaders });
+  }
+  try {
+    const now = (/* @__PURE__ */ new Date()).toISOString();
+    const countRow = await db3.prepare("SELECT COUNT(*) as cnt FROM patients").first();
+    const deletedCount = countRow ? Number(countRow.cnt) : 0;
+    const clearKey = "CLEARED|patients";
+    const clearTime = Date.now();
+    const stmts = [
+      db3.prepare("DELETE FROM patient_vitals"),
+      db3.prepare("DELETE FROM patients"),
+      db3.prepare(`
+        INSERT INTO counters (id, key, value, created_at, updated_at)
+        VALUES ('UHID|SEQUENCE', 'UHID|SEQUENCE', 1000, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET value = 1000, updated_at = excluded.updated_at
+      `).bind(now, now),
+      db3.prepare(`
+        INSERT INTO counters (id, key, value, created_at, updated_at)
+        VALUES ('UHID|ALL', 'UHID|ALL', 1000, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET value = 1000, updated_at = excluded.updated_at
+      `).bind(now, now),
+      db3.prepare(`
+        INSERT INTO counters (id, key, value, created_at, updated_at)
+        VALUES ('UHID|2026', 'UHID|2026', 0, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET value = 0, updated_at = excluded.updated_at
+      `).bind(now, now),
+      db3.prepare(`
+        INSERT INTO counters (id, key, value, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+      `).bind(clearKey, clearKey, clearTime, now, now)
+    ];
+    await db3.batch(stmts);
+    const verifyRow = await db3.prepare("SELECT COUNT(*) as cnt FROM patients").first();
+    const remainingCount = verifyRow ? Number(verifyRow.cnt) : 0;
+    if (remainingCount !== 0) {
+      throw new Error(`Deletion verification failed: ${remainingCount} patients still remain.`);
+    }
+    await d1Client.incrementDbVersion(db3, now);
+    return Response.json(
+      {
+        ok: true,
+        message: "All patient records have been permanently cleared. UHID sequence reset to HC-1001.",
+        deletedCount,
+        nextUhid: "HC-1001"
+      },
+      { status: 200, headers: noCacheHeaders }
+    );
+  } catch (error) {
+    console.error("[Worker D1 API] Error clearing patients:", error);
+    return Response.json({ error: error.message || "Failed to clear patients" }, { status: 500, headers: noCacheHeaders });
+  }
+}
+var noCacheHeaders;
+var init_genericCrud = __esm({
+  "worker/routes/genericCrud.js"() {
+    init_d1Client();
+    init_tables();
+    noCacheHeaders = {
+      "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0",
+      "Pragma": "no-cache",
+      "Expires": "0"
+    };
+  }
+});
+
 // scripts/test-uhid-sequence.mjs
 import "fake-indexeddb/auto";
 import assert from "node:assert";
@@ -2295,6 +2466,7 @@ var { default: db2 } = await Promise.resolve().then(() => (init_db(), db_exports
 var core = await Promise.resolve().then(() => (init_core(), core_exports));
 var patients = await Promise.resolve().then(() => (init_patients(), patients_exports));
 var { d1Client: d1Client2 } = await Promise.resolve().then(() => (init_d1Client(), d1Client_exports));
+var { handleClearPatients: handleClearPatients2 } = await Promise.resolve().then(() => (init_genericCrud(), genericCrud_exports));
 var passed = 0;
 var failed = 0;
 function ok(name) {
@@ -2355,11 +2527,25 @@ try {
   const remainingZero = await db2.patients.count();
   assert.strictEqual(remainingZero, 0, "Database must now contain zero patients");
   const pNew = await patients.registerPatient(
-    { name: "Patient After All Deleted", age: 22, gender: "F", mobile: "9666666666" },
+    { name: "Patient After Individual Deletions", age: 22, gender: "F", mobile: "9666666666" },
     "admin"
   );
-  assert.strictEqual(pNew.uhid, "HC-1006", `Expected HC-1006 even after deleting all patients, got ${pNew.uhid}`);
-  ok("TEST 5: All patients deleted (zero remaining) -> Monotonic sequence preserved, next patient receives HC-1006");
+  assert.strictEqual(pNew.uhid, "HC-1006", `Expected HC-1006 after individual deletions, got ${pNew.uhid}`);
+  ok("TEST 5: Individual deletes resulting in zero patients -> Sequence NOT reset, next receives HC-1006");
+  await patients.clearAllPatients("admin");
+  const afterClearCount = await db2.patients.count();
+  assert.strictEqual(afterClearCount, 0, "Patients must be 0 after Delete All Patients");
+  const pReset1 = await patients.registerPatient(
+    { name: "Patient After Delete All", age: 29, gender: "M", mobile: "9777777777" },
+    "admin"
+  );
+  assert.strictEqual(pReset1.uhid, "HC-1001", `Expected HC-1001 after Delete All Patients reset, got ${pReset1.uhid}`);
+  const pReset2 = await patients.registerPatient(
+    { name: "Second Patient After Delete All", age: 31, gender: "F", mobile: "9888888888" },
+    "admin"
+  );
+  assert.strictEqual(pReset2.uhid, "HC-1002", `Expected HC-1002 after Delete All Patients reset, got ${pReset2.uhid}`);
+  ok('TEST 6: "Delete All Patients" explicitly resets sequence -> Next patients receive HC-1001, then HC-1002');
 } catch (err) {
   fail("Part 1 failure", err);
 }
@@ -2398,8 +2584,7 @@ console.log("\n--- PART 2: Cloudflare D1 Backend Engine Verification ---");
             return { count: tables.patients.length };
           }
           if (/SELECT \* FROM counters/i.test(trimmed)) {
-            const key = bound[0];
-            return tables.counters.find((c) => c.key === key || c.id === key) || null;
+            return tables.counters.find((c) => bound.includes(c.key) || bound.includes(c.id)) || null;
           }
           if (/SELECT \* FROM "?patients"? WHERE id = \?/i.test(trimmed)) {
             const id = bound[0];
@@ -2422,6 +2607,12 @@ console.log("\n--- PART 2: Cloudflare D1 Backend Engine Verification ---");
           return { success: true };
         }
       };
+      stmt.all = async () => {
+        if (/SELECT uhid FROM patients/i.test(trimmed)) {
+          return { results: tables.patients.map((p) => ({ uhid: p.uhid })) };
+        }
+        return { results: [] };
+      };
       return stmt;
     },
     async batch(stmts) {
@@ -2429,7 +2620,17 @@ console.log("\n--- PART 2: Cloudflare D1 Backend Engine Verification ---");
         const sql = stmt.sql;
         const bound = stmt.bound || [];
         if (/INSERT INTO counters/i.test(sql)) {
-          const [id, key, val, created_at, updated_at] = bound;
+          let id, key, val, created_at, updated_at;
+          const matchLiteral = sql.match(/VALUES\s*\(\s*'([^']+)'\s*,\s*'([^']+)'\s*,\s*(?:(\d+)|\?)\s*,\s*(?:\?|'[^']*')\s*,\s*(?:\?|'[^']*')\s*\)/i);
+          if (matchLiteral) {
+            id = matchLiteral[1];
+            key = matchLiteral[2];
+            val = matchLiteral[3] !== void 0 ? Number(matchLiteral[3]) : bound[0];
+            created_at = bound[1] || (/* @__PURE__ */ new Date()).toISOString();
+            updated_at = bound[2] || created_at;
+          } else {
+            [id, key, val, created_at, updated_at] = bound;
+          }
           const idx = tables.counters.findIndex((c) => c.id === id || c.key === key);
           if (idx >= 0) {
             tables.counters[idx].value = val;
@@ -2447,6 +2648,9 @@ console.log("\n--- PART 2: Cloudflare D1 Backend Engine Verification ---");
             });
             tables.patients.push(record);
           }
+        } else if (/DELETE FROM patient_vitals/i.test(sql)) {
+        } else if (/DELETE FROM patients/i.test(sql)) {
+          tables.patients = [];
         }
       }
       return { success: true };
@@ -2468,7 +2672,7 @@ console.log("\n--- PART 2: Cloudflare D1 Backend Engine Verification ---");
   assert.strictEqual(prevAfterDelete2.nextUhid, "HC-1004", "Preview must be HC-1004");
   const d1p4 = await d1Client2.allocatePatient(mockD1, { name: "D1 Patient 4", age: 35, gender: "F", mobile: "9444444444" });
   assert.strictEqual(d1p4.uhid, "HC-1004", `Expected HC-1004, got ${d1p4.uhid}`);
-  ok("D1 TEST 3: Deleting 1002 does NOT reset or reuse counter; next patient is HC-1004");
+  ok("D1 TEST 3: Deleting 1002 individually does NOT reset or reuse counter; next patient is HC-1004");
   await d1Client2.remove(mockD1, "patients", d1p1.id);
   await d1Client2.remove(mockD1, "patients", d1p3.id);
   assert.strictEqual(tables.patients.length, 1, "Patient 1004 remains in D1");
@@ -2477,23 +2681,31 @@ console.log("\n--- PART 2: Cloudflare D1 Backend Engine Verification ---");
   ok("D1 TEST 4: Deleting 1001 and 1003 leaves 1004 in DB; next patient is HC-1005");
   await d1Client2.remove(mockD1, "patients", d1p4.id);
   await d1Client2.remove(mockD1, "patients", d1p5.id);
-  assert.strictEqual(tables.patients.length, 0, "D1 now has genuinely 0 patients");
+  assert.strictEqual(tables.patients.length, 0, "D1 now has genuinely 0 patients via individual deletes");
   const prevAfterZero = await d1Client2.getNextUhidPreview(mockD1);
-  assert.strictEqual(prevAfterZero.nextUhid, "HC-1006", "Preview after zero patients must be HC-1006 (counter preserved)");
+  assert.strictEqual(prevAfterZero.nextUhid, "HC-1006", "Preview after individual deletions to 0 must be HC-1006 (counter preserved)");
   const d1Fresh = await d1Client2.allocatePatient(mockD1, { name: "D1 Fresh", age: 28, gender: "F", mobile: "9777777777" });
   assert.strictEqual(d1Fresh.uhid, "HC-1006", `Expected HC-1006, got ${d1Fresh.uhid}`);
-  ok("D1 TEST 5: All patients deleted in D1 -> sequence continues monotonically with HC-1006");
+  ok("D1 TEST 5: Individual deletes resulting in 0 patients preserves counter -> HC-1006 allocated");
+  const clearRes = await handleClearPatients2({ confirmation: "DELETE PATIENTS" }, { DB: mockD1 });
+  assert.strictEqual(clearRes.status, 200);
+  assert.strictEqual(tables.patients.length, 0, "Patients table must be 0 after Delete All Patients");
+  const prevAfterClear = await d1Client2.getNextUhidPreview(mockD1);
+  assert.strictEqual(prevAfterClear.nextUhid, "HC-1001", "Preview after Delete All Patients must be HC-1001");
+  const pAfterClear1 = await d1Client2.allocatePatient(mockD1, { name: "Patient After D1 Clear", age: 24, gender: "M", mobile: "9888888880" });
+  assert.strictEqual(pAfterClear1.uhid, "HC-1001", `Expected HC-1001, got ${pAfterClear1.uhid}`);
+  ok('D1 TEST 6: "Delete All Patients" resets UHID sequence -> next patient receives HC-1001');
   const laptop1Patient = await d1Client2.allocatePatient(mockD1, { name: "Laptop 1 Patient", age: 45, gender: "M", mobile: "9888888881" });
   const laptop2Patient = await d1Client2.allocatePatient(mockD1, { name: "Laptop 2 Patient", age: 32, gender: "F", mobile: "9888888882" });
-  assert.strictEqual(laptop1Patient.uhid, "HC-1007");
-  assert.strictEqual(laptop2Patient.uhid, "HC-1008");
+  assert.strictEqual(laptop1Patient.uhid, "HC-1002");
+  assert.strictEqual(laptop2Patient.uhid, "HC-1003");
   assert.notStrictEqual(laptop1Patient.uhid, laptop2Patient.uhid, "Multi-laptop UHIDs must be strictly distinct");
-  ok("D1 TEST 6: Multi-laptop simulation: Laptop 1 (HC-1007) & Laptop 2 (HC-1008) receive unique sequential UHIDs");
+  ok("D1 TEST 7: Multi-laptop simulation: Laptop 1 (HC-1002) & Laptop 2 (HC-1003) receive unique sequential UHIDs");
   const previewAfterReload = await d1Client2.getNextUhidPreview(mockD1);
-  assert.strictEqual(previewAfterReload.nextUhid, "HC-1009");
+  assert.strictEqual(previewAfterReload.nextUhid, "HC-1004");
   const nextReloadPatient = await d1Client2.allocatePatient(mockD1, { name: "Post-Reload Patient", age: 29, gender: "M", mobile: "9888888889" });
-  assert.strictEqual(nextReloadPatient.uhid, "HC-1009");
-  ok("D1 TEST 7: State persistence: preview and subsequent patient continue sequence to HC-1009");
+  assert.strictEqual(nextReloadPatient.uhid, "HC-1004");
+  ok("D1 TEST 8: State persistence: preview and subsequent patient continue sequence to HC-1004");
 }
 console.log("\n================================================================");
 console.log(`RESULTS: ${passed} passed, ${failed} failed.`);

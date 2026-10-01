@@ -50,14 +50,24 @@ function RegisterModal({ open, onClose, prefill = {} }) {
   const uhidPreview = useLiveQuery(async () => {
     if (!open) return null;
     const s = await getSettings();
-    const year = new Date().getFullYear();
-    const includeYear = s.uhid_include_year === 1 || s.uhid_include_year === true;
-    const pad = Number(s.uhid_padding) || 4;
     const prefix = (s.uhid_prefix || 'HC').trim().toUpperCase();
-    const key = includeYear ? `UHID|${year}` : 'UHID|ALL';
-    const row = await db.counters.get(key);
-    const n = row ? row.value + 1 : Number(s.uhid_start) || 1001;
-    return `${prefix}${includeYear ? `-${year}` : ''}-${String(n).padStart(pad, '0')}`;
+    const row = await db.counters.get('UHID|SEQUENCE') || await db.counters.get('UHID|ALL');
+    let maxExisting = 0;
+    try {
+      const records = await db.patients.toArray();
+      for (const p of records) {
+        const uhid = String(p.uhid || '');
+        const match = uhid.match(/^[A-Za-z]+-(\d+)$/);
+        if (match) {
+          const num = parseInt(match[1], 10);
+          if (!isNaN(num) && num > maxExisting) maxExisting = num;
+        }
+      }
+    } catch (_) {}
+    const counterVal = row && row.value != null ? Number(row.value) : 1000;
+    const base = Math.max(counterVal, maxExisting, 1000);
+    const n = base + 1;
+    return `${prefix}-${n}`;
   }, [open]);
 
   const set = (k) => (e) => setF((x) => ({ ...x, [k]: e.target.value }));

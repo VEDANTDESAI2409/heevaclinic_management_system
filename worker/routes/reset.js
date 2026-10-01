@@ -81,8 +81,8 @@ export async function handleReset(request, env) {
           '1', 'HEEVA CLINIC', 'Trusted care, every time.', '', '', '',
           'A/8, MONARCH, Pal Gam, Surat, Gujarat – 394510', '', '', '/icons/heeva-logo.png',
           'Thank you for choosing Heeva Clinic.', '₹', 'HC-BILL',
-          6, 'Cash', 'HC', 1,
-          6, 1, 10, 30, 60,
+          6, 'Cash', 'HC', 0,
+          4, 1001, 10, 30, 60,
           90, 1, 'light', 'en', '1', ?, ?
         )
         ON CONFLICT(id) DO UPDATE SET
@@ -116,11 +116,19 @@ export async function handleReset(request, env) {
       `).bind(now, now, now)
     );
 
-    // Initialize DB_VERSION counter
+    // Initialize DB_VERSION and UHID counters
     stmts.push(
       db.prepare(`
         INSERT INTO counters (id, key, value, created_at, updated_at)
         VALUES ('DB_VERSION', 'DB_VERSION', 1, ?, ?)
+      `).bind(now, now),
+      db.prepare(`
+        INSERT INTO counters (id, key, value, created_at, updated_at)
+        VALUES ('UHID|SEQUENCE', 'UHID|SEQUENCE', 1000, ?, ?)
+      `).bind(now, now),
+      db.prepare(`
+        INSERT INTO counters (id, key, value, created_at, updated_at)
+        VALUES ('UHID|ALL', 'UHID|ALL', 1000, ?, ?)
       `).bind(now, now)
     );
 

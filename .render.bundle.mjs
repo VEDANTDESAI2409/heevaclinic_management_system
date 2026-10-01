@@ -883,18 +883,18 @@ async function nextCounter(key, start = 1) {
   await db_default.counters.put({ key, value: next });
   return next;
 }
-async function makeUHID(settings, year = (/* @__PURE__ */ new Date()).getFullYear()) {
+async function makeUHID(settings) {
   const s = settings || await getSettings();
-  const includeYear = s.uhid_include_year === 1 || s.uhid_include_year === true;
-  const key = includeYear ? `UHID|${year}` : "UHID|ALL";
-  let start = Number(s.uhid_start) || 1001;
+  const prefix = (s.uhid_prefix || "HC").trim().toUpperCase();
+  const key = "UHID|SEQUENCE";
+  let start = 1001;
   try {
     if (db_default.patients) {
       const records = await db_default.patients.toArray();
       let maxSuffix = 0;
       for (const p of records) {
         const uhid = String(p.uhid || "");
-        const match = includeYear ? uhid.match(/-(\d+)$/) : uhid.match(/^[A-Za-z]+-(\d+)$/);
+        const match = uhid.match(/^[A-Za-z]+-(\d+)$/);
         if (match) {
           const num = parseInt(match[1], 10);
           if (!isNaN(num) && num > maxSuffix) maxSuffix = num;
@@ -905,9 +905,11 @@ async function makeUHID(settings, year = (/* @__PURE__ */ new Date()).getFullYea
   } catch (_) {
   }
   const n = await nextCounter(key, start);
-  const pad = Number(s.uhid_padding) || 4;
-  const prefix = (s.uhid_prefix || "HC").trim().toUpperCase();
-  return `${prefix}${includeYear ? `-${year}` : ""}-${String(n).padStart(pad, "0")}`;
+  try {
+    await db_default.counters.put({ key: "UHID|ALL", value: n });
+  } catch (_) {
+  }
+  return `${prefix}-${n}`;
 }
 async function makeNo(kind, prefix, year = (/* @__PURE__ */ new Date()).getFullYear(), padding = 6, start = 1) {
   let effectiveStart = start;
@@ -3435,11 +3437,11 @@ async function registerPatient(data, userId, { temp = false } = {}) {
         db_default.__hydrating = true;
         try {
           await db_default.patients.put(serverPatient);
-          const year = (/* @__PURE__ */ new Date()).getFullYear();
-          const key = settings.uhid_include_year ? `UHID|${year}` : "UHID|ALL";
-          const match = serverPatient.uhid.match(/-(\d+)$/);
+          const match = serverPatient.uhid.match(/^[A-Za-z]+-(\d+)$/);
           if (match) {
-            await db_default.counters.put({ key, value: Number(match[1]) });
+            const val = Number(match[1]);
+            await db_default.counters.put({ key: "UHID|SEQUENCE", value: val });
+            await db_default.counters.put({ key: "UHID|ALL", value: val });
           }
         } finally {
           db_default.__hydrating = prevHydrating;
@@ -3524,28 +3526,10 @@ async function clearAllPatients(userId) {
     }
   }
   return db_default.transaction("rw", [db_default.patients, db_default.patient_vitals, db_default.counters, db_default.activity_logs], async () => {
-    const settings = await getSettings();
+    await db_default.counters.put({ key: "UHID|SEQUENCE", value: 1e3 });
+    await db_default.counters.put({ key: "UHID|ALL", value: 1e3 });
     const year = (/* @__PURE__ */ new Date()).getFullYear();
-    const includeYear = settings.uhid_include_year === 1 || settings.uhid_include_year === true;
-    const key = includeYear ? `UHID|${year}` : "UHID|ALL";
-    const start = Number(settings.uhid_start) || 1001;
-    let maxExisting = 0;
-    try {
-      const records = await db_default.patients.toArray();
-      for (const p of records) {
-        const uhid = String(p.uhid || "");
-        const match = includeYear ? uhid.match(/-(\d+)$/) : uhid.match(/^[A-Za-z]+-(\d+)$/);
-        if (match) {
-          const num = parseInt(match[1], 10);
-          if (!isNaN(num) && num > maxExisting) maxExisting = num;
-        }
-      }
-    } catch (_) {
-    }
-    const counterRow = await db_default.counters.get(key);
-    const currentCounter = counterRow && counterRow.value != null ? Number(counterRow.value) : 0;
-    const finalCounterVal = Math.max(currentCounter, maxExisting, start - 1);
-    await db_default.counters.put({ key, value: finalCounterVal });
+    await db_default.counters.put({ key: `UHID|${year}`, value: 0 });
     clearRecentMutationsFor("patients");
     clearRecentMutationsFor("patient_vitals");
     await db_default.patient_vitals.clear();
@@ -3559,7 +3543,7 @@ async function clearAllPatients(userId) {
       } catch (_) {
       }
     }
-    return { ok: true, counterPreserved: finalCounterVal };
+    return { ok: true, reset: true };
   });
 }
 async function addVitals(patientId, v, userId) {
@@ -5419,14 +5403,25 @@ function RegisterModal({ open, onClose, prefill = {} }) {
   const uhidPreview = useLiveQuery3(async () => {
     if (!open) return null;
     const s = await getSettings();
-    const year = (/* @__PURE__ */ new Date()).getFullYear();
-    const includeYear = s.uhid_include_year === 1 || s.uhid_include_year === true;
-    const pad = Number(s.uhid_padding) || 4;
     const prefix = (s.uhid_prefix || "HC").trim().toUpperCase();
-    const key = includeYear ? `UHID|${year}` : "UHID|ALL";
-    const row = await db_default.counters.get(key);
-    const n = row ? row.value + 1 : Number(s.uhid_start) || 1001;
-    return `${prefix}${includeYear ? `-${year}` : ""}-${String(n).padStart(pad, "0")}`;
+    const row = await db_default.counters.get("UHID|SEQUENCE") || await db_default.counters.get("UHID|ALL");
+    let maxExisting = 0;
+    try {
+      const records = await db_default.patients.toArray();
+      for (const p of records) {
+        const uhid = String(p.uhid || "");
+        const match = uhid.match(/^[A-Za-z]+-(\d+)$/);
+        if (match) {
+          const num = parseInt(match[1], 10);
+          if (!isNaN(num) && num > maxExisting) maxExisting = num;
+        }
+      }
+    } catch (_) {
+    }
+    const counterVal = row && row.value != null ? Number(row.value) : 1e3;
+    const base = Math.max(counterVal, maxExisting, 1e3);
+    const n = base + 1;
+    return `${prefix}-${n}`;
   }, [open]);
   const set = (k) => (e) => setF((x) => ({ ...x, [k]: e.target.value }));
   const validate = () => {
@@ -10081,9 +10076,9 @@ function SettingsPage() {
       bill_padding: s.bill_padding ?? 6,
       default_payment: s.default_payment || "Cash",
       uhid_prefix: s.uhid_prefix || "HC",
-      uhid_include_year: s.uhid_include_year ?? true,
-      uhid_padding: s.uhid_padding ?? 6,
-      uhid_start: s.uhid_start ?? 1,
+      uhid_include_year: false,
+      uhid_padding: 4,
+      uhid_start: s.uhid_start ?? 1001,
       low_stock_default: s.low_stock_default ?? 10,
       expiry_30: s.expiry_30 ?? 30,
       expiry_60: s.expiry_60 ?? 60,
@@ -10159,10 +10154,8 @@ function SettingsPage() {
     { key: "data", label: "Data & Backup", icon: Database }
   ];
   const uhidPreview = (() => {
-    const year = (/* @__PURE__ */ new Date()).getFullYear();
-    const n = Number(f.uhid_start) || 1;
-    const pad = Number(f.uhid_padding) || 6;
-    return `${(f.uhid_prefix || "HC").toUpperCase()}${f.uhid_include_year ? `-${year}` : ""}-${String(n).padStart(pad, "0")}`;
+    const n = Number(f.uhid_start) || 1001;
+    return `${(f.uhid_prefix || "HC").toUpperCase()}-${n}`;
   })();
   return /* @__PURE__ */ React24.createElement("div", { className: "page" }, /* @__PURE__ */ React24.createElement(PageHeader, { title: "Settings", sub: "Configure the clinic profile, numbering, inventory rules and app behaviour" }), msg && /* @__PURE__ */ React24.createElement("div", { className: "set-msg" }, "\u2713 ", msg), /* @__PURE__ */ React24.createElement("div", { className: "tabs rep-tabs" }, tabDefs.map((t) => /* @__PURE__ */ React24.createElement("button", { key: t.key, className: `tab ${tab === t.key ? "tab-active" : ""}`, onClick: () => setTab(t.key) }, /* @__PURE__ */ React24.createElement(t.icon, { size: 14 }), " ", t.label))), tab === "clinic" && /* @__PURE__ */ React24.createElement(Section, { icon: Building2, title: "Clinic Profile", sub: "Shown on payment receipts and prescription letterheads", onSubmit: () => save(["clinic_name", "tagline", "doctor_name", "doctor_phone", "doctor_qual", "doctor_role", "address", "phone", "email", "receipt_footer", "logo"]) }, /* @__PURE__ */ React24.createElement("div", { className: "form-grid" }, /* @__PURE__ */ React24.createElement(Field, { label: "Clinic Name", className: "fg-2" }, /* @__PURE__ */ React24.createElement(Input, { value: f.clinic_name, onChange: set("clinic_name") })), /* @__PURE__ */ React24.createElement(Field, { label: "Tagline", className: "fg-2" }, /* @__PURE__ */ React24.createElement(Input, { value: f.tagline, onChange: set("tagline") })), /* @__PURE__ */ React24.createElement(Field, { label: "Doctor Name" }, /* @__PURE__ */ React24.createElement(Input, { value: f.doctor_name, onChange: set("doctor_name") })), /* @__PURE__ */ React24.createElement(Field, { label: "Doctor Phone" }, /* @__PURE__ */ React24.createElement(Input, { value: f.doctor_phone, onChange: set("doctor_phone"), placeholder: "e.g. 9913974000" })), /* @__PURE__ */ React24.createElement(Field, { label: "Qualifications" }, /* @__PURE__ */ React24.createElement(Input, { value: f.doctor_qual, onChange: set("doctor_qual") })), /* @__PURE__ */ React24.createElement(Field, { label: "Role" }, /* @__PURE__ */ React24.createElement(Input, { value: f.doctor_role, onChange: set("doctor_role") })), /* @__PURE__ */ React24.createElement(Field, { label: "Phone" }, /* @__PURE__ */ React24.createElement(Input, { value: f.phone, onChange: set("phone") })), /* @__PURE__ */ React24.createElement(Field, { label: "Email", className: "fg-2" }, /* @__PURE__ */ React24.createElement(Input, { value: f.email, onChange: set("email") })), /* @__PURE__ */ React24.createElement(Field, { label: "Address", className: "fg-2" }, /* @__PURE__ */ React24.createElement(Textarea, { rows: 2, value: f.address, onChange: set("address") })), /* @__PURE__ */ React24.createElement(Field, { label: "Receipt Footer", className: "fg-2" }, /* @__PURE__ */ React24.createElement(Input, { value: f.receipt_footer, onChange: set("receipt_footer") })), /* @__PURE__ */ React24.createElement(Field, { label: "Logo", hint: "PNG/JPG \u2014 used on A4 documents" }, /* @__PURE__ */ React24.createElement("div", { className: "logo-row" }, f.logo ? /* @__PURE__ */ React24.createElement("img", { src: f.logo, alt: "logo", className: "logo-preview" }) : /* @__PURE__ */ React24.createElement(Logo, { size: 44 }), /* @__PURE__ */ React24.createElement("input", { type: "file", accept: "image/*", hidden: true, ref: logoRef, onChange: (e) => e.target.files?.[0] && uploadLogo(e.target.files[0]) }), /* @__PURE__ */ React24.createElement(Btn, { size: "sm", variant: "ghost", onClick: () => logoRef.current?.click() }, "Upload"), f.logo && /* @__PURE__ */ React24.createElement(Btn, { size: "sm", variant: "ghost", onClick: () => setF((x) => ({ ...x, logo: "" })) }, "Remove")))), /* @__PURE__ */ React24.createElement("div", { className: "set-save" }, /* @__PURE__ */ React24.createElement(Btn, { type: "submit", variant: "accent", disabled: busy }, busy ? "Saving\u2026" : "Save clinic profile"))), tab === "billing" && /* @__PURE__ */ React24.createElement(Section, { icon: ReceiptText6, title: "Billing Settings", sub: "Currency, bill numbering and default payment method", onSubmit: () => save(["currency", "bill_prefix", "bill_padding", "default_payment"]) }, /* @__PURE__ */ React24.createElement("div", { className: "form-grid" }, /* @__PURE__ */ React24.createElement(Field, { label: "Currency Symbol" }, /* @__PURE__ */ React24.createElement(Input, { value: f.currency, onChange: set("currency") })), /* @__PURE__ */ React24.createElement(Field, { label: "Bill Number Prefix" }, /* @__PURE__ */ React24.createElement(Input, { value: f.bill_prefix, onChange: set("bill_prefix") })), /* @__PURE__ */ React24.createElement(Field, { label: "Bill Number Padding" }, /* @__PURE__ */ React24.createElement(Input, { type: "number", min: "3", max: "10", value: f.bill_padding, onChange: set("bill_padding") })), /* @__PURE__ */ React24.createElement(Field, { label: "Default Payment Method" }, /* @__PURE__ */ React24.createElement(Select, { value: f.default_payment, onChange: set("default_payment") }, ["Cash", "UPI", "Card", "Bank Transfer", "Other"].map((m) => /* @__PURE__ */ React24.createElement("option", { key: m }, m)))), /* @__PURE__ */ React24.createElement("div", { className: "set-preview" }, /* @__PURE__ */ React24.createElement("span", { className: "set-preview-label" }, "Next bill number preview"), /* @__PURE__ */ React24.createElement(Badge, { tone: "navy", className: "set-preview-badge" }, f.bill_prefix, "-", (/* @__PURE__ */ new Date()).getFullYear(), "-000001"))), /* @__PURE__ */ React24.createElement("div", { className: "set-save" }, /* @__PURE__ */ React24.createElement(Btn, { type: "submit", variant: "accent", disabled: busy }, busy ? "Saving\u2026" : "Save billing settings")), /* @__PURE__ */ React24.createElement("div", { style: { marginTop: 28, paddingTop: 20, borderTop: "1px solid var(--border)" } }, /* @__PURE__ */ React24.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 } }, /* @__PURE__ */ React24.createElement("div", null, /* @__PURE__ */ React24.createElement("h4", { style: { margin: 0, fontSize: 15, fontWeight: 700 } }, "Clinic Billable Services"), /* @__PURE__ */ React24.createElement("div", { style: { fontSize: 12, color: "var(--text-3)" } }, "Standard consultation fees, laboratory tests, and clinical procedures")), /* @__PURE__ */ React24.createElement(
     Btn,
@@ -10218,7 +10211,7 @@ function SettingsPage() {
       pageSize: 8,
       empty: /* @__PURE__ */ React24.createElement(EmptyState, { compact: true, title: "No clinic services configured", message: "Add consultation fees or medical services to include in patient bills." })
     }
-  ))), tab === "uhid" && /* @__PURE__ */ React24.createElement(Section, { icon: Fingerprint, title: "UHID Configuration", sub: "Unique Health Identification format \u2014 applied to NEW registrations only; existing UHIDs never change", onSubmit: () => save(["uhid_prefix", "uhid_include_year", "uhid_padding", "uhid_start"]) }, /* @__PURE__ */ React24.createElement("div", { className: "form-grid" }, /* @__PURE__ */ React24.createElement(Field, { label: "UHID Prefix" }, /* @__PURE__ */ React24.createElement(Input, { value: f.uhid_prefix, onChange: set("uhid_prefix"), placeholder: "HC" })), /* @__PURE__ */ React24.createElement(Field, { label: "Include Registration Year" }, /* @__PURE__ */ React24.createElement(Toggle, { checked: !!f.uhid_include_year, onChange: setBool("uhid_include_year"), label: f.uhid_include_year ? "Yes \u2014 HC-2026-000001" : "No \u2014 HC-000001" })), /* @__PURE__ */ React24.createElement(Field, { label: "Number Padding (digits)" }, /* @__PURE__ */ React24.createElement(Input, { type: "number", min: "3", max: "10", value: f.uhid_padding, onChange: set("uhid_padding") })), /* @__PURE__ */ React24.createElement(Field, { label: "Starting Number", hint: "Applies to the first UHID of a new year/scope" }, /* @__PURE__ */ React24.createElement(Input, { type: "number", min: "1", value: f.uhid_start, onChange: set("uhid_start") })), /* @__PURE__ */ React24.createElement("div", { className: "set-preview fg-2" }, /* @__PURE__ */ React24.createElement("span", { className: "set-preview-label" }, "Next UHID preview"), /* @__PURE__ */ React24.createElement(Badge, { tone: "teal", className: "set-preview-badge" }, uhidPreview))), /* @__PURE__ */ React24.createElement("div", { className: "uhid-rules" }, /* @__PURE__ */ React24.createElement(ShieldCheck, { size: 16 }), /* @__PURE__ */ React24.createElement("span", null, "UHID is assigned once, permanently linked to the patient, stored with a unique database constraint, and appears on bills, prescriptions, receipts and history.")), /* @__PURE__ */ React24.createElement("div", { className: "set-save" }, /* @__PURE__ */ React24.createElement(Btn, { type: "submit", variant: "accent", disabled: busy }, busy ? "Saving\u2026" : "Save UHID settings"))), tab === "inventory" && /* @__PURE__ */ React24.createElement(Section, { icon: Boxes3, title: "Inventory Rules", sub: "Low-stock thresholds, expiry alert windows and batch selection", onSubmit: () => save(["low_stock_default", "expiry_30", "expiry_60", "expiry_90", "fefo"]) }, /* @__PURE__ */ React24.createElement("div", { className: "form-grid" }, /* @__PURE__ */ React24.createElement(Field, { label: "Default Low-Stock Level" }, /* @__PURE__ */ React24.createElement(Input, { type: "number", min: "0", value: f.low_stock_default, onChange: set("low_stock_default") })), /* @__PURE__ */ React24.createElement(Field, { label: "Expiry Alert Window 1 (days)" }, /* @__PURE__ */ React24.createElement(Input, { type: "number", min: "1", value: f.expiry_30, onChange: set("expiry_30") })), /* @__PURE__ */ React24.createElement(Field, { label: "Expiry Alert Window 2 (days)" }, /* @__PURE__ */ React24.createElement(Input, { type: "number", min: "1", value: f.expiry_60, onChange: set("expiry_60") })), /* @__PURE__ */ React24.createElement(Field, { label: "Expiry Alert Window 3 (days)" }, /* @__PURE__ */ React24.createElement(Input, { type: "number", min: "1", value: f.expiry_90, onChange: set("expiry_90") })), /* @__PURE__ */ React24.createElement(Field, { label: "FEFO (First Expired First Out)" }, /* @__PURE__ */ React24.createElement(Toggle, { checked: !!f.fefo, onChange: setBool("fefo"), label: f.fefo ? "Enabled \u2014 billing picks earliest-expiry batch" : "Disabled \u2014 FIFO by manufacturing date" }))), /* @__PURE__ */ React24.createElement("div", { className: "set-save" }, /* @__PURE__ */ React24.createElement(Btn, { type: "submit", variant: "accent", disabled: busy }, busy ? "Saving\u2026" : "Save inventory rules"))), tab === "print" && /* @__PURE__ */ React24.createElement(Section, { icon: Printer7, title: "Print Settings", sub: "A4 landscape payment receipt with clinic and patient copies" }, /* @__PURE__ */ React24.createElement("div", { className: "set-preview" }, /* @__PURE__ */ React24.createElement("span", { className: "set-preview-label" }, "Available format"), /* @__PURE__ */ React24.createElement("div", { className: "set-chips" }, /* @__PURE__ */ React24.createElement(Badge, { tone: "teal" }, "A4 landscape \xB7 2 copies"), /* @__PURE__ */ React24.createElement(Badge, { tone: "gray" }, "Clinic copy"), /* @__PURE__ */ React24.createElement(Badge, { tone: "gray" }, "Patient copy")))), tab === "appearance" && /* @__PURE__ */ React24.createElement(Section, { icon: Palette, title: "Appearance", sub: "Theme and language" }, /* @__PURE__ */ React24.createElement("div", { className: "form-grid" }, /* @__PURE__ */ React24.createElement(Field, { label: "Theme" }, /* @__PURE__ */ React24.createElement("div", { className: "theme-opts" }, /* @__PURE__ */ React24.createElement(Btn, { variant: theme === "light" ? "primary" : "ghost", onClick: () => setTheme("light") }, "\u2600\uFE0F Light"), /* @__PURE__ */ React24.createElement(Btn, { variant: theme === "dark" ? "primary" : "ghost", onClick: () => setTheme("dark") }, "\u{1F319} Dark"))), /* @__PURE__ */ React24.createElement(Field, { label: "Language", hint: "Gujarati UI is in progress \u2014 English labels are used as fallback" }, /* @__PURE__ */ React24.createElement(Select, { value: lang, onChange: (e) => setLang(e.target.value) }, /* @__PURE__ */ React24.createElement("option", { value: "en" }, "English"), /* @__PURE__ */ React24.createElement("option", { value: "gu" }, "\u0A97\u0AC1\u0A9C\u0AB0\u0ABE\u0AA4\u0AC0 (Gujarati)"))))), tab === "data" && /* @__PURE__ */ React24.createElement(Section, { icon: Database, title: "Data, Backup & Maintenance", sub: "All data is stored locally on this device (offline-first). Export regular backups." }, /* @__PURE__ */ React24.createElement("div", { className: "data-grid" }, /* @__PURE__ */ React24.createElement("div", { className: "data-tile" }, /* @__PURE__ */ React24.createElement("span", null, "Patients"), /* @__PURE__ */ React24.createElement("b", null, counts?.patients ?? "\u2014")), /* @__PURE__ */ React24.createElement("div", { className: "data-tile" }, /* @__PURE__ */ React24.createElement("span", null, "Bills"), /* @__PURE__ */ React24.createElement("b", null, counts?.bills ?? "\u2014")), /* @__PURE__ */ React24.createElement("div", { className: "data-tile" }, /* @__PURE__ */ React24.createElement("span", null, "Medicines"), /* @__PURE__ */ React24.createElement("b", null, counts?.meds ?? "\u2014"))), /* @__PURE__ */ React24.createElement("div", { className: "data-actions" }, /* @__PURE__ */ React24.createElement(Btn, { variant: "outline", icon: Download13, onClick: exportBackup }, "Export Full Backup (JSON)"), /* @__PURE__ */ React24.createElement(Btn, { variant: "outline", icon: Upload6, onClick: () => importRef.current?.click() }, "Import Backup"), /* @__PURE__ */ React24.createElement("input", { type: "file", accept: "application/json", hidden: true, ref: importRef, onChange: (e) => {
+  ))), tab === "uhid" && /* @__PURE__ */ React24.createElement(Section, { icon: Fingerprint, title: "UHID Configuration", sub: "Unique Health Identification format (HC-1001, HC-1002...) \u2014 applied to NEW registrations only", onSubmit: () => save(["uhid_prefix", "uhid_start"]) }, /* @__PURE__ */ React24.createElement("div", { className: "form-grid" }, /* @__PURE__ */ React24.createElement(Field, { label: "UHID Prefix" }, /* @__PURE__ */ React24.createElement(Input, { value: f.uhid_prefix, onChange: set("uhid_prefix"), placeholder: "HC" })), /* @__PURE__ */ React24.createElement(Field, { label: "Starting Number", hint: "Default starting sequence number (1001)" }, /* @__PURE__ */ React24.createElement(Input, { type: "number", min: "1001", value: f.uhid_start, onChange: set("uhid_start") })), /* @__PURE__ */ React24.createElement("div", { className: "set-preview fg-2" }, /* @__PURE__ */ React24.createElement("span", { className: "set-preview-label" }, "Next UHID preview"), /* @__PURE__ */ React24.createElement(Badge, { tone: "teal", className: "set-preview-badge" }, uhidPreview))), /* @__PURE__ */ React24.createElement("div", { className: "uhid-rules" }, /* @__PURE__ */ React24.createElement(ShieldCheck, { size: 16 }), /* @__PURE__ */ React24.createElement("span", null, "UHID is strictly formatted as HC-1001, HC-1002, etc. Assigned once, permanent, stored with a unique database constraint. Sequence resets to HC-1001 only upon Delete All Patients.")), /* @__PURE__ */ React24.createElement("div", { className: "set-save" }, /* @__PURE__ */ React24.createElement(Btn, { type: "submit", variant: "accent", disabled: busy }, busy ? "Saving\u2026" : "Save UHID settings"))), tab === "inventory" && /* @__PURE__ */ React24.createElement(Section, { icon: Boxes3, title: "Inventory Rules", sub: "Low-stock thresholds, expiry alert windows and batch selection", onSubmit: () => save(["low_stock_default", "expiry_30", "expiry_60", "expiry_90", "fefo"]) }, /* @__PURE__ */ React24.createElement("div", { className: "form-grid" }, /* @__PURE__ */ React24.createElement(Field, { label: "Default Low-Stock Level" }, /* @__PURE__ */ React24.createElement(Input, { type: "number", min: "0", value: f.low_stock_default, onChange: set("low_stock_default") })), /* @__PURE__ */ React24.createElement(Field, { label: "Expiry Alert Window 1 (days)" }, /* @__PURE__ */ React24.createElement(Input, { type: "number", min: "1", value: f.expiry_30, onChange: set("expiry_30") })), /* @__PURE__ */ React24.createElement(Field, { label: "Expiry Alert Window 2 (days)" }, /* @__PURE__ */ React24.createElement(Input, { type: "number", min: "1", value: f.expiry_60, onChange: set("expiry_60") })), /* @__PURE__ */ React24.createElement(Field, { label: "Expiry Alert Window 3 (days)" }, /* @__PURE__ */ React24.createElement(Input, { type: "number", min: "1", value: f.expiry_90, onChange: set("expiry_90") })), /* @__PURE__ */ React24.createElement(Field, { label: "FEFO (First Expired First Out)" }, /* @__PURE__ */ React24.createElement(Toggle, { checked: !!f.fefo, onChange: setBool("fefo"), label: f.fefo ? "Enabled \u2014 billing picks earliest-expiry batch" : "Disabled \u2014 FIFO by manufacturing date" }))), /* @__PURE__ */ React24.createElement("div", { className: "set-save" }, /* @__PURE__ */ React24.createElement(Btn, { type: "submit", variant: "accent", disabled: busy }, busy ? "Saving\u2026" : "Save inventory rules"))), tab === "print" && /* @__PURE__ */ React24.createElement(Section, { icon: Printer7, title: "Print Settings", sub: "A4 landscape payment receipt with clinic and patient copies" }, /* @__PURE__ */ React24.createElement("div", { className: "set-preview" }, /* @__PURE__ */ React24.createElement("span", { className: "set-preview-label" }, "Available format"), /* @__PURE__ */ React24.createElement("div", { className: "set-chips" }, /* @__PURE__ */ React24.createElement(Badge, { tone: "teal" }, "A4 landscape \xB7 2 copies"), /* @__PURE__ */ React24.createElement(Badge, { tone: "gray" }, "Clinic copy"), /* @__PURE__ */ React24.createElement(Badge, { tone: "gray" }, "Patient copy")))), tab === "appearance" && /* @__PURE__ */ React24.createElement(Section, { icon: Palette, title: "Appearance", sub: "Theme and language" }, /* @__PURE__ */ React24.createElement("div", { className: "form-grid" }, /* @__PURE__ */ React24.createElement(Field, { label: "Theme" }, /* @__PURE__ */ React24.createElement("div", { className: "theme-opts" }, /* @__PURE__ */ React24.createElement(Btn, { variant: theme === "light" ? "primary" : "ghost", onClick: () => setTheme("light") }, "\u2600\uFE0F Light"), /* @__PURE__ */ React24.createElement(Btn, { variant: theme === "dark" ? "primary" : "ghost", onClick: () => setTheme("dark") }, "\u{1F319} Dark"))), /* @__PURE__ */ React24.createElement(Field, { label: "Language", hint: "Gujarati UI is in progress \u2014 English labels are used as fallback" }, /* @__PURE__ */ React24.createElement(Select, { value: lang, onChange: (e) => setLang(e.target.value) }, /* @__PURE__ */ React24.createElement("option", { value: "en" }, "English"), /* @__PURE__ */ React24.createElement("option", { value: "gu" }, "\u0A97\u0AC1\u0A9C\u0AB0\u0ABE\u0AA4\u0AC0 (Gujarati)"))))), tab === "data" && /* @__PURE__ */ React24.createElement(Section, { icon: Database, title: "Data, Backup & Maintenance", sub: "All data is stored locally on this device (offline-first). Export regular backups." }, /* @__PURE__ */ React24.createElement("div", { className: "data-grid" }, /* @__PURE__ */ React24.createElement("div", { className: "data-tile" }, /* @__PURE__ */ React24.createElement("span", null, "Patients"), /* @__PURE__ */ React24.createElement("b", null, counts?.patients ?? "\u2014")), /* @__PURE__ */ React24.createElement("div", { className: "data-tile" }, /* @__PURE__ */ React24.createElement("span", null, "Bills"), /* @__PURE__ */ React24.createElement("b", null, counts?.bills ?? "\u2014")), /* @__PURE__ */ React24.createElement("div", { className: "data-tile" }, /* @__PURE__ */ React24.createElement("span", null, "Medicines"), /* @__PURE__ */ React24.createElement("b", null, counts?.meds ?? "\u2014"))), /* @__PURE__ */ React24.createElement("div", { className: "data-actions" }, /* @__PURE__ */ React24.createElement(Btn, { variant: "outline", icon: Download13, onClick: exportBackup }, "Export Full Backup (JSON)"), /* @__PURE__ */ React24.createElement(Btn, { variant: "outline", icon: Upload6, onClick: () => importRef.current?.click() }, "Import Backup"), /* @__PURE__ */ React24.createElement("input", { type: "file", accept: "application/json", hidden: true, ref: importRef, onChange: (e) => {
     const f2 = e.target.files?.[0];
     if (f2) importBackup(f2);
     e.target.value = "";

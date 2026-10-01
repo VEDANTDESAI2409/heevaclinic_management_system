@@ -83,19 +83,19 @@ export async function nextCounter(key, start = 1) {
   return next;
 }
 
-/** UHID generation — format configurable; UHID is permanent & unique */
-export async function makeUHID(settings, year = new Date().getFullYear()) {
+/** UHID generation — strictly HC-1001, HC-1002 ... permanent & unique */
+export async function makeUHID(settings) {
   const s = settings || (await getSettings());
-  const includeYear = s.uhid_include_year === 1 || s.uhid_include_year === true;
-  const key = includeYear ? `UHID|${year}` : 'UHID|ALL';
-  let start = Number(s.uhid_start) || 1001;
+  const prefix = (s.uhid_prefix || 'HC').trim().toUpperCase();
+  const key = 'UHID|SEQUENCE';
+  let start = 1001;
   try {
     if (db.patients) {
       const records = await db.patients.toArray();
       let maxSuffix = 0;
       for (const p of records) {
         const uhid = String(p.uhid || '');
-        const match = includeYear ? uhid.match(/-(\d+)$/) : uhid.match(/^[A-Za-z]+-(\d+)$/);
+        const match = uhid.match(/^[A-Za-z]+-(\d+)$/);
         if (match) {
           const num = parseInt(match[1], 10);
           if (!isNaN(num) && num > maxSuffix) maxSuffix = num;
@@ -105,9 +105,10 @@ export async function makeUHID(settings, year = new Date().getFullYear()) {
     }
   } catch (_) {}
   const n = await nextCounter(key, start);
-  const pad = Number(s.uhid_padding) || 4;
-  const prefix = (s.uhid_prefix || 'HC').trim().toUpperCase();
-  return `${prefix}${includeYear ? `-${year}` : ''}-${String(n).padStart(pad, '0')}`;
+  try {
+    await db.counters.put({ key: 'UHID|ALL', value: n });
+  } catch (_) {}
+  return `${prefix}-${n}`;
 }
 
 /** Year-scoped numbered reference: KIND → PREFIX, e.g. makeNo('BILL','HC-BILL',2026) → HC-BILL-2026-000001 */

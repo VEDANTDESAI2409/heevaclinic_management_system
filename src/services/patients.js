@@ -52,11 +52,11 @@ export async function registerPatient(data, userId, { temp = false } = {}) {
         db.__hydrating = true;
         try {
           await db.patients.put(serverPatient);
-          const year = new Date().getFullYear();
-          const key = settings.uhid_include_year ? `UHID|${year}` : 'UHID|ALL';
-          const match = serverPatient.uhid.match(/-(\d+)$/);
+          const match = serverPatient.uhid.match(/^[A-Za-z]+-(\d+)$/);
           if (match) {
-            await db.counters.put({ key, value: Number(match[1]) });
+            const val = Number(match[1]);
+            await db.counters.put({ key: 'UHID|SEQUENCE', value: val });
+            await db.counters.put({ key: 'UHID|ALL', value: val });
           }
         } finally {
           db.__hydrating = prevHydrating;
@@ -155,29 +155,11 @@ export async function clearAllPatients(userId) {
   }
 
   return db.transaction('rw', [db.patients, db.patient_vitals, db.counters, db.activity_logs], async () => {
-    const settings = await getSettings();
+    // Reset UHID sequence counter so next patient receives HC-1001
+    await db.counters.put({ key: 'UHID|SEQUENCE', value: 1000 });
+    await db.counters.put({ key: 'UHID|ALL', value: 1000 });
     const year = new Date().getFullYear();
-    const includeYear = settings.uhid_include_year === 1 || settings.uhid_include_year === true;
-    const key = includeYear ? `UHID|${year}` : 'UHID|ALL';
-    const start = Number(settings.uhid_start) || 1001;
-
-    let maxExisting = 0;
-    try {
-      const records = await db.patients.toArray();
-      for (const p of records) {
-        const uhid = String(p.uhid || '');
-        const match = includeYear ? uhid.match(/-(\d+)$/) : uhid.match(/^[A-Za-z]+-(\d+)$/);
-        if (match) {
-          const num = parseInt(match[1], 10);
-          if (!isNaN(num) && num > maxExisting) maxExisting = num;
-        }
-      }
-    } catch (_) {}
-
-    const counterRow = await db.counters.get(key);
-    const currentCounter = counterRow && counterRow.value != null ? Number(counterRow.value) : 0;
-    const finalCounterVal = Math.max(currentCounter, maxExisting, start - 1);
-    await db.counters.put({ key, value: finalCounterVal });
+    await db.counters.put({ key: `UHID|${year}`, value: 0 });
 
     clearRecentMutationsFor('patients');
     clearRecentMutationsFor('patient_vitals');
@@ -193,7 +175,7 @@ export async function clearAllPatients(userId) {
         bc.close();
       } catch (_) {}
     }
-    return { ok: true, counterPreserved: finalCounterVal };
+    return { ok: true, reset: true };
   });
 }
 

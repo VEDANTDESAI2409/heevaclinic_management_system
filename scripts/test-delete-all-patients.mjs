@@ -157,8 +157,8 @@ async function runTests() {
   assert.strictEqual(clearRes.status, 200, 'Clear must succeed with HTTP 200');
   const clearBody = await clearRes.json();
   assert.strictEqual(clearBody.ok, true);
-  assert.strictEqual(clearBody.counterPreserved, 1003, 'UHID counter must be preserved at 1003');
-  console.log('  ✓ Verified: Clear operation completed with counter preserved at 1003.');
+  assert.strictEqual(clearBody.nextUhid, 'HC-1001', 'UHID sequence must reset to HC-1001');
+  console.log('  ✓ Verified: Clear operation completed with sequence reset to HC-1001.');
 
   console.log('\n--- TEST 4: Data Isolation Verification ---');
   assert.strictEqual(tables.patients.length, 0, 'Patients table must be empty (0 records)');
@@ -173,17 +173,17 @@ async function runTests() {
   assert.strictEqual(tables.clinic_settings.length, 1, 'Clinic settings must NOT be deleted');
   console.log('  ✓ Confirmed: All unrelated module data (Medicines, Appointments, Bills, Staff, Settings) remains completely untouched.');
 
-  console.log('\n--- TEST 5: UHID sequence continues monotonically from 1004 (no reuse of 1001-1003) ---');
+  console.log('\n--- TEST 5: UHID sequence resets to HC-1001 after Delete All Patients ---');
   const preview = await d1Client.getNextUhidPreview(mockD1);
-  assert.strictEqual(preview.nextUhid, 'HC-1004', `Expected HC-1004 preview, got ${preview.nextUhid}`);
+  assert.strictEqual(preview.nextUhid, 'HC-1001', `Expected HC-1001 preview, got ${preview.nextUhid}`);
   console.log(`  ✓ Preview for next patient is: ${preview.nextUhid}`);
 
   const pNew1 = await d1Client.allocatePatient(mockD1, { name: 'New Patient After Reset', age: 28, gender: 'F', mobile: '9444444444' });
-  assert.strictEqual(pNew1.uhid, 'HC-1004', `Expected HC-1004, got ${pNew1.uhid}`);
+  assert.strictEqual(pNew1.uhid, 'HC-1001', `Expected HC-1001, got ${pNew1.uhid}`);
   console.log(`  ✓ First newly created patient receives: ${pNew1.uhid}`);
 
   const pNew2 = await d1Client.allocatePatient(mockD1, { name: 'Second New Patient', age: 35, gender: 'M', mobile: '9555555555' });
-  assert.strictEqual(pNew2.uhid, 'HC-1005', `Expected HC-1005, got ${pNew2.uhid}`);
+  assert.strictEqual(pNew2.uhid, 'HC-1002', `Expected HC-1002, got ${pNew2.uhid}`);
   console.log(`  ✓ Second newly created patient receives: ${pNew2.uhid}`);
 
   console.log('\n======================================================');

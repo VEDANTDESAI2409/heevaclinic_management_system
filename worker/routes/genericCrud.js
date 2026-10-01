@@ -110,64 +110,59 @@ export async function handleClearPatients(body, env) {
   }
 
   try {
-    const settingsRow = (await db.prepare('SELECT * FROM clinic_settings LIMIT 1').first()) || {};
-    const year = new Date().getFullYear();
-    const includeYear = settingsRow.uhid_include_year === 1 || settingsRow.uhid_include_year === true;
-    const counterKey = includeYear ? `UHID|${year}` : 'UHID|ALL';
-    const start = Number(settingsRow.uhid_start) || 1001;
-
-    // 1. Fetch current counter value
-    const counterRow = await db.prepare('SELECT * FROM counters WHERE key = ? OR id = ? LIMIT 1').bind(counterKey, counterKey).first();
-    const currentCounter = counterRow && counterRow.value != null ? Number(counterRow.value) : 0;
-
-    // 2. Scan all current patient UHIDs to ensure we never reset or reuse past numbers
-    let maxExisting = 0;
-    try {
-      const existingRows = await db.prepare('SELECT uhid FROM patients').all();
-      if (existingRows && existingRows.results) {
-        for (const r of existingRows.results) {
-          const uhidStr = String(r.uhid || '');
-          const m = includeYear ? uhidStr.match(/-(\d+)$/) : uhidStr.match(/^[A-Za-z]+-(\d+)$/);
-          if (m) {
-            const val = parseInt(m[1], 10);
-            if (!isNaN(val) && val > maxExisting) maxExisting = val;
-          }
-        }
-      }
-    } catch (_) {}
-
-    const finalCounterVal = Math.max(currentCounter, maxExisting, start - 1);
     const now = new Date().toISOString();
-
     const countRow = await db.prepare('SELECT COUNT(*) as cnt FROM patients').first();
     const deletedCount = countRow ? Number(countRow.cnt) : 0;
 
-    // 3. Perform atomic batch in D1:
-    //    a) Preserve UHID sequence counter in counters table
-    //    b) Mark CLEARED|patients in counters so all syncing devices clear local cache
-    //    c) Delete patient_vitals (dependent child records)
-    //    d) Delete patients
+    // Perform atomic transaction in D1:
+    // 1. Delete patient_vitals (dependent child records)
+    // 2. Delete all patients
+    // 3. Reset UHID sequence counter to 1000 so next patient receives HC-1001
+    // 4. Mark CLEARED|patients so all multi-device clients synchronize the deletion and reset
     const clearKey = 'CLEARED|patients';
+    const clearTime = Date.now();
     const stmts = [
-      db.prepare(
-        'INSERT INTO counters (id, key, value, created_at, updated_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = MAX(counters.value, excluded.value), updated_at = excluded.updated_at'
-      ).bind(counterKey, counterKey, finalCounterVal, now, now),
-      db.prepare(
-        'INSERT INTO counters (id, key, value, created_at, updated_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at'
-      ).bind(clearKey, clearKey, Date.now(), now, now),
       db.prepare('DELETE FROM patient_vitals'),
       db.prepare('DELETE FROM patients'),
+      db.prepare(`
+        INSERT INTO counters (id, key, value, created_at, updated_at)
+        VALUES ('UHID|SEQUENCE', 'UHID|SEQUENCE', 1000, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET value = 1000, updated_at = excluded.updated_at
+      `).bind(now, now),
+      db.prepare(`
+        INSERT INTO counters (id, key, value, created_at, updated_at)
+        VALUES ('UHID|ALL', 'UHID|ALL', 1000, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET value = 1000, updated_at = excluded.updated_at
+      `).bind(now, now),
+      db.prepare(`
+        INSERT INTO counters (id, key, value, created_at, updated_at)
+        VALUES ('UHID|2026', 'UHID|2026', 0, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET value = 0, updated_at = excluded.updated_at
+      `).bind(now, now),
+      db.prepare(`
+        INSERT INTO counters (id, key, value, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+      `).bind(clearKey, clearKey, clearTime, now, now),
     ];
 
     await db.batch(stmts);
+
+    // Verify deletion succeeded
+    const verifyRow = await db.prepare('SELECT COUNT(*) as cnt FROM patients').first();
+    const remainingCount = verifyRow ? Number(verifyRow.cnt) : 0;
+    if (remainingCount !== 0) {
+      throw new Error(`Deletion verification failed: ${remainingCount} patients still remain.`);
+    }
+
     await d1Client.incrementDbVersion(db, now);
 
     return Response.json(
       {
         ok: true,
-        message: 'All patient records have been permanently cleared.',
+        message: 'All patient records have been permanently cleared. UHID sequence reset to HC-1001.',
         deletedCount,
-        counterPreserved: finalCounterVal,
+        nextUhid: 'HC-1001',
       },
       { status: 200, headers: noCacheHeaders }
     );

@@ -120,8 +120,8 @@ export default function SettingsPage() {
       receipt_footer: s.receipt_footer || '', logo: s.logo || '',
       currency: s.currency || '₹', bill_prefix: s.bill_prefix || 'HC-BILL',
       bill_padding: s.bill_padding ?? 6, default_payment: s.default_payment || 'Cash',
-      uhid_prefix: s.uhid_prefix || 'HC', uhid_include_year: s.uhid_include_year ?? true,
-      uhid_padding: s.uhid_padding ?? 6, uhid_start: s.uhid_start ?? 1,
+      uhid_prefix: s.uhid_prefix || 'HC', uhid_include_year: false,
+      uhid_padding: 4, uhid_start: s.uhid_start ?? 1001,
       low_stock_default: s.low_stock_default ?? 10, expiry_30: s.expiry_30 ?? 30, expiry_60: s.expiry_60 ?? 60,
       expiry_90: s.expiry_90 ?? 90, fefo: s.fefo ?? true,
     });
@@ -201,10 +201,8 @@ export default function SettingsPage() {
   ];
 
   const uhidPreview = (() => {
-    const year = new Date().getFullYear();
-    const n = Number(f.uhid_start) || 1;
-    const pad = Number(f.uhid_padding) || 6;
-    return `${(f.uhid_prefix || 'HC').toUpperCase()}${f.uhid_include_year ? `-${year}` : ''}-${String(n).padStart(pad, '0')}`;
+    const n = Number(f.uhid_start) || 1001;
+    return `${(f.uhid_prefix || 'HC').toUpperCase()}-${n}`;
   })();
 
   return (
@@ -332,14 +330,10 @@ export default function SettingsPage() {
       )}
 
       {tab === 'uhid' && (
-        <Section icon={Fingerprint} title="UHID Configuration" sub="Unique Health Identification format — applied to NEW registrations only; existing UHIDs never change" onSubmit={() => save(['uhid_prefix', 'uhid_include_year', 'uhid_padding', 'uhid_start'])}>
+        <Section icon={Fingerprint} title="UHID Configuration" sub="Unique Health Identification format (HC-1001, HC-1002...) — applied to NEW registrations only" onSubmit={() => save(['uhid_prefix', 'uhid_start'])}>
           <div className="form-grid">
             <Field label="UHID Prefix"><Input value={f.uhid_prefix} onChange={set('uhid_prefix')} placeholder="HC" /></Field>
-            <Field label="Include Registration Year">
-              <Toggle checked={!!f.uhid_include_year} onChange={setBool('uhid_include_year')} label={f.uhid_include_year ? 'Yes — HC-2026-000001' : 'No — HC-000001'} />
-            </Field>
-            <Field label="Number Padding (digits)"><Input type="number" min="3" max="10" value={f.uhid_padding} onChange={set('uhid_padding')} /></Field>
-            <Field label="Starting Number" hint="Applies to the first UHID of a new year/scope"><Input type="number" min="1" value={f.uhid_start} onChange={set('uhid_start')} /></Field>
+            <Field label="Starting Number" hint="Default starting sequence number (1001)"><Input type="number" min="1001" value={f.uhid_start} onChange={set('uhid_start')} /></Field>
             <div className="set-preview fg-2">
               <span className="set-preview-label">Next UHID preview</span>
               <Badge tone="teal" className="set-preview-badge">{uhidPreview}</Badge>
@@ -347,7 +341,7 @@ export default function SettingsPage() {
           </div>
           <div className="uhid-rules">
             <ShieldCheck size={16} />
-            <span>UHID is assigned once, permanently linked to the patient, stored with a unique database constraint, and appears on bills, prescriptions, receipts and history.</span>
+            <span>UHID is strictly formatted as HC-1001, HC-1002, etc. Assigned once, permanent, stored with a unique database constraint. Sequence resets to HC-1001 only upon Delete All Patients.</span>
           </div>
           <div className="set-save">
             <Btn type="submit" variant="accent" disabled={busy}>{busy ? 'Saving…' : 'Save UHID settings'}</Btn>
