@@ -43,6 +43,14 @@ export const isBrowserRuntime = () =>
 const recentLocalMutations = new Map();
 const MUTATION_GRACE_PERIOD_MS = 60000; // 60-second protection window
 
+export function clearRecentMutationsFor(table) {
+  for (const k of recentLocalMutations.keys()) {
+    if (k.startsWith(`${table}:`)) {
+      recentLocalMutations.delete(k);
+    }
+  }
+}
+
 export async function pushRecord(name, record) {
   if (!isBrowserRuntime() || !syncedTables.has(name) || !record) return;
   const table = remoteName(name);
@@ -141,8 +149,12 @@ export async function syncFromBackend(db) {
           const newKeySet = new Set(rows.map((r) => r[keyField]));
           const existingKeys = await db[name].toCollection().primaryKeys();
 
+          // Check if table was cleared intentionally on the server
+          const clearedRow = data.counters?.find((c) => c.key === `CLEARED|${remoteKey}` || c.key === `CLEARED|${name}`);
+          const isTableCleared = Boolean(clearedRow);
+
           // Only delete local records if server returned records (protecting against corrupt/empty responses)
-          // and the record is not in recentLocalMutations grace window
+          // and the record is not in recentLocalMutations grace window (unless explicitly cleared)
           const toDelete = existingKeys.filter((k) => {
             if (newKeySet.has(k)) {
               return false;
@@ -151,8 +163,8 @@ export async function syncFromBackend(db) {
             if (mutationTime && now - mutationTime < MUTATION_GRACE_PERIOD_MS) {
               return false; // Protect locally added/updated record from disappearing
             }
-            // Do not wipe out local records if remote rows array is unexpectedly empty but local has records
-            if (rows.length === 0 && existingKeys.length > 0) {
+            // Do not wipe out local records if remote rows array is unexpectedly empty but local has records (unless intentionally cleared)
+            if (rows.length === 0 && existingKeys.length > 0 && !isTableCleared) {
               return false;
             }
             return true;

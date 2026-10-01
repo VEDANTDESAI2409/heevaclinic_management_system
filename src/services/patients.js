@@ -2,8 +2,8 @@
 import db from '../db';
 import { uid, nowISO, dkey, ageFromDob } from '../utils';
 import { makeUHID, audit, getSettings } from './core';
-import { createPatient as createPatientRemote } from './api';
-import { isBrowserRuntime } from '../lib/remoteSync';
+import { createPatient as createPatientRemote, clearPatients as clearPatientsRemote } from './api';
+import { isBrowserRuntime, clearRecentMutationsFor } from '../lib/remoteSync';
 
 const digits = (s) => String(s || '').replace(/\D/g, '');
 /**
@@ -136,6 +136,64 @@ export async function deletePatient(id, userId) {
     }
     await db.patients.delete(id);
     await audit(userId, 'PATIENT_DELETE', 'patient', id, `${p.name} · ${p.uhid}`);
+  });
+}
+
+/**
+ * Module-specific data reset: permanently deletes all patient records and child vitals.
+ * Preserves all other modules (medicines, billing, appointments, staff, settings)
+ * and maintains the persistent monotonic UHID counter sequence without reset or reuse.
+ */
+export async function clearAllPatients(userId) {
+  if (isBrowserRuntime()) {
+    try {
+      await clearPatientsRemote('DELETE PATIENTS');
+    } catch (err) {
+      console.error('[clearAllPatients] Server clear failed:', err.message);
+      throw new Error(err.message || 'Unable to connect to the clinic server. Please check your internet connection.');
+    }
+  }
+
+  return db.transaction('rw', [db.patients, db.patient_vitals, db.counters, db.activity_logs], async () => {
+    const settings = await getSettings();
+    const year = new Date().getFullYear();
+    const includeYear = settings.uhid_include_year === 1 || settings.uhid_include_year === true;
+    const key = includeYear ? `UHID|${year}` : 'UHID|ALL';
+    const start = Number(settings.uhid_start) || 1001;
+
+    let maxExisting = 0;
+    try {
+      const records = await db.patients.toArray();
+      for (const p of records) {
+        const uhid = String(p.uhid || '');
+        const match = includeYear ? uhid.match(/-(\d+)$/) : uhid.match(/^[A-Za-z]+-(\d+)$/);
+        if (match) {
+          const num = parseInt(match[1], 10);
+          if (!isNaN(num) && num > maxExisting) maxExisting = num;
+        }
+      }
+    } catch (_) {}
+
+    const counterRow = await db.counters.get(key);
+    const currentCounter = counterRow && counterRow.value != null ? Number(counterRow.value) : 0;
+    const finalCounterVal = Math.max(currentCounter, maxExisting, start - 1);
+    await db.counters.put({ key, value: finalCounterVal });
+
+    clearRecentMutationsFor('patients');
+    clearRecentMutationsFor('patient_vitals');
+    await db.patient_vitals.clear();
+    await db.patients.clear();
+
+    await audit(userId, 'PATIENT_CLEAR_ALL', 'patient', 'all', 'Permanently cleared all patient records');
+
+    if (typeof BroadcastChannel !== 'undefined') {
+      try {
+        const bc = new BroadcastChannel('heeva_sync');
+        bc.postMessage({ type: 'DATA_CLEARED', table: 'patients' });
+        bc.close();
+      } catch (_) {}
+    }
+    return { ok: true, counterPreserved: finalCounterVal };
   });
 }
 

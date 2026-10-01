@@ -232,6 +232,8 @@ export const getNextUhid = () => request('/patients/next-uhid');
 export const createPatient = (patient) => createRecord('patients', patient);
 export const updatePatient = (id, patch) => updateRecord('patients', id, patch);
 export const deletePatient = (id) => deleteRecord('patients', id);
+export const clearPatients = (confirmation = 'DELETE PATIENTS') =>
+  request('/patients/clear', { method: 'POST', body: JSON.stringify({ confirmation }) });
 export const getMedicines = () => getRecords('medicines');
 export const createMedicine = (medicine) => createRecord('medicines', medicine);
 export const updateMedicine = (id, patch) => updateRecord('medicines', id, patch);

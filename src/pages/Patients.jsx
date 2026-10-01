@@ -8,7 +8,7 @@ import {
   Btn, IconBtn, Confirm, Card, Modal, Field, Input, Select, Textarea, DataTable, Badge,
   PageHeader, EmptyState, UhidChip, Avatar, Spinner,
 } from '../components/ui';
-import { registerPatient, deletePatient } from '../services/patients';
+import { registerPatient, deletePatient, clearAllPatients } from '../services/patients';
 import { getSettings } from '../services/core';
 import { getNextUhid } from '../services/api';
 import { ageLabel, fmtDate, fmtDateTime, fmtMoney, dkey, validMobile, download, toCSV, toDDMMYYYY, fmtTime } from '../utils';
@@ -145,6 +145,93 @@ function RegisterModal({ open, onClose, prefill = {} }) {
   );
 }
 
+function DeleteAllPatientsModal({ open, onClose }) {
+  const { user, pushToast } = useApp();
+  const [confirmInput, setConfirmInput] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (open) {
+      setConfirmInput('');
+      setBusy(false);
+    }
+  }, [open]);
+
+  const isConfirmed = confirmInput.trim() === 'DELETE PATIENTS';
+
+  const handleDeleteAll = async (e) => {
+    if (e && e.preventDefault) e.preventDefault();
+    if (!isConfirmed || busy) return;
+    setBusy(true);
+    try {
+      await clearAllPatients(user?.id);
+      pushToast('success', 'All patient records have been permanently deleted.');
+      onClose();
+    } catch (err) {
+      pushToast('error', err.message || 'Failed to delete all patients.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal
+      open={open}
+      onClose={busy ? undefined : onClose}
+      onSubmit={handleDeleteAll}
+      width="md"
+      title="Delete All Patients?"
+      sub="Module-specific data reset · Patients module only"
+      footer={
+        <>
+          <Btn variant="ghost" onClick={onClose} disabled={busy}>Cancel</Btn>
+          <Btn
+            type="submit"
+            variant="danger"
+            disabled={!isConfirmed || busy}
+          >
+            {busy ? 'Deleting all patients…' : 'Permanently Delete All Patients'}
+          </Btn>
+        </>
+      }
+    >
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+        <div style={{
+          background: 'rgba(239, 68, 68, 0.08)',
+          border: '1px solid rgba(239, 68, 68, 0.25)',
+          borderRadius: '8px',
+          padding: '12px 16px',
+          color: 'var(--text)',
+          fontSize: '13.5px',
+          lineHeight: '1.5'
+        }}>
+          <p style={{ fontWeight: 600, color: 'var(--red)', marginBottom: '6px' }}>
+            Warning: This action is permanent and cannot be undone.
+          </p>
+          <p style={{ marginBottom: '6px' }}>
+            This will permanently delete <strong>all patient records</strong> from the database.
+          </p>
+          <p style={{ fontSize: '12.5px', color: 'var(--text-2)' }}>
+            Data from other modules (Medicines, Inventory, Billing records, Appointments, Doctors/Staff, and System Settings) will <strong>not</strong> be affected. The persistent UHID counter sequence will be preserved and will not be reset.
+          </p>
+        </div>
+
+        <div>
+          <Field label={<span>Type <strong>DELETE PATIENTS</strong> to confirm:</span>} required>
+            <Input
+              value={confirmInput}
+              onChange={(e) => setConfirmInput(e.target.value)}
+              placeholder="DELETE PATIENTS"
+              autoFocus
+              disabled={busy}
+            />
+          </Field>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
 export default function Patients() {
   const { t, settings, user, pushToast } = useApp();
   const navigate = useNavigate();
@@ -155,6 +242,7 @@ export default function Patients() {
   const [importOpen, setImportOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [deleteAllOpen, setDeleteAllOpen] = useState(false);
 
   const patients = useLiveQuery(async () => {
     const all = await db.patients.toArray();
@@ -258,6 +346,15 @@ export default function Patients() {
         title="Patients"
         sub={`${(patients || []).length} patient(s) · UHID-linked permanent records`}
         actions={<>
+          <Btn
+            variant="ghost"
+            icon={Trash2}
+            className="text-danger"
+            onClick={() => setDeleteAllOpen(true)}
+            disabled={!patients || patients.length === 0}
+          >
+            Delete All Patients
+          </Btn>
           <Btn variant="ghost" icon={Upload} onClick={() => setImportOpen(true)}>Import CSV</Btn>
           <Btn variant="ghost" icon={Download} onClick={exportCSV}>Export CSV</Btn>
           <Btn variant="accent" icon={UserPlus} onClick={() => setReg(true)}>+ {t('new_patient', 'New Patient')}</Btn>
@@ -332,6 +429,7 @@ export default function Patients() {
 
       <RegisterModal open={reg} onClose={() => setReg(false)} />
       <CsvImportModal open={importOpen} onClose={() => setImportOpen(false)} type="patients" />
+      <DeleteAllPatientsModal open={deleteAllOpen} onClose={() => setDeleteAllOpen(false)} />
 
       <Confirm
         open={!!deleteTarget}

@@ -6,6 +6,7 @@ import {
   handleUpdate,
   handleDelete,
   handleGetNextUhid,
+  handleClearPatients,
 } from './routes/genericCrud.js';
 import { handleBulkImport } from './routes/import.js';
 import { verifyAuthToken } from './auth.js';
@@ -71,6 +72,12 @@ export async function routeApi(request, env, pathname) {
     return handleGetNextUhid(env);
   }
 
+  // 5.55. Clear Patients: POST /api/patients/clear
+  if (table === 'patients' && segments.length === 2 && segments[1] === 'clear' && method === 'POST') {
+    const body = await request.json().catch(() => ({}));
+    return handleClearPatients(body, env);
+  }
+
   // 5.6. Realtime Sync endpoints: /api/sync/status & /api/sync/bundle
   if (table === 'sync') {
     if (segments.length === 2 && segments[1] === 'status' && method === 'GET') {
@@ -89,6 +96,10 @@ export async function routeApi(request, env, pathname) {
     if (method === 'POST') {
       const body = await request.json().catch(() => ({}));
       return handleCreate(table, body, env);
+    }
+    if (table === 'patients' && method === 'DELETE') {
+      const body = await request.json().catch(() => ({}));
+      return handleClearPatients(body, env);
     }
   }
 

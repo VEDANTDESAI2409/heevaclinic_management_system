@@ -96,7 +96,7 @@ async function request(path, options = {}) {
   const response = await executeFetch(url, fetchOptions);
   return response.status === 204 ? null : response.json();
 }
-var TOKEN_KEY, getAuthToken, getBaseUrl, inFlightGets, delay, createRecord, updateRecord, deleteRecord, createPatient, getSyncBundle;
+var TOKEN_KEY, getAuthToken, getBaseUrl, inFlightGets, delay, createRecord, updateRecord, deleteRecord, createPatient, clearPatients, getSyncBundle;
 var init_api = __esm({
   "src/services/api.js"() {
     TOKEN_KEY = "heeva_auth_token";
@@ -144,11 +144,19 @@ var init_api = __esm({
     updateRecord = (table, id, patch) => request(`/${table}/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify(patch) });
     deleteRecord = (table, id) => request(`/${table}/${encodeURIComponent(id)}`, { method: "DELETE" });
     createPatient = (patient) => createRecord("patients", patient);
+    clearPatients = (confirmation = "DELETE PATIENTS") => request("/patients/clear", { method: "POST", body: JSON.stringify({ confirmation }) });
     getSyncBundle = () => request("/sync/bundle");
   }
 });
 
 // src/lib/remoteSync.js
+function clearRecentMutationsFor(table) {
+  for (const k of recentLocalMutations.keys()) {
+    if (k.startsWith(`${table}:`)) {
+      recentLocalMutations.delete(k);
+    }
+  }
+}
 async function pushRecord(name, record) {
   if (!isBrowserRuntime() || !syncedTables.has(name) || !record) return;
   const table = remoteName(name);
@@ -226,6 +234,8 @@ async function syncFromBackend(db3) {
           const keyField = name === "counters" ? "key" : "id";
           const newKeySet = new Set(rows.map((r) => r[keyField]));
           const existingKeys = await db3[name].toCollection().primaryKeys();
+          const clearedRow = data.counters?.find((c) => c.key === `CLEARED|${remoteKey}` || c.key === `CLEARED|${name}`);
+          const isTableCleared = Boolean(clearedRow);
           const toDelete = existingKeys.filter((k) => {
             if (newKeySet.has(k)) {
               return false;
@@ -234,7 +244,7 @@ async function syncFromBackend(db3) {
             if (mutationTime && now - mutationTime < MUTATION_GRACE_PERIOD_MS) {
               return false;
             }
-            if (rows.length === 0 && existingKeys.length > 0) {
+            if (rows.length === 0 && existingKeys.length > 0 && !isTableCleared) {
               return false;
             }
             return true;
@@ -738,6 +748,7 @@ __export(patients_exports, {
   addVitals: () => addVitals,
   ageOf: () => ageOf,
   archivePatient: () => archivePatient,
+  clearAllPatients: () => clearAllPatients,
   deletePatient: () => deletePatient,
   patientVisits: () => patientVisits,
   reactivatePatient: () => reactivatePatient,
@@ -861,6 +872,54 @@ async function deletePatient(id, userId) {
     }
     await db_default.patients.delete(id);
     await audit(userId, "PATIENT_DELETE", "patient", id, `${p.name} \xB7 ${p.uhid}`);
+  });
+}
+async function clearAllPatients(userId) {
+  if (isBrowserRuntime()) {
+    try {
+      await clearPatients("DELETE PATIENTS");
+    } catch (err) {
+      console.error("[clearAllPatients] Server clear failed:", err.message);
+      throw new Error(err.message || "Unable to connect to the clinic server. Please check your internet connection.");
+    }
+  }
+  return db_default.transaction("rw", [db_default.patients, db_default.patient_vitals, db_default.counters, db_default.activity_logs], async () => {
+    const settings = await getSettings();
+    const year = (/* @__PURE__ */ new Date()).getFullYear();
+    const includeYear = settings.uhid_include_year === 1 || settings.uhid_include_year === true;
+    const key = includeYear ? `UHID|${year}` : "UHID|ALL";
+    const start = Number(settings.uhid_start) || 1001;
+    let maxExisting = 0;
+    try {
+      const records = await db_default.patients.toArray();
+      for (const p of records) {
+        const uhid = String(p.uhid || "");
+        const match = includeYear ? uhid.match(/-(\d+)$/) : uhid.match(/^[A-Za-z]+-(\d+)$/);
+        if (match) {
+          const num = parseInt(match[1], 10);
+          if (!isNaN(num) && num > maxExisting) maxExisting = num;
+        }
+      }
+    } catch (_) {
+    }
+    const counterRow = await db_default.counters.get(key);
+    const currentCounter = counterRow && counterRow.value != null ? Number(counterRow.value) : 0;
+    const finalCounterVal = Math.max(currentCounter, maxExisting, start - 1);
+    await db_default.counters.put({ key, value: finalCounterVal });
+    clearRecentMutationsFor("patients");
+    clearRecentMutationsFor("patient_vitals");
+    await db_default.patient_vitals.clear();
+    await db_default.patients.clear();
+    await audit(userId, "PATIENT_CLEAR_ALL", "patient", "all", "Permanently cleared all patient records");
+    if (typeof BroadcastChannel !== "undefined") {
+      try {
+        const bc = new BroadcastChannel("heeva_sync");
+        bc.postMessage({ type: "DATA_CLEARED", table: "patients" });
+        bc.close();
+      } catch (_) {
+      }
+    }
+    return { ok: true, counterPreserved: finalCounterVal };
   });
 }
 async function addVitals(patientId, v, userId) {

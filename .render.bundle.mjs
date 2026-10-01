@@ -15,6 +15,7 @@ __export(api_exports, {
   authApi: () => authApi,
   bulkImportRecords: () => bulkImportRecords,
   clearAuthToken: () => clearAuthToken,
+  clearPatients: () => clearPatients,
   createAppointment: () => createAppointment,
   createMedicine: () => createMedicine2,
   createPatient: () => createPatient,
@@ -126,7 +127,7 @@ async function request(path, options = {}) {
   const response = await executeFetch(url, fetchOptions);
   return response.status === 204 ? null : response.json();
 }
-var TOKEN_KEY, getAuthToken, setAuthToken, clearAuthToken, getBaseUrl, inFlightGets, delay, authApi, adminApi, getHealth, getRecords, getRecord, createRecord, updateRecord, deleteRecord, bulkImportRecords, getPatients, getNextUhid, createPatient, updatePatient, deletePatient, getMedicines, createMedicine2, updateMedicine, deleteMedicine, getAppointments, createAppointment, updateAppointment, deleteAppointment, getSyncStatus, getSyncBundle;
+var TOKEN_KEY, getAuthToken, setAuthToken, clearAuthToken, getBaseUrl, inFlightGets, delay, authApi, adminApi, getHealth, getRecords, getRecord, createRecord, updateRecord, deleteRecord, bulkImportRecords, getPatients, getNextUhid, createPatient, updatePatient, deletePatient, clearPatients, getMedicines, createMedicine2, updateMedicine, deleteMedicine, getAppointments, createAppointment, updateAppointment, deleteAppointment, getSyncStatus, getSyncBundle;
 var init_api = __esm({
   "src/services/api.js"() {
     TOKEN_KEY = "heeva_auth_token";
@@ -245,6 +246,7 @@ var init_api = __esm({
     createPatient = (patient2) => createRecord("patients", patient2);
     updatePatient = (id, patch) => updateRecord("patients", id, patch);
     deletePatient = (id) => deleteRecord("patients", id);
+    clearPatients = (confirmation = "DELETE PATIENTS") => request("/patients/clear", { method: "POST", body: JSON.stringify({ confirmation }) });
     getMedicines = () => getRecords("medicines");
     createMedicine2 = (medicine2) => createRecord("medicines", medicine2);
     updateMedicine = (id, patch) => updateRecord("medicines", id, patch);
@@ -259,6 +261,13 @@ var init_api = __esm({
 });
 
 // src/lib/remoteSync.js
+function clearRecentMutationsFor(table) {
+  for (const k of recentLocalMutations.keys()) {
+    if (k.startsWith(`${table}:`)) {
+      recentLocalMutations.delete(k);
+    }
+  }
+}
 async function pushRecord(name, record) {
   if (!isBrowserRuntime() || !syncedTables.has(name) || !record) return;
   const table = remoteName(name);
@@ -336,6 +345,8 @@ async function syncFromBackend(db3) {
           const keyField = name === "counters" ? "key" : "id";
           const newKeySet = new Set(rows.map((r) => r[keyField]));
           const existingKeys = await db3[name].toCollection().primaryKeys();
+          const clearedRow = data.counters?.find((c) => c.key === `CLEARED|${remoteKey}` || c.key === `CLEARED|${name}`);
+          const isTableCleared = Boolean(clearedRow);
           const toDelete = existingKeys.filter((k) => {
             if (newKeySet.has(k)) {
               return false;
@@ -344,7 +355,7 @@ async function syncFromBackend(db3) {
             if (mutationTime && now - mutationTime < MUTATION_GRACE_PERIOD_MS) {
               return false;
             }
-            if (rows.length === 0 && existingKeys.length > 0) {
+            if (rows.length === 0 && existingKeys.length > 0 && !isTableCleared) {
               return false;
             }
             return true;
@@ -3377,6 +3388,7 @@ __export(patients_exports, {
   addVitals: () => addVitals,
   ageOf: () => ageOf,
   archivePatient: () => archivePatient,
+  clearAllPatients: () => clearAllPatients,
   deletePatient: () => deletePatient2,
   patientVisits: () => patientVisits,
   reactivatePatient: () => reactivatePatient,
@@ -3500,6 +3512,54 @@ async function deletePatient2(id, userId) {
     }
     await db_default.patients.delete(id);
     await audit(userId, "PATIENT_DELETE", "patient", id, `${p.name} \xB7 ${p.uhid}`);
+  });
+}
+async function clearAllPatients(userId) {
+  if (isBrowserRuntime()) {
+    try {
+      await clearPatients("DELETE PATIENTS");
+    } catch (err) {
+      console.error("[clearAllPatients] Server clear failed:", err.message);
+      throw new Error(err.message || "Unable to connect to the clinic server. Please check your internet connection.");
+    }
+  }
+  return db_default.transaction("rw", [db_default.patients, db_default.patient_vitals, db_default.counters, db_default.activity_logs], async () => {
+    const settings = await getSettings();
+    const year = (/* @__PURE__ */ new Date()).getFullYear();
+    const includeYear = settings.uhid_include_year === 1 || settings.uhid_include_year === true;
+    const key = includeYear ? `UHID|${year}` : "UHID|ALL";
+    const start = Number(settings.uhid_start) || 1001;
+    let maxExisting = 0;
+    try {
+      const records = await db_default.patients.toArray();
+      for (const p of records) {
+        const uhid = String(p.uhid || "");
+        const match = includeYear ? uhid.match(/-(\d+)$/) : uhid.match(/^[A-Za-z]+-(\d+)$/);
+        if (match) {
+          const num = parseInt(match[1], 10);
+          if (!isNaN(num) && num > maxExisting) maxExisting = num;
+        }
+      }
+    } catch (_) {
+    }
+    const counterRow = await db_default.counters.get(key);
+    const currentCounter = counterRow && counterRow.value != null ? Number(counterRow.value) : 0;
+    const finalCounterVal = Math.max(currentCounter, maxExisting, start - 1);
+    await db_default.counters.put({ key, value: finalCounterVal });
+    clearRecentMutationsFor("patients");
+    clearRecentMutationsFor("patient_vitals");
+    await db_default.patient_vitals.clear();
+    await db_default.patients.clear();
+    await audit(userId, "PATIENT_CLEAR_ALL", "patient", "all", "Permanently cleared all patient records");
+    if (typeof BroadcastChannel !== "undefined") {
+      try {
+        const bc = new BroadcastChannel("heeva_sync");
+        bc.postMessage({ type: "DATA_CLEARED", table: "patients" });
+        bc.close();
+      } catch (_) {
+      }
+    }
+    return { ok: true, counterPreserved: finalCounterVal };
   });
 }
 async function addVitals(patientId, v, userId) {
@@ -5412,6 +5472,70 @@ function RegisterModal({ open, onClose, prefill = {} }) {
     /* @__PURE__ */ React9.createElement("div", { className: "form-grid" }, /* @__PURE__ */ React9.createElement(Field, { label: "Full Name", required: true, error: errs.name, className: "fg-2" }, /* @__PURE__ */ React9.createElement(Input, { value: f.name, onChange: set("name"), placeholder: "Enter full name", autoFocus: true })), /* @__PURE__ */ React9.createElement(Field, { label: "Age", required: true, error: errs.age }, /* @__PURE__ */ React9.createElement(Input, { type: "number", min: "0", max: "125", value: f.age, onChange: set("age"), placeholder: "Age in years" })), /* @__PURE__ */ React9.createElement(Field, { label: "Gender", required: true, error: errs.gender }, /* @__PURE__ */ React9.createElement(Select, { value: f.gender, onChange: set("gender") }, /* @__PURE__ */ React9.createElement("option", { value: "M" }, "M"), /* @__PURE__ */ React9.createElement("option", { value: "F" }, "F"), /* @__PURE__ */ React9.createElement("option", { value: "Other" }, "Other"))), /* @__PURE__ */ React9.createElement(Field, { label: "Marital Status" }, /* @__PURE__ */ React9.createElement(Select, { value: f.marital_status, onChange: set("marital_status") }, MARITAL_STATUSES.map((m) => /* @__PURE__ */ React9.createElement("option", { key: m, value: m }, m)))), /* @__PURE__ */ React9.createElement(Field, { label: "Mobile Number", required: true, error: errs.mobile }, /* @__PURE__ */ React9.createElement(Input, { value: f.mobile, onChange: set("mobile"), placeholder: "10-digit mobile", inputMode: "numeric" })), /* @__PURE__ */ React9.createElement(Field, { label: "Blood Group" }, /* @__PURE__ */ React9.createElement(Select, { value: f.blood_group, onChange: set("blood_group") }, BLOOD_GROUPS2.map((b) => /* @__PURE__ */ React9.createElement("option", { key: b, value: b }, b || "Unknown")))), /* @__PURE__ */ React9.createElement(Field, { label: "Address", className: "fg-2" }, /* @__PURE__ */ React9.createElement(Input, { value: f.address, onChange: set("address"), placeholder: "Full address" })))
   );
 }
+function DeleteAllPatientsModal({ open, onClose }) {
+  const { user: user3, pushToast } = useApp();
+  const [confirmInput, setConfirmInput] = useState6("");
+  const [busy, setBusy] = useState6(false);
+  useEffect6(() => {
+    if (open) {
+      setConfirmInput("");
+      setBusy(false);
+    }
+  }, [open]);
+  const isConfirmed = confirmInput.trim() === "DELETE PATIENTS";
+  const handleDeleteAll = async (e) => {
+    if (e && e.preventDefault) e.preventDefault();
+    if (!isConfirmed || busy) return;
+    setBusy(true);
+    try {
+      await clearAllPatients(user3?.id);
+      pushToast("success", "All patient records have been permanently deleted.");
+      onClose();
+    } catch (err) {
+      pushToast("error", err.message || "Failed to delete all patients.");
+    } finally {
+      setBusy(false);
+    }
+  };
+  return /* @__PURE__ */ React9.createElement(
+    Modal,
+    {
+      open,
+      onClose: busy ? void 0 : onClose,
+      onSubmit: handleDeleteAll,
+      width: "md",
+      title: "Delete All Patients?",
+      sub: "Module-specific data reset \xB7 Patients module only",
+      footer: /* @__PURE__ */ React9.createElement(React9.Fragment, null, /* @__PURE__ */ React9.createElement(Btn, { variant: "ghost", onClick: onClose, disabled: busy }, "Cancel"), /* @__PURE__ */ React9.createElement(
+        Btn,
+        {
+          type: "submit",
+          variant: "danger",
+          disabled: !isConfirmed || busy
+        },
+        busy ? "Deleting all patients\u2026" : "Permanently Delete All Patients"
+      ))
+    },
+    /* @__PURE__ */ React9.createElement("div", { style: { display: "flex", flexDirection: "column", gap: "16px" } }, /* @__PURE__ */ React9.createElement("div", { style: {
+      background: "rgba(239, 68, 68, 0.08)",
+      border: "1px solid rgba(239, 68, 68, 0.25)",
+      borderRadius: "8px",
+      padding: "12px 16px",
+      color: "var(--text)",
+      fontSize: "13.5px",
+      lineHeight: "1.5"
+    } }, /* @__PURE__ */ React9.createElement("p", { style: { fontWeight: 600, color: "var(--red)", marginBottom: "6px" } }, "Warning: This action is permanent and cannot be undone."), /* @__PURE__ */ React9.createElement("p", { style: { marginBottom: "6px" } }, "This will permanently delete ", /* @__PURE__ */ React9.createElement("strong", null, "all patient records"), " from the database."), /* @__PURE__ */ React9.createElement("p", { style: { fontSize: "12.5px", color: "var(--text-2)" } }, "Data from other modules (Medicines, Inventory, Billing records, Appointments, Doctors/Staff, and System Settings) will ", /* @__PURE__ */ React9.createElement("strong", null, "not"), " be affected. The persistent UHID counter sequence will be preserved and will not be reset.")), /* @__PURE__ */ React9.createElement("div", null, /* @__PURE__ */ React9.createElement(Field, { label: /* @__PURE__ */ React9.createElement("span", null, "Type ", /* @__PURE__ */ React9.createElement("strong", null, "DELETE PATIENTS"), " to confirm:"), required: true }, /* @__PURE__ */ React9.createElement(
+      Input,
+      {
+        value: confirmInput,
+        onChange: (e) => setConfirmInput(e.target.value),
+        placeholder: "DELETE PATIENTS",
+        autoFocus: true,
+        disabled: busy
+      }
+    ))))
+  );
+}
 function Patients() {
   const { t, settings, user: user3, pushToast } = useApp();
   const navigate = useNavigate3();
@@ -5422,6 +5546,7 @@ function Patients() {
   const [importOpen, setImportOpen] = useState6(false);
   const [deleteTarget, setDeleteTarget] = useState6(null);
   const [isDeleting, setIsDeleting] = useState6(false);
+  const [deleteAllOpen, setDeleteAllOpen] = useState6(false);
   const patients = useLiveQuery3(async () => {
     const all = await db_default.patients.toArray();
     const consults = await db_default.consultations.toArray();
@@ -5516,7 +5641,17 @@ function Patients() {
     {
       title: "Patients",
       sub: `${(patients || []).length} patient(s) \xB7 UHID-linked permanent records`,
-      actions: /* @__PURE__ */ React9.createElement(React9.Fragment, null, /* @__PURE__ */ React9.createElement(Btn, { variant: "ghost", icon: Upload2, onClick: () => setImportOpen(true) }, "Import CSV"), /* @__PURE__ */ React9.createElement(Btn, { variant: "ghost", icon: Download3, onClick: exportCSV }, "Export CSV"), /* @__PURE__ */ React9.createElement(Btn, { variant: "accent", icon: UserPlus2, onClick: () => setReg(true) }, "+ ", t("new_patient", "New Patient")))
+      actions: /* @__PURE__ */ React9.createElement(React9.Fragment, null, /* @__PURE__ */ React9.createElement(
+        Btn,
+        {
+          variant: "ghost",
+          icon: Trash2,
+          className: "text-danger",
+          onClick: () => setDeleteAllOpen(true),
+          disabled: !patients || patients.length === 0
+        },
+        "Delete All Patients"
+      ), /* @__PURE__ */ React9.createElement(Btn, { variant: "ghost", icon: Upload2, onClick: () => setImportOpen(true) }, "Import CSV"), /* @__PURE__ */ React9.createElement(Btn, { variant: "ghost", icon: Download3, onClick: exportCSV }, "Export CSV"), /* @__PURE__ */ React9.createElement(Btn, { variant: "accent", icon: UserPlus2, onClick: () => setReg(true) }, "+ ", t("new_patient", "New Patient")))
     }
   ), /* @__PURE__ */ React9.createElement(Card, null, /* @__PURE__ */ React9.createElement("div", { className: "toolbar" }, /* @__PURE__ */ React9.createElement("form", { onSubmit: (e) => e.preventDefault(), className: "toolbar-search" }, /* @__PURE__ */ React9.createElement(Search3, { size: 15 }), /* @__PURE__ */ React9.createElement("input", { className: "input", placeholder: "Search by name, UHID, mobile, or age\u2026", value: q, onChange: (e) => setQ(e.target.value) })), /* @__PURE__ */ React9.createElement(Select, { value: gender, onChange: (e) => setGender(e.target.value), className: "toolbar-select" }, /* @__PURE__ */ React9.createElement("option", { value: "" }, "All genders"), /* @__PURE__ */ React9.createElement("option", { value: "M" }, "M"), /* @__PURE__ */ React9.createElement("option", { value: "F" }, "F"), /* @__PURE__ */ React9.createElement("option", { value: "Other" }, "Other"))), /* @__PURE__ */ React9.createElement(
     DataTable,
@@ -5568,7 +5703,7 @@ function Patients() {
       ),
       loading: !patients
     }
-  )), /* @__PURE__ */ React9.createElement(RegisterModal, { open: reg, onClose: () => setReg(false) }), /* @__PURE__ */ React9.createElement(CsvImportModal, { open: importOpen, onClose: () => setImportOpen(false), type: "patients" }), /* @__PURE__ */ React9.createElement(
+  )), /* @__PURE__ */ React9.createElement(RegisterModal, { open: reg, onClose: () => setReg(false) }), /* @__PURE__ */ React9.createElement(CsvImportModal, { open: importOpen, onClose: () => setImportOpen(false), type: "patients" }), /* @__PURE__ */ React9.createElement(DeleteAllPatientsModal, { open: deleteAllOpen, onClose: () => setDeleteAllOpen(false) }), /* @__PURE__ */ React9.createElement(
     Confirm,
     {
       open: !!deleteTarget,
