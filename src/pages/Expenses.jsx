@@ -37,7 +37,9 @@ export default function Expenses() {
     return list.sort((a, b) => b.date.localeCompare(a.date));
   }, [statusF, catF]);
 
-  const save = async () => {
+  const save = async (e) => {
+    if (e && e.preventDefault) e.preventDefault();
+    if (busy) return;
     setErr('');
     if (!(Number(f.amount) > 0)) { setErr('Enter a valid amount'); return; }
     setBusy(true);
@@ -128,10 +130,10 @@ export default function Expenses() {
         />
       </Card>
 
-      <Modal open={modal} onClose={() => setModal(false)} title="Record Expense" width="md"
+      <Modal open={modal} onClose={() => setModal(false)} onSubmit={save} title="Record Expense" width="md"
         footer={<>
           <Btn variant="ghost" onClick={() => setModal(false)}>Cancel</Btn>
-          <Btn variant="accent" onClick={save} disabled={busy}>{busy ? 'Saving…' : 'Save expense'}</Btn>
+          <Btn type="submit" variant="accent" disabled={busy}>{busy ? 'Saving…' : 'Save expense'}</Btn>
         </>}>
         {err && <div className="form-alert">{err}</div>}
         <div className="form-grid">

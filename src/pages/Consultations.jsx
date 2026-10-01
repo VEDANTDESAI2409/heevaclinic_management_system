@@ -44,7 +44,9 @@ function NewConsultModal({ open, onClose, prefillPatient, onDone }) {
     }
   }, [open]); // eslint-disable-line
 
-  const save = async () => {
+  const save = async (e) => {
+    if (e && e.preventDefault) e.preventDefault();
+    if (busy) return;
     setErr('');
     if (!patient) { setErr('Select a patient'); return; }
     if (!f.doctor_id) { setErr('Select a doctor'); return; }
@@ -70,11 +72,11 @@ function NewConsultModal({ open, onClose, prefillPatient, onDone }) {
   };
 
   return (
-    <Modal open={open} onClose={onClose} title="New Consultation" width="lg"
+    <Modal open={open} onClose={onClose} onSubmit={save} title="New Consultation" width="lg"
       sub={patient ? <span>{patient.name} · <UhidChip uhid={patient.uhid} size="sm" /> {patient.allergies && <Badge tone="amber">⚠ {patient.allergies}</Badge>}</span> : 'Select the patient being seen'}
       footer={<>
         <Btn variant="ghost" onClick={onClose}>Cancel</Btn>
-        <Btn variant="accent" onClick={save} disabled={busy}>{busy ? 'Saving…' : 'Save consultation'}</Btn>
+        <Btn type="submit" variant="accent" disabled={busy}>{busy ? 'Saving…' : 'Save consultation'}</Btn>
       </>}>
       {err && <div className="form-alert">{err}</div>}
       <div className="form-grid">

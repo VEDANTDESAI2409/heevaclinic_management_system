@@ -25,19 +25,20 @@ export function Logo({ size = 36, className, src }) {
 }
 
 // ── Buttons ──────────────────────────────────────────────────────────────────
-export function Btn({ variant = 'primary', size = 'md', icon: Icon, children, className, ...rest }) {
+export function Btn({ variant = 'primary', size = 'md', icon: Icon, children, className, type = 'button', ...rest }) {
   return (
-    <button className={cx('btn', `btn-${variant}`, size !== 'md' && `btn-${size}`, className)} {...rest}>
+    <button type={type} className={cx('btn', `btn-${variant}`, size !== 'md' && `btn-${size}`, className)} {...rest}>
       {Icon && <Icon size={size === 'sm' ? 14 : size === 'lg' ? 18 : 16} />}
       {children}
     </button>
   );
 }
 
-export function IconBtn({ title, icon: Icon, active, className, size = 18, ...rest }) {
+export function IconBtn({ title, icon: Icon, active, className, size = 18, type = 'button', children, ...rest }) {
   return (
-    <button className={cx('icon-btn', active && 'icon-btn-active', className)} title={title} {...rest}>
-      <Icon size={size} />
+    <button type={type} className={cx('icon-btn', active && 'icon-btn-active', className)} title={title} {...rest}>
+      {Icon && <Icon size={size} />}
+      {children}
     </button>
   );
 }
@@ -73,7 +74,7 @@ export function PageHeader({ title, sub, actions }) {
 }
 
 // ── Modal & Confirm ──────────────────────────────────────────────────────────
-export function Modal({ open, onClose, title, sub, children, footer, width = 'md' }) {
+export function Modal({ open, onClose, onSubmit, title, sub, children, footer, width = 'md' }) {
   useEffect(() => {
     if (!open) return undefined;
     const h = (e) => e.key === 'Escape' && onClose && onClose();
@@ -81,23 +82,39 @@ export function Modal({ open, onClose, title, sub, children, footer, width = 'md
     return () => window.removeEventListener('keydown', h);
   }, [open, onClose]);
   if (!open) return null;
+
+  const Tag = onSubmit ? 'form' : 'div';
+  const handleFormSubmit = (e) => {
+    e.preventDefault();
+    const active = document.activeElement;
+    if (active && active.tagName === 'TEXTAREA') return;
+    if (onSubmit) {
+      onSubmit(e);
+    }
+  };
+
   return (
     <div className="modal-overlay" onMouseDown={(e) => e.target === e.currentTarget && onClose && onClose()}>
-      <div className={cx('modal', `modal-${width}`)} role="dialog" aria-modal="true">
+      <Tag
+        className={cx('modal', `modal-${width}`)}
+        role="dialog"
+        aria-modal="true"
+        onSubmit={onSubmit ? handleFormSubmit : undefined}
+      >
         <header className="modal-head">
           <div>
             <h3>{title}</h3>
             {sub && <p>{sub}</p>}
           </div>
           {onClose && (
-            <button className="icon-btn" onClick={onClose} aria-label="Close">
+            <button type="button" className="icon-btn" onClick={onClose} aria-label="Close">
               <X size={18} />
             </button>
           )}
         </header>
         <div className="modal-body">{children}</div>
         {footer && <footer className="modal-foot">{footer}</footer>}
-      </div>
+      </Tag>
     </div>
   );
 }
@@ -398,11 +415,28 @@ export function SearchSelect({ value, onChange, options, getLabel, getSearch, pl
   };
 
   const onKey = (e) => {
-    if (!open && (e.key === 'ArrowDown' || e.key === 'Enter')) setOpen(true);
-    if (e.key === 'ArrowDown') { e.preventDefault(); setHi((h) => Math.min(h + 1, filtered.length - 1)); }
-    if (e.key === 'ArrowUp') { e.preventDefault(); setHi((h) => Math.max(h - 1, 0)); }
-    if (e.key === 'Enter' && open && hi >= 0 && filtered[hi]) { e.preventDefault(); pick(filtered[hi]); }
-    if (e.key === 'Escape') setOpen(false);
+    if (!open && e.key === 'ArrowDown') {
+      e.preventDefault();
+      setOpen(true);
+      return;
+    }
+    if (open) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setHi((h) => Math.min(h + 1, filtered.length - 1));
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setHi((h) => Math.max(h - 1, 0));
+      } else if (e.key === 'Enter') {
+        if (filtered.length > 0) {
+          e.preventDefault();
+          pick(filtered[hi >= 0 ? hi : 0]);
+        }
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        setOpen(false);
+      }
+    }
   };
 
   return (

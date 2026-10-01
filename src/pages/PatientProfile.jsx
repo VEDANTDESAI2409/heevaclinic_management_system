@@ -74,7 +74,9 @@ function AddVitalsModal({ open, onClose, patient, user }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
 
-  const save = async () => {
+  const save = async (e) => {
+    if (e && e.preventDefault) e.preventDefault();
+    if (busy) return;
     setErr('');
     if (!Object.values(f).some((v) => v != null && v !== '')) { setErr('Enter at least one vital sign'); return; }
     setBusy(true);
@@ -91,10 +93,10 @@ function AddVitalsModal({ open, onClose, patient, user }) {
   };
 
   return (
-    <Modal open={open} onClose={onClose} title="Record Vital Signs" sub={`${patient.name} · ${patient.uhid}`} width="lg"
+    <Modal open={open} onClose={onClose} onSubmit={save} title="Record Vital Signs" sub={`${patient.name} · ${patient.uhid}`} width="lg"
       footer={<>
         <Btn variant="ghost" onClick={onClose}>Cancel</Btn>
-        <Btn variant="accent" onClick={save} disabled={busy}>{busy ? 'Saving…' : 'Save vitals'}</Btn>
+        <Btn type="submit" variant="accent" disabled={busy}>{busy ? 'Saving…' : 'Save vitals'}</Btn>
       </>}>
       {err && <div className="form-alert">{err}</div>}
       <div className="form-grid">
@@ -130,23 +132,9 @@ function EditPatientModal({ open, onClose, patient, user }) {
   }, [open, patient]);
   const set = (k) => (e) => setF((x) => ({ ...x, [k]: e.target.value }));
 
-  const handleKeyDown = (e) => {
-    if (e.key !== 'Enter') return;
-    const target = e.target;
-    if (!target || target.tagName !== 'INPUT' || target.type === 'submit' || target.type === 'button') return;
-    e.preventDefault();
-    const form = target.closest('.form-grid');
-    if (!form) return;
-    const focusables = Array.from(
-      form.querySelectorAll('input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled])')
-    );
-    const idx = focusables.indexOf(target);
-    if (idx >= 0 && idx < focusables.length - 1) {
-      focusables[idx + 1].focus();
-    }
-  };
-
-  const save = async () => {
+  const save = async (e) => {
+    if (e && e.preventDefault) e.preventDefault();
+    if (busy) return;
     setErr('');
     if (!f.name || f.name.trim().length < 3) { setErr('Name is required (min 3 characters)'); return; }
     const ageNum = Number(f.age);
@@ -170,13 +158,13 @@ function EditPatientModal({ open, onClose, patient, user }) {
   };
 
   return (
-    <Modal open={open} onClose={onClose} title="Edit Patient" sub={<span>UHID <UhidChip uhid={patient?.uhid} size="sm" /> is permanent and cannot be changed</span>} width="lg"
+    <Modal open={open} onClose={onClose} onSubmit={save} title="Edit Patient" sub={<span>UHID <UhidChip uhid={patient?.uhid} size="sm" /> is permanent and cannot be changed</span>} width="lg"
       footer={<>
         <Btn variant="ghost" onClick={onClose}>Cancel</Btn>
-        <Btn onClick={save} disabled={busy}>{busy ? 'Saving…' : 'Save changes'}</Btn>
+        <Btn type="submit" variant="accent" disabled={busy}>{busy ? 'Saving…' : 'Save changes'}</Btn>
       </>}>
       {err && <div className="form-alert">{err}</div>}
-      <div className="form-grid" onKeyDown={handleKeyDown}>
+      <div className="form-grid">
         <Field label="Full Name" required className="fg-2"><Input value={f.name || ''} onChange={set('name')} /></Field>
         <Field label="Age" required><Input type="number" min="0" max="125" value={f.age ?? ''} onChange={set('age')} /></Field>
         <Field label="Gender">

@@ -37,7 +37,9 @@ function AdjustModal({ open, onClose }) {
     if (open) { setMed(null); setBatchId(''); setType('ADJUSTMENT'); setQty(''); setNote(''); setErr(''); }
   }, [open]);
 
-  const save = async () => {
+  const save = async (e) => {
+    if (e && e.preventDefault) e.preventDefault();
+    if (busy) return;
     setErr('');
     if (!med) { setErr('Select a medicine'); return; }
     if (!(Number(qty) > 0)) { setErr('Quantity must be positive'); return; }
@@ -55,11 +57,11 @@ function AdjustModal({ open, onClose }) {
   };
 
   return (
-    <Modal open={open} onClose={onClose} title="Stock Adjustment" width="md"
+    <Modal open={open} onClose={onClose} onSubmit={save} title="Stock Adjustment" width="md"
       sub="Creates an immutable ledger entry. Stock can never go negative."
       footer={<>
         <Btn variant="ghost" onClick={onClose}>Cancel</Btn>
-        <Btn variant="primary" onClick={save} disabled={busy}>{busy ? 'Saving…' : 'Record adjustment'}</Btn>
+        <Btn type="submit" variant="primary" disabled={busy}>{busy ? 'Saving…' : 'Record adjustment'}</Btn>
       </>}>
       {err && <div className="form-alert">{err}</div>}
       <div className="stack">
@@ -126,7 +128,9 @@ function BatchModal({ open, onClose, editing }) {
     }
   }, [open, editing, meds]);
 
-  const save = async () => {
+  const save = async (e) => {
+    if (e && e.preventDefault) e.preventDefault();
+    if (busy) return;
     setErr('');
     if (!medId) { setErr('Select a medicine'); return; }
     if (!batchNo.trim()) { setErr('Batch number is required'); return; }
@@ -161,10 +165,10 @@ function BatchModal({ open, onClose, editing }) {
   };
 
   return (
-    <Modal open={open} onClose={onClose} title={editing ? `Edit Batch ${editing.batch_no}` : 'Add Medicine Batch'} width="md"
+    <Modal open={open} onClose={onClose} onSubmit={save} title={editing ? `Edit Batch ${editing.batch_no}` : 'Add Medicine Batch'} width="md"
       footer={<>
         <Btn variant="ghost" onClick={onClose}>Cancel</Btn>
-        <Btn variant="accent" onClick={save} disabled={busy}>{busy ? 'Saving…' : editing ? 'Save changes' : 'Add batch'}</Btn>
+        <Btn type="submit" variant="accent" disabled={busy}>{busy ? 'Saving…' : editing ? 'Save changes' : 'Add batch'}</Btn>
       </>}>
       {err && <div className="form-alert">{err}</div>}
       <div className="form-grid">

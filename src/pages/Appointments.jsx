@@ -39,7 +39,9 @@ function NewApptModal({ open, onClose, editing }) {
     }
   }, [open, editing, doctors]);
 
-  const save = async () => {
+  const save = async (e) => {
+    if (e && e.preventDefault) e.preventDefault();
+    if (busy) return;
     setErr('');
     if (!patient) { setErr('Select a patient'); return; }
     if (!f.date || !f.time) { setErr('Date and time are required'); return; }
@@ -58,10 +60,10 @@ function NewApptModal({ open, onClose, editing }) {
   };
 
   return (
-    <Modal open={open} onClose={onClose} title={editing ? 'Edit Appointment' : 'Schedule Appointment'} width="md"
+    <Modal open={open} onClose={onClose} onSubmit={save} title={editing ? 'Edit Appointment' : 'Schedule Appointment'} width="md"
       footer={<>
         <Btn variant="ghost" onClick={onClose}>Cancel</Btn>
-        <Btn variant="accent" onClick={save} disabled={busy}>{busy ? 'Saving…' : 'Schedule'}</Btn>
+        <Btn type="submit" variant="accent" disabled={busy}>{busy ? 'Saving…' : 'Schedule'}</Btn>
       </>}>
       {err && <div className="form-alert">{err}</div>}
       <div className="form-grid">
@@ -151,7 +153,7 @@ export default function Appointments() {
       </div>
 
       <div className="toolbar">
-        <div className="toolbar-search"><Search size={15} /><input className="input" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search patient, UHID, mobile or appointment number" /></div>
+        <form onSubmit={(e) => e.preventDefault()} className="toolbar-search"><Search size={15} /><input className="input" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search patient, UHID, mobile or appointment number" /></form>
         <Select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="toolbar-select">
           <option value="">All statuses</option>
           {APPT_STATUSES.map((status) => <option key={status} value={status}>{status.replace('_', ' ')}</option>)}

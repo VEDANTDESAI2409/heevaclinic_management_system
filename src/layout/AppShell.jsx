@@ -83,6 +83,22 @@ function GlobalSearch() {
           onChange={(e) => { setQ(e.target.value); setOpen(true); }}
           onFocus={() => setOpen(true)}
           onBlur={() => setTimeout(() => setOpen(false), 180)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              if (res?.patients?.length > 0) {
+                go(`/patients/${res.patients[0].id}`);
+              } else if (res?.bills?.length > 0) {
+                go(`/billing?bill=${res.bills[0].id}`);
+              } else if (res?.meds?.length > 0) {
+                go(`/medicines?q=${encodeURIComponent(res.meds[0].name)}`);
+              } else if (q.trim()) {
+                go(`/patients?q=${encodeURIComponent(q.trim())}`);
+              }
+            } else if (e.key === 'Escape') {
+              setOpen(false);
+            }
+          }}
         />
       </div>
       {open && q.trim().length >= 2 && (

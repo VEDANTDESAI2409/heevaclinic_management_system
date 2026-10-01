@@ -17,10 +17,19 @@ import { DEFAULT_SETTINGS } from '../services/core';
 import { adminApi } from '../services/api';
 import { createService, updateService, deleteService } from '../services/billing';
 
-function Section({ icon: Icon, title, sub, children }) {
+function Section({ icon: Icon, title, sub, onSubmit, children }) {
   return (
     <Card title={title} sub={sub} actions={<span className="set-ic"><Icon size={17} /></span>}>
-      {children}
+      {onSubmit ? (
+        <form onSubmit={(e) => {
+          e.preventDefault();
+          const active = document.activeElement;
+          if (active && active.tagName === 'TEXTAREA') return;
+          onSubmit(e);
+        }}>
+          {children}
+        </form>
+      ) : children}
     </Card>
   );
 }
@@ -46,6 +55,37 @@ export default function SettingsPage() {
   const importRef = useRef(null);
 
   const services = useLiveQuery(() => db.services.toArray(), []) || [];
+
+  const saveService = async (e) => {
+    if (e && e.preventDefault) e.preventDefault();
+    if (serviceBusy || !serviceForm.name.trim() || !serviceForm.price) return;
+    setServiceBusy(true);
+    setServiceError('');
+    try {
+      if (editingService) {
+        await updateService(editingService.id, {
+          name: serviceForm.name,
+          type: serviceForm.type,
+          price: Number(serviceForm.price),
+          description: serviceForm.description,
+        }, user?.id);
+        pushToast('success', 'Service updated successfully');
+      } else {
+        await createService({
+          name: serviceForm.name,
+          type: serviceForm.type,
+          price: Number(serviceForm.price),
+          description: serviceForm.description,
+        }, user?.id);
+        pushToast('success', 'New service added');
+      }
+      setServiceModal(false);
+    } catch (err) {
+      setServiceError(err.message);
+    } finally {
+      setServiceBusy(false);
+    }
+  };
 
   useEffect(() => {
     const t = params.get('tab');
@@ -180,7 +220,7 @@ export default function SettingsPage() {
       </div>
 
       {tab === 'clinic' && (
-        <Section icon={Building2} title="Clinic Profile" sub="Shown on payment receipts and prescription letterheads">
+        <Section icon={Building2} title="Clinic Profile" sub="Shown on payment receipts and prescription letterheads" onSubmit={() => save(['clinic_name', 'tagline', 'doctor_name', 'doctor_phone', 'doctor_qual', 'doctor_role', 'address', 'phone', 'email', 'receipt_footer', 'logo'])}>
           <div className="form-grid">
             <Field label="Clinic Name" className="fg-2"><Input value={f.clinic_name} onChange={set('clinic_name')} /></Field>
             <Field label="Tagline" className="fg-2"><Input value={f.tagline} onChange={set('tagline')} /></Field>
@@ -202,7 +242,7 @@ export default function SettingsPage() {
             </Field>
           </div>
           <div className="set-save">
-            <Btn variant="accent" disabled={busy} onClick={() => save(['clinic_name', 'tagline', 'doctor_name', 'doctor_phone', 'doctor_qual', 'doctor_role', 'address', 'phone', 'email', 'receipt_footer', 'logo'])}>
+            <Btn type="submit" variant="accent" disabled={busy}>
               {busy ? 'Saving…' : 'Save clinic profile'}
             </Btn>
           </div>
@@ -210,7 +250,7 @@ export default function SettingsPage() {
       )}
 
       {tab === 'billing' && (
-        <Section icon={ReceiptText} title="Billing Settings" sub="Currency, bill numbering and default payment method">
+        <Section icon={ReceiptText} title="Billing Settings" sub="Currency, bill numbering and default payment method" onSubmit={() => save(['currency', 'bill_prefix', 'bill_padding', 'default_payment'])}>
           <div className="form-grid">
             <Field label="Currency Symbol"><Input value={f.currency} onChange={set('currency')} /></Field>
             <Field label="Bill Number Prefix"><Input value={f.bill_prefix} onChange={set('bill_prefix')} /></Field>
@@ -226,7 +266,7 @@ export default function SettingsPage() {
             </div>
           </div>
           <div className="set-save">
-            <Btn variant="accent" disabled={busy} onClick={() => save(['currency', 'bill_prefix', 'bill_padding', 'default_payment'])}>{busy ? 'Saving…' : 'Save billing settings'}</Btn>
+            <Btn type="submit" variant="accent" disabled={busy}>{busy ? 'Saving…' : 'Save billing settings'}</Btn>
           </div>
 
           <div style={{ marginTop: 28, paddingTop: 20, borderTop: '1px solid var(--border)' }}>
@@ -292,7 +332,7 @@ export default function SettingsPage() {
       )}
 
       {tab === 'uhid' && (
-        <Section icon={Fingerprint} title="UHID Configuration" sub="Unique Health Identification format — applied to NEW registrations only; existing UHIDs never change">
+        <Section icon={Fingerprint} title="UHID Configuration" sub="Unique Health Identification format — applied to NEW registrations only; existing UHIDs never change" onSubmit={() => save(['uhid_prefix', 'uhid_include_year', 'uhid_padding', 'uhid_start'])}>
           <div className="form-grid">
             <Field label="UHID Prefix"><Input value={f.uhid_prefix} onChange={set('uhid_prefix')} placeholder="HC" /></Field>
             <Field label="Include Registration Year">
@@ -310,13 +350,13 @@ export default function SettingsPage() {
             <span>UHID is assigned once, permanently linked to the patient, stored with a unique database constraint, and appears on bills, prescriptions, receipts and history.</span>
           </div>
           <div className="set-save">
-            <Btn variant="accent" disabled={busy} onClick={() => save(['uhid_prefix', 'uhid_include_year', 'uhid_padding', 'uhid_start'])}>{busy ? 'Saving…' : 'Save UHID settings'}</Btn>
+            <Btn type="submit" variant="accent" disabled={busy}>{busy ? 'Saving…' : 'Save UHID settings'}</Btn>
           </div>
         </Section>
       )}
 
       {tab === 'inventory' && (
-        <Section icon={Boxes} title="Inventory Rules" sub="Low-stock thresholds, expiry alert windows and batch selection">
+        <Section icon={Boxes} title="Inventory Rules" sub="Low-stock thresholds, expiry alert windows and batch selection" onSubmit={() => save(['low_stock_default', 'expiry_30', 'expiry_60', 'expiry_90', 'fefo'])}>
           <div className="form-grid">
             <Field label="Default Low-Stock Level"><Input type="number" min="0" value={f.low_stock_default} onChange={set('low_stock_default')} /></Field>
             <Field label="Expiry Alert Window 1 (days)"><Input type="number" min="1" value={f.expiry_30} onChange={set('expiry_30')} /></Field>
@@ -327,7 +367,7 @@ export default function SettingsPage() {
             </Field>
           </div>
           <div className="set-save">
-            <Btn variant="accent" disabled={busy} onClick={() => save(['low_stock_default', 'expiry_30', 'expiry_60', 'expiry_90', 'fefo'])}>{busy ? 'Saving…' : 'Save inventory rules'}</Btn>
+            <Btn type="submit" variant="accent" disabled={busy}>{busy ? 'Saving…' : 'Save inventory rules'}</Btn>
           </div>
         </Section>
       )}
@@ -498,42 +538,16 @@ export default function SettingsPage() {
       <Modal
         open={serviceModal}
         onClose={() => setServiceModal(false)}
+        onSubmit={saveService}
         title={editingService ? 'Edit Clinic Service' : 'Add New Service'}
         width="md"
         footer={
           <>
             <Btn variant="ghost" onClick={() => setServiceModal(false)}>Cancel</Btn>
             <Btn
+              type="submit"
               variant="accent"
               disabled={serviceBusy || !serviceForm.name.trim() || !serviceForm.price}
-              onClick={async () => {
-                setServiceBusy(true);
-                setServiceError('');
-                try {
-                  if (editingService) {
-                    await updateService(editingService.id, {
-                      name: serviceForm.name,
-                      type: serviceForm.type,
-                      price: Number(serviceForm.price),
-                      description: serviceForm.description,
-                    }, user?.id);
-                    pushToast('success', 'Service updated successfully');
-                  } else {
-                    await createService({
-                      name: serviceForm.name,
-                      type: serviceForm.type,
-                      price: Number(serviceForm.price),
-                      description: serviceForm.description,
-                    }, user?.id);
-                    pushToast('success', 'New service added');
-                  }
-                  setServiceModal(false);
-                } catch (err) {
-                  setServiceError(err.message);
-                } finally {
-                  setServiceBusy(false);
-                }
-              }}
             >
               {serviceBusy ? 'Saving…' : editingService ? 'Save Changes' : 'Create Service'}
             </Btn>

@@ -125,8 +125,9 @@ export default function CsvImportModal({
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
-  const handleImport = async () => {
-    if (!validationResult || validationResult.summary.validCount === 0) return;
+  const handleImport = async (e) => {
+    if (e && e.preventDefault) e.preventDefault();
+    if (busy || !validationResult || validationResult.summary.validCount === 0) return;
 
     setBusy(true);
     setServerError(null);
@@ -218,6 +219,7 @@ export default function CsvImportModal({
     <Modal
       open={open}
       onClose={busy ? undefined : onClose}
+      onSubmit={handleImport}
       title={`Import ${template.title} from CSV`}
       sub="Upload RFC-4180 compliant CSV files with live preview, row validation, and error reporting."
       width="xl"
@@ -232,8 +234,8 @@ export default function CsvImportModal({
             Cancel
           </Btn>
           <Btn
+            type="submit"
             variant="accent"
-            onClick={handleImport}
             disabled={!validationResult || validationResult.summary.validCount === 0 || busy}
           >
             {busy

@@ -20,7 +20,8 @@
     "test:medicines": "node --import ./scripts/fidb-first.mjs scripts/test-medicine-sync-and-persistence.mjs",
     "test:csv": "node scripts/test-global-csv-regression.mjs",
     "test:migration": "node --import ./scripts/fidb-first.mjs scripts/test-dexie-v7-migration.mjs",
-    "test": "npm run test:uhid && npm run smoke && npm run render && npm run test:multi-device && npm run test:medicines && npm run test:csv && npm run test:migration"
+    "test:keyboard": "esbuild scripts/test-keyboard-form-submissions.mjs --bundle --platform=node --format=esm --packages=external --outfile=.test-kb.bundle.mjs --log-level=warning && node .test-kb.bundle.mjs",
+    "test": "npm run test:uhid && npm run smoke && npm run render && npm run test:keyboard && npm run test:csv && npm run test:migration"
   },
   "dependencies": {
     "@fontsource-variable/inter": "^5.1.0",

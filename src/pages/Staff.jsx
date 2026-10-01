@@ -21,7 +21,9 @@ function DoctorModal({ open, onClose, editing }) {
   }, [open, editing]);
 
   const set = (key) => (event) => setForm((value) => ({ ...value, [key]: event.target.value }));
-  const save = async () => {
+  const save = async (e) => {
+    if (e && e.preventDefault) e.preventDefault();
+    if (busy) return;
     setError('');
     if (!form.name.trim()) { setError('Doctor name is required'); return; }
     setBusy(true);
@@ -34,8 +36,8 @@ function DoctorModal({ open, onClose, editing }) {
     finally { setBusy(false); }
   };
 
-  return <Modal open={open} onClose={onClose} title={editing ? `Edit ${editing.name}` : 'Add Doctor'} width="md"
-    footer={<><Btn variant="ghost" onClick={onClose}>Cancel</Btn><Btn variant="accent" onClick={save} disabled={busy}>{busy ? 'Saving…' : 'Save Doctor'}</Btn></>}>
+  return <Modal open={open} onClose={onClose} onSubmit={save} title={editing ? `Edit ${editing.name}` : 'Add Doctor'} width="md"
+    footer={<><Btn variant="ghost" onClick={onClose}>Cancel</Btn><Btn type="submit" variant="accent" disabled={busy}>{busy ? 'Saving…' : 'Save Doctor'}</Btn></>}>
     {error && <div className="form-alert">{error}</div>}
     <div className="form-grid">
       <Field label="Doctor Full Name" required className="fg-2"><Input value={form.name} onChange={set('name')} /></Field>

@@ -98,11 +98,11 @@ function NewPrescriptionModal({ open, onClose, prefillPatient, onDone }) {
   };
 
   return (
-    <Modal open={open} onClose={onClose} title="New Prescription" width="lg"
+    <Modal open={open} onClose={onClose} onSubmit={save} title="New Prescription" width="lg"
       sub={patient ? <span>{patient.name} · <UhidChip uhid={patient.uhid} size="sm" /> · {patient.gender} {patient.dob && `· DOB ${fmtDate(patient.dob)}`}</span> : 'Select the patient'}
       footer={<>
         <Btn variant="ghost" onClick={onClose}>Cancel</Btn>
-        <Btn variant="accent" onClick={save} disabled={busy}>{busy ? 'Saving…' : 'Save prescription'}</Btn>
+        <Btn type="submit" variant="accent" disabled={busy}>{busy ? 'Saving…' : 'Save prescription'}</Btn>
       </>}>
       {err && <div className="form-alert">{err}</div>}
       <div className="form-grid">
@@ -226,7 +226,7 @@ export default function Prescriptions() {
       />
       <Card>
         <div className="toolbar">
-          <div className="toolbar-search grow"><input className="input" placeholder="Search patient, UHID or prescription no…" value={q} onChange={(e) => setQ(e.target.value)} /></div>
+          <form onSubmit={(e) => e.preventDefault()} className="toolbar-search grow"><input className="input" placeholder="Search patient, UHID or prescription no…" value={q} onChange={(e) => setQ(e.target.value)} /></form>
         </div>
         <DataTable
           columns={[

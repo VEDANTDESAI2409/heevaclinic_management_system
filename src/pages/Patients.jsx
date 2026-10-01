@@ -61,40 +61,9 @@ function RegisterModal({ open, onClose, prefill = {} }) {
 
   const set = (k) => (e) => setF((x) => ({ ...x, [k]: e.target.value }));
 
-  // Enter key navigation: moves to next focusable form field without submitting
-  const handleKeyDown = (e) => {
-    if (e.key !== 'Enter') return;
-    const target = e.target;
-    if (!target || target.tagName !== 'INPUT' || target.type === 'submit' || target.type === 'button') {
-      return;
-    }
-    e.preventDefault();
-    const form = target.closest('.form-grid');
-    if (!form) return;
-    const focusables = Array.from(
-      form.querySelectorAll('input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled])')
-    );
-    const idx = focusables.indexOf(target);
-    if (idx >= 0 && idx < focusables.length - 1) {
-      focusables[idx + 1].focus();
-    }
-  };
-
-  const validate = () => {
-    const e = {};
-    if (!f.name || f.name.trim().length < 3) e.name = 'Full name is required (min 3 characters)';
-    const ageNum = Number(f.age);
-    if (f.age === '' || f.age == null || isNaN(ageNum) || ageNum < 0 || ageNum > 125) {
-      e.age = 'Enter a valid age (0–125)';
-    }
-    if (!f.gender) e.gender = 'Select gender (M, F, Other)';
-    if (!f.mobile || !f.mobile.trim()) e.mobile = 'Mobile number is required';
-    else if (!validMobile(f.mobile)) e.mobile = 'Enter a valid 10-digit mobile number';
-    setErrs(e);
-    return Object.keys(e).length === 0;
-  };
-
-  const save = async () => {
+  const save = async (e) => {
+    if (e && e.preventDefault) e.preventDefault();
+    if (busy) return;
     if (!validate()) return;
     setBusy(true);
     try {
@@ -113,19 +82,20 @@ function RegisterModal({ open, onClose, prefill = {} }) {
     <Modal
       open={open}
       onClose={onClose}
+      onSubmit={save}
       width="md"
       title="Register New Patient"
       sub={<span className="uhid-preview">UHID will be assigned: <UhidChip uhid={serverPreview || uhidPreview || '…'} size="sm" /> — permanent, unique, never changes</span>}
       footer={
         <>
           <Btn variant="ghost" onClick={onClose}>Cancel</Btn>
-          <Btn variant="accent" onClick={save} disabled={busy}>
+          <Btn type="submit" variant="accent" disabled={busy}>
             {busy ? 'Registering…' : 'Register patient'}
           </Btn>
         </>
       }
     >
-      <div className="form-grid" onKeyDown={handleKeyDown}>
+      <div className="form-grid">
         <Field label="Full Name" required error={errs.name} className="fg-2">
           <Input value={f.name} onChange={set('name')} placeholder="Enter full name" autoFocus />
         </Field>
@@ -281,10 +251,10 @@ export default function Patients() {
 
       <Card>
         <div className="toolbar">
-          <div className="toolbar-search">
+          <form onSubmit={(e) => e.preventDefault()} className="toolbar-search">
             <Search size={15} />
             <input className="input" placeholder="Search by name, UHID, mobile, or age…" value={q} onChange={(e) => setQ(e.target.value)} />
-          </div>
+          </form>
           <Select value={gender} onChange={(e) => setGender(e.target.value)} className="toolbar-select">
             <option value="">All genders</option>
             <option value="M">M</option>

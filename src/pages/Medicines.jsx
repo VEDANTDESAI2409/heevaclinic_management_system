@@ -45,7 +45,9 @@ function MedFormModal({ open, onClose, editing }) {
 
   const set = (k) => (e) => setF((x) => ({ ...x, [k]: e.target.value }));
 
-  const save = async () => {
+  const save = async (e) => {
+    if (e && e.preventDefault) e.preventDefault();
+    if (busy) return;
     setErr('');
     if (!f.name.trim()) { setErr('Medicine name is required'); return; }
     if (!f.selling_price || Number(f.selling_price) < 0) { setErr('Valid selling price is required'); return; }
@@ -73,10 +75,10 @@ function MedFormModal({ open, onClose, editing }) {
   };
 
   return (
-    <Modal open={open} onClose={onClose} title={editing ? `Edit ${editing.name}` : 'Add Medicine'} width="lg"
+    <Modal open={open} onClose={onClose} onSubmit={save} title={editing ? `Edit ${editing.name}` : 'Add Medicine'} width="lg"
       footer={<>
         <Btn variant="ghost" onClick={onClose}>Cancel</Btn>
-        <Btn variant="accent" onClick={save} disabled={busy}>{busy ? 'Saving…' : editing ? 'Save changes' : 'Add medicine'}</Btn>
+        <Btn type="submit" variant="accent" disabled={busy}>{busy ? 'Saving…' : editing ? 'Save changes' : 'Add medicine'}</Btn>
       </>}>
       {err && <div className="form-alert">{err}</div>}
       <div className="form-grid">
@@ -116,7 +118,9 @@ function CategoryModal({ open, onClose, editing }) {
     }
   }, [open, editing]);
 
-  const save = async () => {
+  const save = async (e) => {
+    if (e && e.preventDefault) e.preventDefault();
+    if (busy) return;
     setErr('');
     if (!name.trim()) { setErr('Category name is required'); return; }
     setBusy(true);
@@ -137,10 +141,10 @@ function CategoryModal({ open, onClose, editing }) {
   };
 
   return (
-    <Modal open={open} onClose={onClose} title={editing ? `Edit Category` : 'Add Medicine Category'} width="sm"
+    <Modal open={open} onClose={onClose} onSubmit={save} title={editing ? `Edit Category` : 'Add Medicine Category'} width="sm"
       footer={<>
         <Btn variant="ghost" onClick={onClose}>Cancel</Btn>
-        <Btn variant="accent" onClick={save} disabled={busy}>{busy ? 'Saving…' : 'Save Category'}</Btn>
+        <Btn type="submit" variant="accent" disabled={busy}>{busy ? 'Saving…' : 'Save Category'}</Btn>
       </>}>
       {err && <div className="form-alert">{err}</div>}
       <Field label="Category Name" required>
@@ -277,7 +281,7 @@ export default function Medicines() {
       {activeTab === 'medicines' && (
         <Card>
           <div className="toolbar">
-            <div className="toolbar-search grow"><Search size={15} /><input className="input" placeholder="Search name, generic or code…" value={q} onChange={(e) => setQ(e.target.value)} /></div>
+            <form onSubmit={(e) => e.preventDefault()} className="toolbar-search grow"><Search size={15} /><input className="input" placeholder="Search name, generic or code…" value={q} onChange={(e) => setQ(e.target.value)} /></form>
             <Select value={catF} onChange={(e) => setCatF(e.target.value)} className="toolbar-select">
               <option value="">All categories</option>
               {(cats || []).map((c) => <option key={c.id} value={c.name}>{c.name}</option>)}

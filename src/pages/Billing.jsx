@@ -37,7 +37,9 @@ function PaymentModal({ open, onClose, total, onComplete, defaultMethod }) {
 
   const setRow = (i, k, v) => setRows((x) => x.map((r, j) => (j === i ? { ...r, [k]: v } : r)));
 
-  const complete = async () => {
+  const complete = async (e) => {
+    if (e && e.preventDefault) e.preventDefault();
+    if (busy) return;
     if (paid > total + 0.005) { pushToast('warning', 'Payments exceed bill total — remove excess'); return; }
     setBusy(true);
     try {
@@ -49,11 +51,11 @@ function PaymentModal({ open, onClose, total, onComplete, defaultMethod }) {
   };
 
   return (
-    <Modal open={open} onClose={onClose} title="Payment" sub={`Bill total ${fmtMoney(total)} · ${paid > 0 ? `collected ${fmtMoney(paid)}` : 'no payment yet'}`} width="md"
+    <Modal open={open} onClose={onClose} onSubmit={complete} title="Payment" sub={`Bill total ${fmtMoney(total)} · ${paid > 0 ? `collected ${fmtMoney(paid)}` : 'no payment yet'}`} width="md"
       footer={<>
         <Btn variant="ghost" onClick={onClose}>Back</Btn>
         {remaining > 0.005 && <Btn variant="outline" disabled={busy} onClick={async () => { setBusy(true); try { await onComplete([]); } catch (e) { pushToast('error', e.message); setBusy(false); } }}>Save as Pending</Btn>}
-        <Btn variant="accent" size="lg" disabled={busy || paid <= 0} onClick={complete}>{busy ? 'Completing…' : `Complete · ${fmtMoney(paid)}`}</Btn>
+        <Btn type="submit" variant="accent" size="lg" disabled={busy || paid <= 0}>{busy ? 'Completing…' : `Complete · ${fmtMoney(paid)}`}</Btn>
       </>}>
       <div className="pay-rows">
         {rows.map((r, i) => (
@@ -364,7 +366,24 @@ export default function Billing() {
 
             {tab === 'medicines' && (
               <div className="pos-medlist-wrap">
-                <div className="pos-medsearch"><Search size={14} /><Input value={medQ} onChange={(e) => setMedQ(e.target.value)} placeholder="Search medicine by name or generic…" autoFocus /></div>
+                <div className="pos-medsearch">
+                  <Search size={14} />
+                  <Input
+                    value={medQ}
+                    onChange={(e) => setMedQ(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        if (medsList.length > 0) {
+                          addMedicine(medsList[0].medicine);
+                          setMedQ('');
+                        }
+                      }
+                    }}
+                    placeholder="Search medicine by name or generic…"
+                    autoFocus
+                  />
+                </div>
                 <div className="pos-medlist">
                   {medsList.length === 0 && <div className="pos-none">No medicines match</div>}
                   {medsList.map(({ medicine: m, available, next_expiry }) => {
@@ -587,7 +606,22 @@ export default function Billing() {
               <div className="cart-disc">
                 <span className="kv-label">Discount</span>
                 <Seg size="sm" value={discMode} onChange={setDiscMode} options={[{ value: 'amt', label: '₹' }, { value: 'pct', label: '%' }]} />
-                <Input className="cart-disc-input" type="number" min="0" value={discVal} onChange={(e) => setDiscVal(e.target.value)} placeholder="0" />
+                <Input
+                  className="cart-disc-input"
+                  type="number"
+                  min="0"
+                  value={discVal}
+                  onChange={(e) => setDiscVal(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      if (patient && cart.length > 0 && !busy) {
+                        setPayOpen(true);
+                      }
+                    }
+                  }}
+                  placeholder="0"
+                />
                 <b>− {money(disc)}</b>
               </div>
               <div className="kv kv-total"><span>TOTAL AMOUNT</span><b>{money(total)}</b></div>

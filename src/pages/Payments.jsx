@@ -23,7 +23,9 @@ function PayModal({ bill, onClose }) {
   const [err, setErr] = useState('');
   const money = (v) => fmtMoney(v, settings.currency);
 
-  const doPay = async () => {
+  const doPay = async (e) => {
+    if (e && e.preventDefault) e.preventDefault();
+    if (busy) return;
     setErr('');
     setBusy(true);
     try {
@@ -38,11 +40,11 @@ function PayModal({ bill, onClose }) {
   };
 
   return (
-    <Modal open onClose={onClose} title={`Record Payment — ${bill.bill.bill_no}`} width="sm"
+    <Modal open onClose={onClose} onSubmit={doPay} title={`Record Payment — ${bill.bill.bill_no}`} width="sm"
       sub={`${bill.bill.patient_name} · balance ${money(bill.balance)}`}
       footer={<>
         <Btn variant="ghost" onClick={onClose}>Cancel</Btn>
-        <Btn variant="accent" onClick={doPay} disabled={busy || !(Number(amount) > 0)}>{busy ? 'Saving…' : `Record ${money(Number(amount) || 0)}`}</Btn>
+        <Btn type="submit" variant="accent" disabled={busy || !(Number(amount) > 0)}>{busy ? 'Saving…' : `Record ${money(Number(amount) || 0)}`}</Btn>
       </>}>
       {err && <div className="form-alert">{err}</div>}
       <div className="stack">
@@ -148,10 +150,10 @@ export default function Payments() {
             <option value="paid">Paid</option>
             <option value="all">All</option>
           </Select>
-          <div className="toolbar-search">
+          <form onSubmit={(e) => e.preventDefault()} className="toolbar-search">
             <Search size={15} />
             <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Bill #, patient, UHID…" />
-          </div>
+          </form>
           <Input type="date" className="toolbar-date" value={from} onChange={(e) => setFrom(e.target.value)} />
           <span className="range-dash">→</span>
           <Input type="date" className="toolbar-date" value={to} onChange={(e) => setTo(e.target.value)} />

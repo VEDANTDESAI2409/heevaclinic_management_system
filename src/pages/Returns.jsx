@@ -44,7 +44,9 @@ function ReturnModal({ open, onClose }) {
     setRetQty({});
   }, [billId, returnableBills]);
 
-  const save = async () => {
+  const save = async (e) => {
+    if (e && e.preventDefault) e.preventDefault();
+    if (busy) return;
     setErr('');
     if (!bill) { setErr('Select a bill'); return; }
     const items = bill.medLines
@@ -65,11 +67,11 @@ function ReturnModal({ open, onClose }) {
   };
 
   return (
-    <Modal open={open} onClose={onClose} title="New Return" width="lg"
+    <Modal open={open} onClose={onClose} onSubmit={save} title="New Return" width="lg"
       sub="Medicines returned by the patient are restored to their original batches (RETURN ledger entry)"
       footer={<>
         <Btn variant="ghost" onClick={onClose}>Cancel</Btn>
-        <Btn variant="danger" onClick={save} disabled={busy}>{busy ? 'Processing…' : 'Process Return'}</Btn>
+        <Btn type="submit" variant="danger" disabled={busy}>{busy ? 'Processing…' : 'Process Return'}</Btn>
       </>}>
       {err && <div className="form-alert">{err}</div>}
       <div className="stack">
@@ -132,7 +134,9 @@ export default function Returns() {
       />
       <Card>
         <div className="toolbar">
-          <input className="input" placeholder="Search return #, bill #, patient…" value={q} onChange={(e) => setQ(e.target.value)} />
+          <form onSubmit={(e) => e.preventDefault()} style={{ width: '100%' }}>
+            <input className="input" placeholder="Search return #, bill #, patient…" value={q} onChange={(e) => setQ(e.target.value)} />
+          </form>
         </div>
         <DataTable
           columns={[

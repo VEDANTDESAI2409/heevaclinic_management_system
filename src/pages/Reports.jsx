@@ -157,13 +157,13 @@ function PatientsTab({ from, to, setFrom, setTo, settings }) {
           </div>
         )}
 
-        <div style={{ margin: '14px 0 8px 0', maxWidth: 360 }}>
+        <form onSubmit={(e) => e.preventDefault()} style={{ margin: '14px 0 8px 0', maxWidth: 360 }}>
           <Input
             value={q}
             onChange={(e) => setQ(e.target.value)}
             placeholder="Search report by UHID, name, mobile…"
           />
-        </div>
+        </form>
 
         <h4 className="sub-head">New patients in range ({filteredNew.length})</h4>
         <DataTable
@@ -313,13 +313,13 @@ function MedicinesTab({ from, to, setFrom, setTo, settings }) {
 
   return (
     <div className="rep-stacks">
-      <div style={{ margin: '0 0 14px 0', maxWidth: 360 }}>
+      <form onSubmit={(e) => e.preventDefault()} style={{ margin: '0 0 14px 0', maxWidth: 360 }}>
         <Input
           value={q}
           onChange={(e) => setQ(e.target.value)}
           placeholder="Filter medicines across reports…"
         />
-      </div>
+      </form>
 
       <Card
         title="Top Selling Medicines"
@@ -516,13 +516,13 @@ function FinancialTab({ from, to, setFrom, setTo, settings }) {
         )}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 14, marginBottom: 8, flexWrap: 'wrap', gap: 8 }}>
           <h4 className="sub-head" style={{ margin: 0 }}>Pending Payments ({filteredPending.length})</h4>
-          <div style={{ maxWidth: 300, flex: 1 }}>
+          <form onSubmit={(e) => e.preventDefault()} style={{ maxWidth: 300, flex: 1 }}>
             <Input
               value={q}
               onChange={(e) => setQ(e.target.value)}
               placeholder="Search pending bills…"
             />
-          </div>
+          </form>
         </div>
         <DataTable
           dense

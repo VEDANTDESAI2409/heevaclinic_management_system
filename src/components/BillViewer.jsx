@@ -23,7 +23,9 @@ export default function BillViewer({ full, onClose, allowCancel = true, allowPay
   const balance = bill.total - (bill.paid || 0);
   const open = bill.status === 'completed';
 
-  const doPay = async () => {
+  const doPay = async (e) => {
+    if (e && e.preventDefault) e.preventDefault();
+    if (busy) return;
     setBusy(true);
     try {
       await recordPayment(bill.id, { amount: Number(amount), method }, user.id);
@@ -152,12 +154,13 @@ export default function BillViewer({ full, onClose, allowCancel = true, allowPay
       <Modal
         open={payOpen}
         onClose={() => setPayOpen(false)}
+        onSubmit={doPay}
         title="Record payment"
         sub={`${bill.bill_no} · balance ${money(balance)}`}
         width="sm"
         footer={<>
           <Btn variant="ghost" onClick={() => setPayOpen(false)}>Cancel</Btn>
-          <Btn variant="accent" onClick={doPay} disabled={busy || !(Number(amount) > 0)}>{busy ? 'Saving…' : 'Record'}</Btn>
+          <Btn type="submit" variant="accent" disabled={busy || !(Number(amount) > 0)}>{busy ? 'Saving…' : 'Record'}</Btn>
         </>}
       >
         <div className="stack">
