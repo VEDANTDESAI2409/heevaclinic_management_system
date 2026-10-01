@@ -202,7 +202,7 @@ export const MODULE_FIELD_ALIASES = {
 };
 
 export const MODULE_REQUIRED_FIELDS = {
-  patients: ['name', 'age', 'gender', 'mobile'],
+  patients: ['name', 'gender'],
   medicines: ['name', 'selling_price'],
   medicine_categories: ['name'],
   doctors: ['name'],

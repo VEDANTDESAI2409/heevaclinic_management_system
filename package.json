@@ -22,7 +22,8 @@
     "test:migration": "node --import ./scripts/fidb-first.mjs scripts/test-dexie-v7-migration.mjs",
     "test:keyboard": "esbuild scripts/test-keyboard-form-submissions.mjs --bundle --platform=node --format=esm --packages=external --outfile=.test-kb.bundle.mjs --log-level=warning && node .test-kb.bundle.mjs",
     "test:add-patient": "esbuild scripts/test-add-patient-flow.mjs --bundle --platform=node --format=esm --external:dexie --external:fake-indexeddb --outfile=.test-add-patient.bundle.mjs --log-level=warning && node --import ./scripts/fidb-first.mjs .test-add-patient.bundle.mjs",
-    "test": "npm run test:uhid && npm run smoke && npm run render && npm run test:keyboard && npm run test:add-patient && npm run test:csv && npm run test:migration"
+    "test:separation": "esbuild scripts/test-patient-validation-separation.mjs --bundle --platform=node --format=esm --external:dexie --external:fake-indexeddb --outfile=.test-separation.bundle.mjs --log-level=warning && node --import ./scripts/fidb-first.mjs .test-separation.bundle.mjs",
+    "test": "npm run test:uhid && npm run smoke && npm run render && npm run test:keyboard && npm run test:add-patient && npm run test:separation && npm run test:csv && npm run test:migration"
   },
   "dependencies": {
     "@fontsource-variable/inter": "^5.1.0",

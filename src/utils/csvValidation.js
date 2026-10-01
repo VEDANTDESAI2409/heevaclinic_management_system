@@ -142,13 +142,16 @@ export function validateCSVRows(type, rows, context = {}) {
           errors.push('Full name must be at least 3 characters');
         }
 
-        // Required: Age
+        // Optional: Age
         const rawAge = String(row.age ?? '').trim();
-        const age = parseInt(rawAge, 10);
-        if (!rawAge) {
-          errors.push('Age is required');
-        } else if (isNaN(age) || age < 0 || age > 125) {
-          errors.push('Age must be a valid number between 0 and 125');
+        let age = null;
+        if (rawAge !== '') {
+          const parsedAge = parseInt(rawAge, 10);
+          if (isNaN(parsedAge) || parsedAge < 0 || parsedAge > 125) {
+            errors.push('Age must be a valid number between 0 and 125');
+          } else {
+            age = parsedAge;
+          }
         }
 
         // Required: Gender
@@ -162,13 +165,14 @@ export function validateCSVRows(type, rows, context = {}) {
           gender = rawGender === 'm' || rawGender === 'male' ? 'M' : rawGender === 'f' || rawGender === 'female' ? 'F' : 'Other';
         }
 
-        // Required: Mobile Number
+        // Optional: Mobile Number
         const rawMobile = String(row.mobile || '').trim();
-        const mobile = cleanDigits(rawMobile);
-        if (!rawMobile) {
-          errors.push('Mobile number is required');
-        } else if (!validMobile(mobile) || mobile.length !== 10) {
-          errors.push('Mobile must be a valid 10-digit number');
+        let mobile = '';
+        if (rawMobile !== '') {
+          mobile = cleanDigits(rawMobile);
+          if (!validMobile(mobile) || mobile.length !== 10) {
+            errors.push('Mobile must be a valid 10-digit number');
+          }
         }
 
         // Optional: Blood Group
@@ -192,12 +196,14 @@ export function validateCSVRows(type, rows, context = {}) {
           }
         }
 
-        // Duplicate check within batch by mobile + name
+        // Duplicate check within batch by mobile + name (if mobile is provided)
         const dedupKey = `${name.toLowerCase()}||${mobile}`;
-        if (seenMobileName.has(dedupKey)) {
-          errors.push('Duplicate patient entry in this CSV file (same name & mobile)');
-        } else if (name && mobile) {
-          seenMobileName.add(dedupKey);
+        if (name && mobile) {
+          if (seenMobileName.has(dedupKey)) {
+            errors.push('Duplicate patient entry in this CSV file (same name & mobile)');
+          } else {
+            seenMobileName.add(dedupKey);
+          }
         }
 
         if (errors.length > 0) {

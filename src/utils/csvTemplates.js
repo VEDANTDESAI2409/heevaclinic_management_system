@@ -4,7 +4,7 @@ export const CSV_TEMPLATES = {
   patients: {
     title: 'Patients',
     filename: 'heeva-patients-template.csv',
-    description: 'Bulk register patients. Mandatory columns: Full Name, Age, Gender (M/F/Other), Mobile Number (10 digits). Historical Date & Time is optional in DD-MM-YYYY HH:mm format.',
+    description: 'Bulk register patients. Mandatory columns: Full Name, Gender (M/F/Other). All other fields (Age, Mobile, Date & Time, Marital Status, Blood Group, Address) are optional.',
     headers: [
       'name', 'date_time', 'age', 'gender', 'marital_status', 'mobile',
       'blood_group', 'address'
@@ -22,10 +22,10 @@ export const CSV_TEMPLATES = {
     columns: [
       { key: 'name', label: 'Full Name', required: true },
       { key: 'date_time', label: 'Date & Time (DD-MM-YYYY HH:mm)', required: false },
-      { key: 'age', label: 'Age (Years)', required: true },
+      { key: 'age', label: 'Age (Years)', required: false },
       { key: 'gender', label: 'Gender (M/F/Other)', required: true },
       { key: 'marital_status', label: 'Marital Status (Single/Married/etc)', required: false },
-      { key: 'mobile', label: 'Mobile (10 digits)', required: true },
+      { key: 'mobile', label: 'Mobile (10 digits)', required: false },
       { key: 'blood_group', label: 'Blood Group', required: false },
       { key: 'address', label: 'Address', required: false },
     ]

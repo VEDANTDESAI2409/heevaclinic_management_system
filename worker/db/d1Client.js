@@ -607,8 +607,8 @@ export const d1Client = {
         const itemAge = item.age !== undefined && item.age !== null && item.age !== ''
           ? Number(item.age)
           : (item.dob ? Math.max(0, Math.floor((Date.now() - new Date(item.dob).getTime()) / (365.25 * 24 * 3600 * 1000))) : null);
-        if (!item.name || itemAge == null || isNaN(itemAge) || !item.gender || !item.mobile) {
-          skipped.push({ item, reason: 'Missing required field (name, age, gender, or mobile)' });
+        if (!item.name || !item.gender) {
+          skipped.push({ item, reason: 'Missing required field (name or gender)' });
           continue;
         }
         counterVal++;
@@ -619,9 +619,9 @@ export const d1Client = {
           id: item.id || crypto.randomUUID(),
           uhid,
           name: String(item.name).trim(),
-          age: itemAge,
+          age: itemAge != null && !isNaN(itemAge) ? itemAge : null,
           gender: item.gender,
-          mobile: String(item.mobile),
+          mobile: item.mobile ? String(item.mobile) : '',
           marital_status: item.marital_status || 'Single',
           address: item.address || '',
           pin: item.pin ? String(item.pin) : '',
