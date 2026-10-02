@@ -100,7 +100,6 @@ export default function BillViewer({ full, onClose, allowCancel = true, allowPay
                   <tr key={it.id}>
                     <td>
                       <div><b>{it.name}</b>{it.returned > 0 && <Badge tone="amber"> {fmtQty(it.returned)} returned</Badge>}</div>
-                      {it.composition && <div style={{ fontSize: '11.5px', color: 'var(--text-2)' }}>Composition: {it.composition}</div>}
                       {it.notes && <div style={{ fontSize: '11.5px', color: 'var(--text-3)', fontStyle: 'italic' }}>Note: {it.notes}</div>}
                     </td>
                     <td>

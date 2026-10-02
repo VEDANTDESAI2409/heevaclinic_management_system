@@ -310,7 +310,6 @@ export function printInvoiceA4(bill, items = [], payments = [], s = {}) {
                   <td className="td-c">{idx + 1}</td>
                   <td>
                     <div className="med-name">{it.name}</div>
-                    {it.composition && <div className="med-comp">Composition: {it.composition}</div>}
                     {it.notes && <div className="med-note">Note: {it.notes}</div>}
                   </td>
                   <td className="td-c">{it.dosage || '—'}</td>
@@ -434,7 +433,6 @@ export function downloadReceipt(bill, items = [], payments = [], s = {}) {
         <td style="text-align: center; padding: 6px 8px; border-bottom: 1px solid #e2e8f0;">${idx + 1}</td>
         <td style="padding: 6px 8px; border-bottom: 1px solid #e2e8f0;">
           <div style="font-weight: 700; color: #1a202c; font-size: 13px;">${it.name || ''}</div>
-          ${it.composition ? `<div style="font-size: 11px; color: #4a5568; margin-top: 2px;">Composition: ${it.composition}</div>` : ''}
           ${it.notes ? `<div style="font-size: 11px; color: #4a5568; font-style: italic; margin-top: 1px;">Note: ${it.notes}</div>` : ''}
         </td>
         <td style="text-align: center; padding: 6px 8px; border-bottom: 1px solid #e2e8f0;">${it.dosage || '—'}</td>
